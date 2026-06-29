@@ -14,6 +14,9 @@ export const s3 = new S3Client({
   region: env.B2_REGION,
   endpoint: env.B2_S3_ENDPOINT,
   credentials: { accessKeyId: env.B2_KEY_ID, secretAccessKey: env.B2_APP_KEY },
+  // B2 works virtual-hosted (default). MinIO / on-prem need path-style — set
+  // B2_FORCE_PATH_STYLE=true for those.
+  forcePathStyle: env.B2_FORCE_PATH_STYLE === "true",
 });
 
 export interface PartRecord { partNumber: number; etag: string; size: number; }
