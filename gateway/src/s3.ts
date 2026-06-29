@@ -1,0 +1,91 @@
+// Control-plane S3 helpers against Backblaze B2. The gateway never touches
+// file bytes — it only mints presigned URLs and runs multipart bookkeeping.
+import {
+  S3Client, CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand,
+  CompleteMultipartUploadCommand, AbortMultipartUploadCommand, PutObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createHmac, randomUUID } from "node:crypto";
+
+const env = process.env as Record<string, string>;
+const BUCKET = env.B2_BUCKET;
+
+export const s3 = new S3Client({
+  region: env.B2_REGION,
+  endpoint: env.B2_S3_ENDPOINT,
+  credentials: { accessKeyId: env.B2_KEY_ID, secretAccessKey: env.B2_APP_KEY },
+});
+
+export interface PartRecord { partNumber: number; etag: string; size: number; }
+
+// 16 MB floor, scaled so even a 100 GB file stays under the 10k-part cap.
+export function planParts(size: number) {
+  const MB = 1 << 20;
+  const partSize = Math.max(16 * MB, Math.ceil(size / 9000 / MB) * MB);
+  return { partSize, partCount: Math.max(1, Math.ceil(size / partSize)) };
+}
+
+export async function initiate(filename: string, contentType: string, size: number) {
+  const transferId = randomUUID();
+  const safe = filename.replace(/[^\w.\-]/g, "_");
+  const key = `transfers/${transferId}/${safe}`;
+  const { UploadId } = await s3.send(new CreateMultipartUploadCommand({
+    Bucket: BUCKET, Key: key, ContentType: contentType,
+  }));
+  const { partSize, partCount } = planParts(size);
+  return { transferId, key, uploadId: UploadId!, partSize, partCount };
+}
+
+export async function presignParts(key: string, uploadId: string, partNumbers: number[]) {
+  const urls: Record<number, string> = {};
+  await Promise.all(partNumbers.map(async (n) => {
+    urls[n] = await getSignedUrl(
+      s3, new UploadPartCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumber: n }),
+      { expiresIn: 3600 });
+  }));
+  return { urls };
+}
+
+// Resume truth: which parts has B2 already stored? Paginated — a 100 GB
+// upload has thousands of parts, well past the 1000-per-page limit.
+export async function listParts(key: string, uploadId: string): Promise<PartRecord[]> {
+  const out: PartRecord[] = [];
+  let marker: string | undefined;
+  do {
+    const r = await s3.send(new ListPartsCommand({
+      Bucket: BUCKET, Key: key, UploadId: uploadId, PartNumberMarker: marker,
+    }));
+    for (const p of r.Parts ?? [])
+      out.push({ partNumber: p.PartNumber!, etag: p.ETag!, size: p.Size! });
+    marker = r.IsTruncated ? r.NextPartNumberMarker : undefined;
+  } while (marker);
+  return out;
+}
+
+export async function complete(req: { key: string; uploadId: string; parts: PartRecord[] }) {
+  await s3.send(new CompleteMultipartUploadCommand({
+    Bucket: BUCKET, Key: req.key, UploadId: req.uploadId,
+    MultipartUpload: {
+      Parts: [...req.parts].sort((a, b) => a.partNumber - b.partNumber)
+        .map((p) => ({ ETag: p.etag, PartNumber: p.partNumber })),
+    },
+  }));
+}
+
+export const abort = (key: string, uploadId: string) =>
+  s3.send(new AbortMultipartUploadCommand({ Bucket: BUCKET, Key: key, UploadId: uploadId }));
+
+export const presignPut = (key: string) =>
+  getSignedUrl(s3, new PutObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: 3600 });
+
+// Download = Cloudflare CDN URL + short-lived HMAC token the Worker verifies.
+export function downloadUrl(key: string, ttlSec = 3600) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const sig = createHmac("sha256", env.CDN_TOKEN_SECRET).update(`${key}:${exp}`).digest("base64url");
+  const q = `exp=${exp}&sig=${sig}`;
+  return {
+    cdnUrl: `${env.CDN_BASE}/${key}?${q}`,
+    outboardUrl: `${env.CDN_BASE}/${key}.obao?${q}`,
+    expiresAt: exp * 1000,
+  };
+}

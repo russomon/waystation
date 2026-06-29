@@ -1,0 +1,10 @@
+[
+  {
+    "corsRuleName": "web-upload",
+    "allowedOrigins": ["http://localhost:5173", "https://app.orbitxfer.app"],
+    "allowedOperations": ["s3_put", "s3_get", "s3_head"],
+    "allowedHeaders": ["*"],
+    "exposeHeaders": ["ETag"],
+    "maxAgeSeconds": 3600
+  }
+]

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OrbitXfer Web</title>
+    <style>
+      body { font: 15px/1.6 system-ui, sans-serif; max-width: 640px; margin: 6vh auto; padding: 0 1rem; }
+      #drop { border: 2px dashed #bbb; border-radius: 12px; padding: 3rem; text-align: center; color: #666; }
+      #log { white-space: pre-wrap; margin-top: 1rem; font: 13px/1.5 ui-monospace, monospace; color: #333; }
+      a { color: #2563eb; }
+    </style>
+  </head>
+  <body>
+    <h1>OrbitXfer Web</h1>
+    <p>Send huge media — it arrives smarter.</p>
+    <label id="drop">
+      <input id="file" type="file" hidden />
+      Click to choose a file to send
+    </label>
+    <div id="log"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

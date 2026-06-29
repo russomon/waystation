@@ -1,0 +1,9 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+boto3>=1.35
+# Genblaze pipeline + adapters (confirm exact names/versions on first install):
+genblaze-core
+genblaze-gmicloud
+genblaze-s3
+# NOTE: ffmpeg/ffprobe must be installed on the host (brew install ffmpeg).

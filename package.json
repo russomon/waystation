@@ -1,0 +1,14 @@
+{
+  "name": "orbitxfer-web",
+  "private": true,
+  "version": "0.0.1",
+  "description": "High-speed media delivery + AI enrichment over Backblaze B2, Genblaze, and GMI Cloud.",
+  "workspaces": ["gateway", "client", "cdn-worker"],
+  "scripts": {
+    "dev:gateway": "npm -w gateway run dev",
+    "dev:client": "npm -w client run dev",
+    "dev:worker": "npm -w cdn-worker run dev",
+    "dev:pipeline": "cd pipeline && uvicorn worker:app --port 8000 --reload",
+    "build:wasm": "cd crates/blake3-outboard && wasm-pack build --target web --out-dir pkg"
+  }
+}
