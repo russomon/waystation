@@ -75,9 +75,13 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   chunk-aligned ranges and verifies each against the BLAKE3 root before
   accepting (`crates/blake3-outboard` + `client/src/downloader.ts`).
   Native cargo tests + the comprehensive `gateway/scripts/e2e.mjs` cover it.
+- ✅ **B2 Object Lock on the manifest** — when `MANIFEST_LOCK_DAYS > 0`, the
+  provenance manifest is written WORM (COMPLIANCE retention): immutable,
+  even to the account owner, until expiry. Proven by
+  `scripts/object-lock-proof.sh` (locked version cannot be deleted).
+  Requires the bucket created with Object Lock enabled.
 - ⏳ Swap the **summarize/transcribe** seam in `pipeline/worker.py` for a real
   GMI Cloud / Genblaze call (gated on `GMI_API_KEY` today).
-- ⏳ B2 Object Lock on the manifest (tamper-proof provenance).
 
 Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
 `bash scripts/phase2-loop-proof.sh` · `bash scripts/delivery-proof.sh` ·

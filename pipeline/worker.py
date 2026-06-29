@@ -16,7 +16,7 @@ import json
 import os
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
 import httpx
@@ -27,6 +27,13 @@ from pydantic import BaseModel
 app = FastAPI()
 SHARED = os.environ["PIPELINE_SHARED_SECRET"]
 BUCKET = os.environ["B2_BUCKET"]
+
+# Tamper-proof provenance: when > 0, the manifest is written under B2 Object
+# Lock in COMPLIANCE mode (write-once-read-many) for this many days — nobody,
+# not even the account owner, can alter or delete it until then. Requires the
+# bucket to have Object Lock enabled. 0 (default) = no lock (dev). Only the
+# manifest is locked; originals/derivatives stay expirable via lifecycle.
+MANIFEST_LOCK_DAYS = int(os.environ.get("MANIFEST_LOCK_DAYS", "0"))
 
 s3 = boto3.client(
     "s3",
@@ -154,9 +161,17 @@ def run_pipeline(job: Job) -> None:
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         mkey = f"derivatives/{tid}/manifest.json"
-        s3.put_object(Bucket=BUCKET, Key=mkey, Body=json.dumps(manifest, indent=2).encode(),
-                      ContentType="application/json")
-        progress(job, {"type": "manifest_written", "key": mkey})
+        put_args = dict(Bucket=BUCKET, Key=mkey,
+                        Body=json.dumps(manifest, indent=2).encode(),
+                        ContentType="application/json")
+        locked_until = None
+        if MANIFEST_LOCK_DAYS > 0:
+            locked_until = datetime.now(timezone.utc) + timedelta(days=MANIFEST_LOCK_DAYS)
+            put_args["ObjectLockMode"] = "COMPLIANCE"
+            put_args["ObjectLockRetainUntilDate"] = locked_until
+        s3.put_object(**put_args)
+        progress(job, {"type": "manifest_written", "key": mkey,
+                       "locked_until": locked_until.isoformat() if locked_until else None})
 
     progress(job, {"type": "pipeline_complete", "derivatives": [d["key"] for d in derivatives], "manifest": mkey})
 
