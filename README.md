@@ -70,9 +70,13 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   download, and a working **Verify provenance** button (re-hashes the
   original + derivatives, compares to the manifest). Endpoint
   `GET /api/transfers/:id`; proven by `scripts/delivery-proof.sh`.
+- ✅ **bao outboard — verified, resumable, tamper-checked range download.**
+  Upload produces a `.obao` sidecar; download pulls the object in
+  chunk-aligned ranges and verifies each against the BLAKE3 root before
+  accepting (`crates/blake3-outboard` + `client/src/downloader.ts`).
+  Native cargo tests + the comprehensive `gateway/scripts/e2e.mjs` cover it.
 - ⏳ Swap the **summarize/transcribe** seam in `pipeline/worker.py` for a real
   GMI Cloud / Genblaze call (gated on `GMI_API_KEY` today).
-- ⏳ **v1:** bao outboard for verified *range/resumable* download.
 - ⏳ B2 Object Lock on the manifest (tamper-proof provenance).
 
 Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
