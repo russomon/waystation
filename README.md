@@ -48,12 +48,21 @@ npm run dev:pipeline            # :8000  (needs: python deps + ffmpeg)
 
 ## Status
 
-- ✅ Upload (presigned multipart, parallel, resumable via `ListParts`)
-- ✅ BLAKE3 root content-address; verified whole-file download
-- ✅ B2 Event Notification → gateway → Genblaze pipeline dispatch → SSE progress
-- ⏳ **v1:** bao outboard for verified *range/resumable* download
-- ⏳ Real Genblaze/GMI step bodies (seams marked `TODO` in `pipeline/worker.py`)
-- ⏳ Recipient delivery page + provenance `verify` button + B2 Object Lock
+- ✅ **Phase 1 — transfer, verified end-to-end** (`gateway/scripts/e2e.mjs`,
+  passed at 40 MB + 250 MB on a real S3 API): presigned multipart upload →
+  `ListParts` resume → complete → download → BLAKE3 verify.
+- ✅ **Phase 2 slice — reactive loop, verified end-to-end**
+  (`scripts/phase2-loop-proof.sh`): signed B2 event → gateway → pipeline
+  doing **real work** (ffprobe metadata + ffmpeg poster frame) → provenance
+  manifest + derivatives in storage → live SSE progress. Loop-safe
+  (outputs under `derivatives/`).
+- ⏳ Swap the **summarize/transcribe** seam in `pipeline/worker.py` for a real
+  GMI Cloud / Genblaze call (gated on `GMI_API_KEY` today).
+- ⏳ **v1:** bao outboard for verified *range/resumable* download.
+- ⏳ Recipient delivery page + provenance `verify` button + B2 Object Lock.
+
+Reproduce locally (no cloud creds): `bash scripts/phase2-loop-proof.sh`
+(needs MinIO + ffmpeg + the `pipeline/.venv`).
 
 ## Gotchas
 
