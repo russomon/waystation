@@ -56,13 +56,18 @@ npm run dev:pipeline            # :8000  (needs: python deps + ffmpeg)
   doing **real work** (ffprobe metadata + ffmpeg poster frame) → provenance
   manifest + derivatives in storage → live SSE progress. Loop-safe
   (outputs under `derivatives/`).
+- ✅ **Recipient delivery page** (`/?t=<id>`) — preview, AI summary,
+  download, and a working **Verify provenance** button (re-hashes the
+  original + derivatives, compares to the manifest). Endpoint
+  `GET /api/transfers/:id`; proven by `scripts/delivery-proof.sh`.
 - ⏳ Swap the **summarize/transcribe** seam in `pipeline/worker.py` for a real
   GMI Cloud / Genblaze call (gated on `GMI_API_KEY` today).
 - ⏳ **v1:** bao outboard for verified *range/resumable* download.
-- ⏳ Recipient delivery page + provenance `verify` button + B2 Object Lock.
+- ⏳ B2 Object Lock on the manifest (tamper-proof provenance).
 
-Reproduce locally (no cloud creds): `bash scripts/phase2-loop-proof.sh`
-(needs MinIO + ffmpeg + the `pipeline/.venv`).
+Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
+`bash scripts/phase2-loop-proof.sh` · `bash scripts/delivery-proof.sh` ·
+`node gateway/scripts/e2e.mjs` (with a gateway pointed at MinIO/B2).
 
 ## Gotchas
 

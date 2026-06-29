@@ -31,6 +31,37 @@ api.post("/uploads/complete", async (c) => {
 // ───────── download ─────────
 api.get("/downloads", async (c) => c.json(g.downloadUrl(c.req.query("key")!)));
 
+// ───────── delivery page data ─────────
+// Assembles a transfer from storage: the original + the pipeline's
+// derivatives + manifest, each as a presigned URL the recipient can fetch.
+// (Store-free: discovered by prefix. Production would add a record for
+// recipients/expiry/access — see store.ts TODO.)
+const mimeOf = (k: string) =>
+  k.endsWith(".jpg") || k.endsWith(".jpeg") ? "image/jpeg"
+  : k.endsWith(".vtt") ? "text/vtt"
+  : k.endsWith(".txt") ? "text/plain"
+  : k.endsWith(".json") ? "application/json"
+  : k.endsWith(".mp4") ? "video/mp4"
+  : "application/octet-stream";
+
+api.get("/transfers/:id", async (c) => {
+  const id = c.req.param("id");
+  const originals = (await g.listKeys(`transfers/${id}/`)).filter((o) => !o.key.endsWith(".obao"));
+  if (originals.length === 0) return c.json({ error: "not found" }, 404);
+  const orig = originals[0];
+  const derivs = await g.listKeys(`derivatives/${id}/`);
+  const sign = async (k: string, size: number) => ({ key: k, url: await g.presignGet(k), mime: mimeOf(k), size });
+
+  const manifest = derivs.find((d) => d.key.endsWith("manifest.json"));
+  return c.json({
+    transferId: id,
+    original: { ...(await sign(orig.key, orig.size)), filename: orig.key.split("/").pop() },
+    manifestUrl: manifest ? await g.presignGet(manifest.key) : null,
+    derivatives: await Promise.all(
+      derivs.filter((d) => !d.key.endsWith("manifest.json")).map((d) => sign(d.key, d.size))),
+  });
+});
+
 // ───────── B2 Event Notification → Genblaze pipeline ─────────
 api.post("/events/b2", async (c) => {
   const raw = await c.req.text();

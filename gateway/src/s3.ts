@@ -3,6 +3,7 @@
 import {
   S3Client, CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand,
   CompleteMultipartUploadCommand, AbortMultipartUploadCommand, PutObjectCommand,
+  GetObjectCommand, ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createHmac, randomUUID } from "node:crypto";
@@ -80,6 +81,23 @@ export const abort = (key: string, uploadId: string) =>
 
 export const presignPut = (key: string) =>
   getSignedUrl(s3, new PutObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: 3600 });
+
+// Presigned direct GET (works in dev/MinIO and against B2). Used for the
+// delivery page's small assets; the big original can switch to the CDN URL
+// below in production.
+export const presignGet = (key: string, ttlSec = 3600) =>
+  getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: ttlSec });
+
+export async function listKeys(prefix: string): Promise<{ key: string; size: number }[]> {
+  const out: { key: string; size: number }[] = [];
+  let token: string | undefined;
+  do {
+    const r = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: token }));
+    for (const o of r.Contents ?? []) out.push({ key: o.Key!, size: o.Size ?? 0 });
+    token = r.IsTruncated ? r.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
 
 // Download = Cloudflare CDN URL + short-lived HMAC token the Worker verifies.
 export function downloadUrl(key: string, ttlSec = 3600) {

@@ -5,20 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OrbitXfer Web</title>
     <style>
-      body { font: 15px/1.6 system-ui, sans-serif; max-width: 640px; margin: 6vh auto; padding: 0 1rem; }
-      #drop { border: 2px dashed #bbb; border-radius: 12px; padding: 3rem; text-align: center; color: #666; }
-      #log { white-space: pre-wrap; margin-top: 1rem; font: 13px/1.5 ui-monospace, monospace; color: #333; }
+      body { font: 15px/1.6 system-ui, sans-serif; max-width: 640px; margin: 6vh auto; padding: 0 1rem; color: #1a1a1a; }
+      h1 { margin-bottom: .2rem; }
+      #drop { display: block; border: 2px dashed #bbb; border-radius: 12px; padding: 3rem; text-align: center; color: #666; cursor: pointer; }
+      #log { white-space: pre-wrap; margin-top: 1rem; font: 13px/1.6 ui-monospace, monospace; color: #333; }
       a { color: #2563eb; }
+      .deliv { border: 1px solid #e5e7eb; border-radius: 14px; padding: 1.25rem 1.5rem; }
+      .deliv h2 { margin: .6rem 0 .1rem; }
+      .deliv .meta { color: #6b7280; margin: 0 0 .8rem; font-size: 13px; }
+      .deliv .summary { background: #f8fafc; border-radius: 8px; padding: .7rem .9rem; }
+      .deliv .summary.muted { color: #9ca3af; }
+      img.thumb { width: 100%; border-radius: 10px; display: block; background: #f3f4f6; }
+      .btn { display: inline-block; margin-top: .9rem; padding: .55rem 1rem; border-radius: 8px; background: #2563eb; color: #fff; text-decoration: none; border: 0; font: inherit; cursor: pointer; }
+      .btn.ghost { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
+      .prov { margin-top: 1.1rem; border-top: 1px solid #eee; padding-top: .8rem; }
+      .prov summary { cursor: pointer; font-weight: 500; }
+      .mono { font: 12px/1.6 ui-monospace, monospace; color: #4b5563; word-break: break-all; }
+      .verify { margin-top: .6rem; font: 13px/1.7 ui-monospace, monospace; }
+      .verify .ok { color: #047857; }
+      .verify .bad { color: #b91c1c; }
     </style>
   </head>
   <body>
-    <h1>OrbitXfer Web</h1>
-    <p>Send huge media — it arrives smarter.</p>
-    <label id="drop">
-      <input id="file" type="file" hidden />
-      Click to choose a file to send
-    </label>
-    <div id="log"></div>
+    <div id="sender">
+      <h1>OrbitXfer Web</h1>
+      <p>Send huge media — it arrives smarter.</p>
+      <label id="drop"><input id="file" type="file" hidden /> Click to choose a file to send</label>
+      <div id="log"></div>
+    </div>
+    <div id="delivery" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
