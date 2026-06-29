@@ -45,10 +45,14 @@ export async function uploadFile(file: File, onProgress: (p: Progress) => void) 
     onProgress({ bytes: Math.min(uploaded, file.size), total: file.size, phase: "uploading" });
   });
 
-  const { root } = await hashing;
-  // TODO v1: upload the bao outboard sidecar here (presign /uploads/outboard-url).
+  const { root, outboard } = await hashing;
 
-  // 5. complete — gateway assembles from ListParts; we just send the id + hash
+  // 5. upload the bao outboard sidecar (enables verified range/resumable download)
+  const ob = await post("/uploads/outboard-url", { key: st.key });
+  const obRes = await fetch(ob.url, { method: "PUT", body: outboard });
+  if (!obRes.ok) throw new Error(`outboard upload failed: HTTP ${obRes.status}`);
+
+  // 6. complete — gateway assembles from ListParts; we send the id + content hash
   await post("/uploads/complete", { key: st.key, uploadId: st.uploadId, blake3Root: root });
   await clearResume(fp);
 

@@ -2,8 +2,17 @@
 // "Verify provenance" button that re-hashes the assets (SHA-256, Web Crypto)
 // and checks them against the manifest. Reached at /?t=<transferId>.
 
+import { downloadVerified } from "./downloader.js";
+
 interface Asset { key: string; url: string; mime: string; size: number; }
-interface Transfer { transferId: string; original: Asset & { filename: string }; manifestUrl: string | null; derivatives: Asset[]; }
+interface Transfer {
+  transferId: string;
+  original: Asset & { filename: string };
+  blake3Root: string | null;
+  outboardUrl: string | null;
+  manifestUrl: string | null;
+  derivatives: Asset[];
+}
 
 const el = (html: string): HTMLElement => {
   const t = document.createElement("template");
@@ -41,6 +50,30 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   if (summary) (card.querySelector(".summary") as HTMLElement).textContent = summary;
 
   card.append(el(`<a class="btn" href="${t.original.url}" download="${t.original.filename}">Download original</a>`));
+
+  // Verified download — pulls the object in ranges and checks each against the
+  // bao outboard before accepting it. Only offered when the outboard exists.
+  if (t.outboardUrl && t.blake3Root) {
+    const vbtn = el(`<button class="btn ghost">Download (verified)</button>`) as HTMLButtonElement;
+    vbtn.onclick = async () => {
+      vbtn.disabled = true;
+      try {
+        const { blob, verified } = await downloadVerified(t.transferId, (d, tot) => {
+          vbtn.textContent = `verifying ${Math.floor((d / tot) * 100)}%`;
+        });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = t.original.filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        vbtn.textContent = verified ? "downloaded ✓ (verified)" : "downloaded (unverified)";
+      } catch (e) {
+        vbtn.textContent = "✗ " + (e as Error).message;
+      }
+      vbtn.disabled = false;
+    };
+    card.append(vbtn);
+  }
 
   if (manifest) {
     const prov = el(`<details class="prov" open><summary>Provenance</summary></details>`);

@@ -9,6 +9,7 @@
     "dev:client": "npm -w client run dev",
     "dev:worker": "npm -w cdn-worker run dev",
     "dev:pipeline": "cd pipeline && uvicorn worker:app --port 8000 --reload",
-    "build:wasm": "cd crates/blake3-outboard && wasm-pack build --target web --out-dir pkg"
+    "build:wasm": "cd crates/blake3-outboard && wasm-pack build --target web --out-dir pkg",
+    "build:wasm:node": "cd crates/blake3-outboard && wasm-pack build --target nodejs --out-dir pkg-node"
   }
 }

@@ -3,6 +3,7 @@ import { streamSSE } from "hono/streaming";
 import * as g from "./s3.js";
 import { verifyB2Signature, parseB2Events, isOriginalMedia, transferIdFromKey } from "./events.js";
 import { dispatchPipeline } from "./pipeline.js";
+import { saveTransfer, getTransfer } from "./store.js";
 import * as sse from "./sse.js";
 
 const env = process.env as Record<string, string>;
@@ -24,7 +25,7 @@ api.post("/uploads/outboard-url", async (c) =>
 api.post("/uploads/complete", async (c) => {
   const b = await c.req.json(); // { key, uploadId, blake3Root }
   await g.complete(b.key, b.uploadId);
-  // TODO: persist transfer metadata (blake3Root, recipients, expiry) → store.ts
+  if (b.blake3Root) saveTransfer(transferIdFromKey(b.key), { key: b.key, blake3Root: b.blake3Root, createdAt: Date.now() });
   // Dev only: no real B2 event source locally, so simulate the
   // object-created trigger right after assembly. Production leaves
   // DEV_TRIGGER_ON_COMPLETE unset and the real B2 Event Notification drives it.
@@ -54,9 +55,11 @@ const mimeOf = (k: string) =>
 
 api.get("/transfers/:id", async (c) => {
   const id = c.req.param("id");
-  const originals = (await g.listKeys(`transfers/${id}/`)).filter((o) => !o.key.endsWith(".obao"));
+  const all = await g.listKeys(`transfers/${id}/`);
+  const originals = all.filter((o) => !o.key.endsWith(".obao"));
   if (originals.length === 0) return c.json({ error: "not found" }, 404);
   const orig = originals[0];
+  const outboard = all.find((o) => o.key.endsWith(".obao"));
   const derivs = await g.listKeys(`derivatives/${id}/`);
   const sign = async (k: string, size: number) => ({ key: k, url: await g.presignGet(k), mime: mimeOf(k), size });
 
@@ -64,6 +67,10 @@ api.get("/transfers/:id", async (c) => {
   return c.json({
     transferId: id,
     original: { ...(await sign(orig.key, orig.size)), filename: orig.key.split("/").pop() },
+    // verified-range download material (present once an upload went through
+    // `complete`, which records the root and the .obao sidecar lands).
+    blake3Root: getTransfer(id)?.blake3Root ?? null,
+    outboardUrl: outboard ? await g.presignGet(outboard.key) : null,
     manifestUrl: manifest ? await g.presignGet(manifest.key) : null,
     derivatives: await Promise.all(
       derivs.filter((d) => !d.key.endsWith("manifest.json")).map((d) => sign(d.key, d.size))),
