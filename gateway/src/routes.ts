@@ -22,9 +22,17 @@ api.get("/uploads/parts", async (c) =>
 api.post("/uploads/outboard-url", async (c) =>
   c.json({ url: await g.presignPut((await c.req.json()).key + ".obao") }));
 api.post("/uploads/complete", async (c) => {
-  const b = await c.req.json();
-  await g.complete(b);
+  const b = await c.req.json(); // { key, uploadId, blake3Root }
+  await g.complete(b.key, b.uploadId);
   // TODO: persist transfer metadata (blake3Root, recipients, expiry) → store.ts
+  // Dev only: no real B2 event source locally, so simulate the
+  // object-created trigger right after assembly. Production leaves
+  // DEV_TRIGGER_ON_COMPLETE unset and the real B2 Event Notification drives it.
+  if (env.DEV_TRIGGER_ON_COMPLETE === "true") {
+    const transferId = transferIdFromKey(b.key);
+    sse.publish(transferId, { type: "pipeline_queued", key: b.key });
+    void dispatchPipeline({ bucket: env.B2_BUCKET, key: b.key, transferId });
+  }
   return c.json({ ok: true });
 });
 

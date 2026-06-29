@@ -38,10 +38,9 @@ export async function uploadFile(file: File, onProgress: (p: Progress) => void) 
     const blob = file.slice(start, Math.min(start + st!.partSize, file.size));
     const res = await fetch(urls[n], { method: "PUT", body: blob });
     if (!res.ok) throw new Error(`part ${n}: HTTP ${res.status}`);
-    const etag = res.headers.get("ETag");
-    if (!etag) throw new Error("missing ETag — check B2 CORS exposeHeaders: ['ETag']");
-    st!.done[n] = etag;
-    await markPart(fp, n, etag);
+    // No need to read the ETag — the gateway assembles from ListParts.
+    st!.done[n] = "1";
+    await markPart(fp, n, "1");
     uploaded += blob.size;
     onProgress({ bytes: Math.min(uploaded, file.size), total: file.size, phase: "uploading" });
   });
@@ -49,9 +48,8 @@ export async function uploadFile(file: File, onProgress: (p: Progress) => void) 
   const { root } = await hashing;
   // TODO v1: upload the bao outboard sidecar here (presign /uploads/outboard-url).
 
-  // 5. complete
-  const parts = Object.entries(st.done).map(([n, etag]) => ({ partNumber: +n, etag, size: 0 }));
-  await post("/uploads/complete", { key: st.key, uploadId: st.uploadId, parts, blake3Root: root });
+  // 5. complete — gateway assembles from ListParts; we just send the id + hash
+  await post("/uploads/complete", { key: st.key, uploadId: st.uploadId, blake3Root: root });
   await clearResume(fp);
 
   const transferId = st.key.split("/")[1];

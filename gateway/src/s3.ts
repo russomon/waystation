@@ -66,14 +66,19 @@ export async function listParts(key: string, uploadId: string): Promise<PartReco
   return out;
 }
 
-export async function complete(req: { key: string; uploadId: string; parts: PartRecord[] }) {
+// Assemble from the part list B2 itself holds (ListParts) — so the browser
+// never needs to read part ETags. That removes the cross-origin
+// Expose-Headers requirement entirely; the server is the source of truth.
+export async function complete(key: string, uploadId: string): Promise<number> {
+  const parts = await listParts(key, uploadId);
   await s3.send(new CompleteMultipartUploadCommand({
-    Bucket: BUCKET, Key: req.key, UploadId: req.uploadId,
+    Bucket: BUCKET, Key: key, UploadId: uploadId,
     MultipartUpload: {
-      Parts: [...req.parts].sort((a, b) => a.partNumber - b.partNumber)
+      Parts: parts.sort((a, b) => a.partNumber - b.partNumber)
         .map((p) => ({ ETag: p.etag, PartNumber: p.partNumber })),
     },
   }));
+  return parts.length;
 }
 
 export const abort = (key: string, uploadId: string) =>

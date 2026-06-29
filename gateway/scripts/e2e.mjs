@@ -46,16 +46,13 @@ async function uploadPart(n) {
   const slice = data.subarray(start, Math.min(start + init.partSize, SIZE));
   const res = await fetch(urls[n], { method: "PUT", body: slice });
   if (!res.ok) fail(`part ${n} PUT → HTTP ${res.status}`);
-  const etag = res.headers.get("etag");
-  if (!etag) fail("no ETag on part response (CORS/headers)");
-  return { partNumber: n, etag, size: slice.length };
+  // No ETag read — the gateway assembles from ListParts on complete.
 }
 
 // 3. upload the FIRST HALF, then simulate a crash → resume via ListParts
 const all = Array.from({ length: init.partCount }, (_, i) => i + 1);
 const half = Math.max(1, Math.floor(all.length / 2));
-const parts = [];
-for (const n of all.slice(0, half)) parts.push(await uploadPart(n));
+for (const n of all.slice(0, half)) await uploadPart(n);
 
 const listed = await api(`/api/uploads/parts?key=${encodeURIComponent(init.key)}&uploadId=${init.uploadId}`);
 console.log(`resume check: B2/MinIO reports ${listed.length} part(s) already stored`);
@@ -63,14 +60,14 @@ if (listed.length !== half) fail(`ListParts expected ${half}, got ${listed.lengt
 
 // 4. resume: upload the rest (skipping what's already there)
 const have = new Set(listed.map((p) => p.partNumber));
-for (const n of all.slice(half)) if (!have.has(n)) parts.push(await uploadPart(n));
+for (const n of all.slice(half)) if (!have.has(n)) await uploadPart(n);
 
-// 5. complete
+// 5. complete — gateway assembles from ListParts; we send only id + content hash
 await api("/api/uploads/complete", {
   method: "POST", headers: { "content-type": "application/json" },
-  body: JSON.stringify({ key: init.key, uploadId: init.uploadId, parts, blake3Root: root }),
+  body: JSON.stringify({ key: init.key, uploadId: init.uploadId, blake3Root: root }),
 });
-console.log(`complete: assembled ${parts.length} parts into ${init.key}`);
+console.log(`complete: gateway assembled ${all.length} parts into ${init.key}`);
 
 // 6. download + verify
 const getUrl = await getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: init.key }), { expiresIn: 600 });
