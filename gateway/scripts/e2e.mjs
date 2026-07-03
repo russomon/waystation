@@ -27,9 +27,9 @@ const api = (p, opts) => fetch(GATEWAY + p, opts).then((r) => r.json());
 const jpost = (p, body) => api(p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const fail = (m) => { console.error("FAIL:", m); process.exit(1); };
 
-try { await s3.send(new CreateBucketCommand({ Bucket: BUCKET })); } catch (e) {
-  if (!/BucketAlready/.test(String(e.name))) throw e;
-}
+// MinIO: creates it. B2: buckets are pre-created (S3 CreateBucket may be
+// unsupported) — ignore and assume it exists.
+try { await s3.send(new CreateBucketCommand({ Bucket: BUCKET })); } catch { /* exists / unsupported */ }
 
 // 1. payload → content-address root + bao outboard (the browser does exactly this)
 const data = randomBytes(SIZE);
