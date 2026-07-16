@@ -29,6 +29,7 @@ export function parseB2Events(body: unknown): B2Event[] {
 export function isOriginalMedia(key: string): boolean {
   if (!key.startsWith("transfers/")) return false;
   if (key.endsWith(".obao")) return false;
+  if (/\.(srt|vtt)$/i.test(key)) return false; // caption sidecars ride along with the master
   if (key.includes("/derivatives/")) return false;
   return true;
 }

@@ -87,10 +87,15 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   Maps 1:1 onto Stripe/Lago usage meters for real billing later.
 - ✅ **Deterministic QC lane.** ffmpeg/ffprobe checks at the waystation —
   decode/corruption, black frames, freeze frames, audio silence, EBU R128
-  loudness, stream conformance — written as a provenance-covered
-  `qc_report.json`, billed per media-minute, with a pass/warn/fail badge on
-  the delivery page. Proven by `scripts/qc-proof.sh` (clean clip passes;
-  black+silent clip flagged).
+  loudness, stream conformance — **plus caption/subtitle QC**: track
+  presence, SRT/VTT validity, cue timing (overlaps, past-EOF, ordering),
+  readability limits (20 CPS, 42 chars/line, 2 lines/cue), and coverage.
+  A sidecar `.srt`/`.vtt` uploaded with the master rides into the QC (and
+  never triggers its own pipeline run). Report written as a
+  provenance-covered `qc_report.json`, billed per media-minute, rendered as
+  a pass/warn/fail badge on the delivery page. Proven by
+  `scripts/qc-proof.sh` (clean master + compliant captions pass; black+
+  silent clip with broken captions flagged with exact defect counts).
 - ⏳ Swap the **summarize/transcribe** seam in `pipeline/worker.py` for a real
   GMI Cloud / Genblaze call (gated on `GMI_API_KEY` today) — and add the
   AI-assisted QC steps (GMI vision on sampled frames) beside the

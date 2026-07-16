@@ -86,7 +86,71 @@ def ffprobe(path: str) -> dict:
     return json.loads(out.stdout)
 
 
-def run_qc(src: str, meta: dict) -> dict:
+# SRT/VTT cue: optional hours, comma (SRT) or dot (VTT) millisecond separator.
+_CUE_TS = r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[.,](\d{3})"
+_CUE_RE = re.compile(_CUE_TS + r"\s*-->\s*" + _CUE_TS)
+
+
+def _ts_seconds(h, m, s, ms) -> float:
+    return int(h or 0) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+
+
+def parse_caption_cues(text: str) -> list:
+    """Tolerant SRT/WebVTT parser → [(start_s, end_s, cue_text), …]."""
+    cues = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        m = _CUE_RE.search(lines[i])
+        if m:
+            start = _ts_seconds(*m.groups()[0:4])
+            end = _ts_seconds(*m.groups()[4:8])
+            body = []
+            i += 1
+            while i < len(lines) and lines[i].strip():
+                body.append(lines[i].strip())
+                i += 1
+            cues.append((start, end, "\n".join(body)))
+        i += 1
+    return cues
+
+
+def caption_checks(cues: list, duration: float, source: str) -> list:
+    """Deterministic caption QC: timing sanity, readability limits, coverage.
+    Thresholds follow common broadcast subtitle specs (~20 CPS, 42 chars/line,
+    max 2 lines per cue)."""
+    checks = []
+    n = len(cues)
+    if n == 0:
+        return [{"name": "captions_valid", "status": "warn",
+                 "detail": f"{source}: no cues could be parsed"}]
+    checks.append({"name": "captions_valid", "status": "pass", "detail": f"{source}: {n} cue(s) parsed"})
+
+    overlaps = sum(1 for i in range(1, n) if cues[i][0] < cues[i - 1][1])
+    out_of_order = sum(1 for i in range(1, n) if cues[i][0] < cues[i - 1][0])
+    past_eof = sum(1 for c in cues if duration and c[1] > duration + 1.0)
+    timing_issues = overlaps + out_of_order + past_eof
+    checks.append({"name": "caption_timing", "status": "pass" if timing_issues == 0 else "warn",
+                   "detail": f"{overlaps} overlap(s), {past_eof} past end-of-video, {out_of_order} out-of-order"})
+
+    cps_viol = line_viol = 0
+    for (st, en, txt) in cues:
+        dur = max(en - st, 0.001)
+        if len(txt.replace("\n", "")) / dur > 20.0:
+            cps_viol += 1
+        cue_lines = txt.split("\n")
+        if len(cue_lines) > 2 or any(len(ln) > 42 for ln in cue_lines):
+            line_viol += 1
+    checks.append({"name": "caption_readability", "status": "pass" if cps_viol + line_viol == 0 else "warn",
+                   "detail": f"{cps_viol} cue(s) over 20 CPS, {line_viol} cue(s) over line limits"})
+
+    covered = sum(max(min(en, duration or en) - st, 0) for st, en, _ in cues)
+    pct = f", {round(100 * covered / duration, 1)}% of runtime covered" if duration else ""
+    checks.append({"name": "caption_coverage", "status": "pass", "detail": f"{n} cue(s){pct}"})
+    return checks
+
+
+def run_qc(src: str, meta: dict, captions_path: str | None = None) -> dict:
     """Deterministic media QC (the checks broadcast QC tools sell):
     stream conformance, full-decode corruption pass, black/freeze/silence
     detection, and EBU R128 loudness. Pure ffmpeg/ffprobe — no AI keys.
@@ -136,6 +200,38 @@ def run_qc(src: str, meta: dict) -> dict:
                   f"integrated {lufs} LUFS (broadcast target ~ -23)")
         else:
             check("loudness", "warn", "could not measure")
+
+    # 3) captions & subtitles — presence, then text QC on whatever we can read:
+    #    a sidecar .srt/.vtt if provided, else the first embedded text track.
+    sub_streams = [s for s in streams if s.get("codec_type") == "subtitle"]
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    cap_text = cap_source = None
+    if captions_path:
+        with open(captions_path, encoding="utf-8", errors="replace") as f:
+            cap_text = f.read()
+        cap_source = "sidecar " + os.path.basename(captions_path)
+    elif sub_streams:
+        extracted = os.path.join(os.path.dirname(src) or ".", "embedded_captions.srt")
+        r = subprocess.run(["ffmpeg", "-y", "-i", src, "-map", "0:s:0", "-c:s", "srt", extracted],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and os.path.exists(extracted):
+            with open(extracted, encoding="utf-8", errors="replace") as f:
+                cap_text = f.read()
+            cap_source = "embedded track"
+
+    if captions_path or sub_streams:
+        detail = " + ".join(filter(None, [
+            "sidecar file" if captions_path else None,
+            f"{len(sub_streams)} embedded track(s)" if sub_streams else None]))
+        check("captions_present", "pass", detail)
+        if cap_text is not None:
+            checks.extend(caption_checks(parse_caption_cues(cap_text), duration, cap_source))
+        else:
+            check("captions_valid", "warn",
+                  "subtitle track not text-extractable (bitmap subs?) — text checks skipped")
+    else:
+        check("captions_present", "warn",
+              "no caption track or sidecar found (mastered deliveries usually require captions)")
 
     statuses = [c["status"] for c in checks]
     overall = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "pass")
@@ -199,10 +295,25 @@ def run_pipeline(job: Job) -> None:
         except Exception as e:
             progress(job, {"type": "step_error", "step": "thumbnail", "error": str(e)})
 
-        # 3. QC — deterministic media checks (billable per media-minute)
+        # 3. QC — deterministic media checks (billable per media-minute).
+        #    A caption sidecar (.srt/.vtt) uploaded alongside the master rides
+        #    into the caption QC; it never triggers its own pipeline run (the
+        #    gateway's event filter excludes those extensions).
+        captions_path = None
+        try:
+            listing = s3.list_objects_v2(Bucket=job.bucket, Prefix=f"transfers/{tid}/")
+            for obj in listing.get("Contents", []):
+                k = obj["Key"]
+                if k.lower().endswith((".srt", ".vtt")) and k != job.key:
+                    captions_path = os.path.join(tmp, os.path.basename(k))
+                    s3.download_file(job.bucket, k, captions_path)
+                    break
+        except Exception as e:
+            print("caption sidecar lookup failed:", e)
+
         progress(job, {"type": "step_started", "step": "qc"})
         try:
-            qc = run_qc(src, meta)
+            qc = run_qc(src, meta, captions_path)
             qc_key = f"derivatives/{tid}/qc_report.json"
             qc_body = json.dumps(qc, indent=2).encode()
             s3.put_object(Bucket=BUCKET, Key=qc_key, Body=qc_body, ContentType="application/json")
