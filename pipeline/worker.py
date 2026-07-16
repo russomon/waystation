@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -85,6 +86,62 @@ def ffprobe(path: str) -> dict:
     return json.loads(out.stdout)
 
 
+def run_qc(src: str, meta: dict) -> dict:
+    """Deterministic media QC (the checks broadcast QC tools sell):
+    stream conformance, full-decode corruption pass, black/freeze/silence
+    detection, and EBU R128 loudness. Pure ffmpeg/ffprobe — no AI keys.
+    The AI-assisted QC lane (GMI vision models on sampled frames) plugs in
+    alongside this once a GMI key is present."""
+    checks: list[dict] = []
+
+    def check(name: str, status: str, detail: str = "") -> None:
+        checks.append({"name": name, "status": status, "detail": detail})
+
+    streams = meta.get("streams", [])
+    kinds = [s.get("codec_type") for s in streams]
+    has_video = "video" in kinds
+    has_audio = "audio" in kinds
+    codecs = ", ".join(f"{s.get('codec_type')}/{s.get('codec_name')}" for s in streams)
+    check("has_video", "pass" if has_video else "fail", codecs)
+    check("has_audio", "pass" if has_audio else "warn", "")
+
+    # 1) full-decode pass — corruption / bitstream errors
+    dec = subprocess.run(["ffmpeg", "-v", "error", "-i", src, "-f", "null", "-"],
+                         capture_output=True, text=True)
+    errs = [ln for ln in dec.stderr.splitlines() if ln.strip()]
+    check("decode", "pass" if not errs else "fail",
+          f"{len(errs)} error line(s)" + (f"; first: {errs[0][:120]}" if errs else ""))
+
+    # 2) detections + loudness in one analysis pass (filters gated on streams)
+    cmd = ["ffmpeg", "-hide_banner", "-i", src]
+    if has_video:
+        cmd += ["-vf", "blackdetect=d=0.5:pix_th=0.10,freezedetect=n=-60dB:d=2"]
+    if has_audio:
+        cmd += ["-af", "silencedetect=noise=-50dB:d=2,ebur128"]
+    cmd += ["-f", "null", "-"]
+    log = subprocess.run(cmd, capture_output=True, text=True).stderr
+
+    if has_video:
+        blacks = log.count("black_start")
+        freezes = log.count("freeze_start")
+        check("black_frames", "pass" if blacks == 0 else "warn", f"{blacks} black segment(s)")
+        check("freeze_frames", "pass" if freezes == 0 else "warn", f"{freezes} frozen segment(s)")
+    if has_audio:
+        silences = log.count("silence_start")
+        check("audio_silence", "pass" if silences == 0 else "warn", f"{silences} silent segment(s)")
+        lufs_matches = re.findall(r"I:\s*(-?[\d.]+)\s*LUFS", log)
+        if lufs_matches:
+            lufs = float(lufs_matches[-1])  # last = the summary block
+            check("loudness", "pass" if -30.0 <= lufs <= -10.0 else "warn",
+                  f"integrated {lufs} LUFS (broadcast target ~ -23)")
+        else:
+            check("loudness", "warn", "could not measure")
+
+    statuses = [c["status"] for c in checks]
+    overall = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "pass")
+    return {"status": overall, "checks": checks}
+
+
 def summarize_via_gmi(meta: dict) -> str | None:
     if not GMI_API_KEY:
         return None
@@ -137,17 +194,35 @@ def run_pipeline(job: Job) -> None:
             key = f"derivatives/{tid}/thumb.jpg"
             s3.upload_file(thumb, BUCKET, key, ExtraArgs={"ContentType": "image/jpeg"})
             derivatives.append({"step": "thumbnail", "key": key, "sha256": sha256_file(thumb), "mime": "image/jpeg"})
-            progress(job, {"type": "step_done", "step": "thumbnail", "key": key})
+            progress(job, {"type": "step_done", "step": "thumbnail", "key": key,
+                           "billable": {"unit": "run", "units": 1}})
         except Exception as e:
             progress(job, {"type": "step_error", "step": "thumbnail", "error": str(e)})
 
-        # 3. summarize — GMI Cloud seam (skipped cleanly until a key is set)
+        # 3. QC — deterministic media checks (billable per media-minute)
+        progress(job, {"type": "step_started", "step": "qc"})
+        try:
+            qc = run_qc(src, meta)
+            qc_key = f"derivatives/{tid}/qc_report.json"
+            qc_body = json.dumps(qc, indent=2).encode()
+            s3.put_object(Bucket=BUCKET, Key=qc_key, Body=qc_body, ContentType="application/json")
+            derivatives.append({"step": "qc", "key": qc_key,
+                                "sha256": hashlib.sha256(qc_body).hexdigest(),
+                                "mime": "application/json"})
+            dur_min = float(meta.get("format", {}).get("duration", 0) or 0) / 60.0
+            progress(job, {"type": "step_done", "step": "qc", "key": qc_key, "status": qc["status"],
+                           "billable": {"unit": "minutes", "units": round(max(dur_min, 0.01), 3)}})
+        except Exception as e:
+            progress(job, {"type": "step_error", "step": "qc", "error": str(e)})
+
+        # 4. summarize — GMI Cloud seam (skipped cleanly until a key is set)
         progress(job, {"type": "step_started", "step": "summarize"})
         summary = None
         try:
             summary = summarize_via_gmi(meta)
             progress(job, {"type": "step_done" if summary else "step_skipped",
-                           "step": "summarize", "summary": summary, "reason": None if summary else "no GMI_API_KEY"})
+                           "step": "summarize", "summary": summary, "reason": None if summary else "no GMI_API_KEY",
+                           **({"billable": {"unit": "run", "units": 1}} if summary else {})})
         except Exception as e:
             progress(job, {"type": "step_error", "step": "summarize", "error": str(e)})
 

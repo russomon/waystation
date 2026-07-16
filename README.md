@@ -80,8 +80,21 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   even to the account owner, until expiry. Proven by
   `scripts/object-lock-proof.sh` (locked version cannot be deleted).
   Requires the bucket created with Object Lock enabled.
+- ✅ **Metering ledger (billing-ready).** Every billable event — transfer GB,
+  thumbnail, summarize, QC minutes — is recorded per transfer, each entry
+  traceable to the provenance manifest (`gateway/src/metering.ts`,
+  `GET /api/transfers/:id/usage`, optional `METERING_FILE` JSONL export).
+  Maps 1:1 onto Stripe/Lago usage meters for real billing later.
+- ✅ **Deterministic QC lane.** ffmpeg/ffprobe checks at the waystation —
+  decode/corruption, black frames, freeze frames, audio silence, EBU R128
+  loudness, stream conformance — written as a provenance-covered
+  `qc_report.json`, billed per media-minute, with a pass/warn/fail badge on
+  the delivery page. Proven by `scripts/qc-proof.sh` (clean clip passes;
+  black+silent clip flagged).
 - ⏳ Swap the **summarize/transcribe** seam in `pipeline/worker.py` for a real
-  GMI Cloud / Genblaze call (gated on `GMI_API_KEY` today).
+  GMI Cloud / Genblaze call (gated on `GMI_API_KEY` today) — and add the
+  AI-assisted QC steps (GMI vision on sampled frames) beside the
+  deterministic lane.
 
 Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
 `bash scripts/phase2-loop-proof.sh` · `bash scripts/delivery-proof.sh` ·

@@ -4,6 +4,7 @@ import * as g from "./s3.js";
 import { verifyB2Signature, parseB2Events, isOriginalMedia, transferIdFromKey } from "./events.js";
 import { dispatchPipeline } from "./pipeline.js";
 import { saveTransfer, getTransfer } from "./store.js";
+import { meter, usageFor } from "./metering.js";
 import * as sse from "./sse.js";
 
 const env = process.env as Record<string, string>;
@@ -24,8 +25,11 @@ api.post("/uploads/outboard-url", async (c) =>
   c.json({ url: await g.presignPut((await c.req.json()).key + ".obao") }));
 api.post("/uploads/complete", async (c) => {
   const b = await c.req.json(); // { key, uploadId, blake3Root }
-  await g.complete(b.key, b.uploadId);
-  if (b.blake3Root) saveTransfer(transferIdFromKey(b.key), { key: b.key, blake3Root: b.blake3Root, createdAt: Date.now() });
+  const { bytes } = await g.complete(b.key, b.uploadId);
+  const transferId = transferIdFromKey(b.key);
+  if (b.blake3Root) saveTransfer(transferId, { key: b.key, blake3Root: b.blake3Root, createdAt: Date.now() });
+  // Billable event: the transfer itself, in GB delivered into the waystation.
+  meter({ transferId, event: "transfer", units: Number((bytes / 1e9).toFixed(6)), unit: "gb", ref: b.key });
   // Dev only: no real B2 event source locally, so simulate the
   // object-created trigger right after assembly. Production leaves
   // DEV_TRIGGER_ON_COMPLETE unset and the real B2 Event Notification drives it.
@@ -110,5 +114,19 @@ api.post("/internal/progress", async (c) => {
     return c.text("forbidden", 403);
   const { transferId, ...event } = await c.req.json();
   sse.publish(transferId, event);
+  // Metering: the WORKER decides billability — any event carrying a
+  // `billable` block is a billable unit of work (a run, minutes, …).
+  if (event.billable && typeof event.billable.units === "number") {
+    meter({
+      transferId,
+      event: event.step ?? event.type,
+      units: event.billable.units,
+      unit: event.billable.unit ?? "run",
+      ref: event.key,
+    });
+  }
   return c.json({ ok: true });
 });
+
+// ───────── usage ledger (billing-ready; feeds Stripe/Lago meters later) ─────────
+api.get("/transfers/:id/usage", (c) => c.json(usageFor(c.req.param("id"))));

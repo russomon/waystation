@@ -36,6 +36,8 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   const manifest = t.manifestUrl ? await fetch(t.manifestUrl).then((r) => r.json()).catch(() => null) : null;
   const summary: string | undefined = manifest?.steps?.find((s: any) => s.step === "summarize")?.text;
   const thumb = t.derivatives.find((d) => d.mime === "image/jpeg");
+  const qcAsset = t.derivatives.find((d) => d.key.endsWith("qc_report.json"));
+  const qc = qcAsset ? await fetch(qcAsset.url).then((r) => r.json()).catch(() => null) : null;
 
   root.textContent = "";
   const card = el(`<div class="deliv"></div>`);
@@ -48,6 +50,16 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     ? `<p class="summary"></p>`
     : `<p class="summary muted">No AI summary yet — add a GMI Cloud key to enable transcribe / summarize.</p>`));
   if (summary) (card.querySelector(".summary") as HTMLElement).textContent = summary;
+
+  // QC badge — the deterministic media checks run at the waystation.
+  if (qc) {
+    const cls = qc.status === "pass" ? "ok" : qc.status === "warn" ? "warnc" : "bad";
+    const label = qc.status === "pass" ? "✓ QC passed" : qc.status === "warn" ? "⚠ QC warnings" : "✗ QC failed";
+    const badge = el(`<details class="prov"><summary><span class="${cls}">${label}</span></summary></details>`);
+    badge.append(el(`<p class="mono">${(qc.checks ?? []).map((c: any) =>
+      `${c.status === "pass" ? "✓" : c.status === "warn" ? "⚠" : "✗"} ${c.name}${c.detail ? " — " + c.detail : ""}`).join("<br>")}</p>`));
+    card.append(badge);
+  }
 
   card.append(el(`<a class="btn" href="${t.original.url}" download="${t.original.filename}">Download original</a>`));
 
@@ -87,6 +99,17 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     btn.onclick = () => verify(t, manifest, out, btn);
     prov.append(btn, out);
     card.append(prov);
+  }
+
+  // Usage ledger — billing-ready metering for this transfer.
+  const usage = await fetch(`/api/transfers/${id}/usage`).then((r) => r.json()).catch(() => null);
+  if (usage && usage.events?.length) {
+    const u = el(`<details class="prov"><summary>Usage (billing-ready)</summary></details>`);
+    const lines = Object.entries(usage.totals as Record<string, { units: number; unit: string }>)
+      .map(([k, v]) => `${k}: ${v.units} ${v.unit}`)
+      .join("<br>");
+    u.append(el(`<p class="mono">${lines}</p>`));
+    card.append(u);
   }
   root.append(card);
 }
