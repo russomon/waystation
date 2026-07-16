@@ -8,8 +8,11 @@ export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 [ -f "$WEB/.env" ] || { echo "✗ no .env — copy .env.example and fill in your B2 keys (see SETUP.md)"; exit 1; }
-set -a; # shellcheck disable=SC1091
-source "$WEB/.env"; set +a
+# Load only KEY=value lines, so a stray/malformed line can't be executed as a
+# command (which would echo a secret).
+set -a
+source <(grep -E '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=' "$WEB/.env")
+set +a
 
 for v in B2_S3_ENDPOINT B2_REGION B2_BUCKET B2_KEY_ID B2_APP_KEY; do
   val="${!v:-}"
