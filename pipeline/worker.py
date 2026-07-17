@@ -27,6 +27,16 @@ from botocore.config import Config
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from qc import audio as qaudio
+from qc import heal as qheal
+from qc import imf as qimf
+from qc import profiles as qprofiles
+from qc import report as qreport
+from qc import structural as qstructural
+from qc import text as qtext
+from qc import video as qvideo
+from qc.text import load_caption_cues, load_caption_text, parse_caption_cues
+
 app = FastAPI()
 SHARED = os.environ["PIPELINE_SHARED_SECRET"]
 BUCKET = os.environ["B2_BUCKET"]
@@ -104,160 +114,103 @@ def ffprobe(path: str) -> dict:
     return json.loads(out.stdout)
 
 
-# SRT/VTT cue: optional hours, comma (SRT) or dot (VTT) millisecond separator.
-_CUE_TS = r"(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[.,](\d{3})"
-_CUE_RE = re.compile(_CUE_TS + r"\s*-->\s*" + _CUE_TS)
-
-
-def _ts_seconds(h, m, s, ms) -> float:
-    return int(h or 0) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
-
-
-def parse_caption_cues(text: str) -> list:
-    """Tolerant SRT/WebVTT parser → [(start_s, end_s, cue_text), …]."""
-    cues = []
-    lines = text.splitlines()
-    i = 0
-    while i < len(lines):
-        m = _CUE_RE.search(lines[i])
-        if m:
-            start = _ts_seconds(*m.groups()[0:4])
-            end = _ts_seconds(*m.groups()[4:8])
-            body = []
-            i += 1
-            while i < len(lines) and lines[i].strip():
-                body.append(lines[i].strip())
-                i += 1
-            cues.append((start, end, "\n".join(body)))
-        i += 1
-    return cues
-
-
-def caption_checks(cues: list, duration: float, source: str) -> list:
-    """Deterministic caption QC: timing sanity, readability limits, coverage.
-    Thresholds follow common broadcast subtitle specs (~20 CPS, 42 chars/line,
-    max 2 lines per cue)."""
-    checks = []
-    n = len(cues)
-    if n == 0:
-        return [{"name": "captions_valid", "status": "warn",
-                 "detail": f"{source}: no cues could be parsed"}]
-    checks.append({"name": "captions_valid", "status": "pass", "detail": f"{source}: {n} cue(s) parsed"})
-
-    overlaps = sum(1 for i in range(1, n) if cues[i][0] < cues[i - 1][1])
-    out_of_order = sum(1 for i in range(1, n) if cues[i][0] < cues[i - 1][0])
-    past_eof = sum(1 for c in cues if duration and c[1] > duration + 1.0)
-    timing_issues = overlaps + out_of_order + past_eof
-    checks.append({"name": "caption_timing", "status": "pass" if timing_issues == 0 else "warn",
-                   "detail": f"{overlaps} overlap(s), {past_eof} past end-of-video, {out_of_order} out-of-order"})
-
-    cps_viol = line_viol = 0
-    for (st, en, txt) in cues:
-        dur = max(en - st, 0.001)
-        if len(txt.replace("\n", "")) / dur > 20.0:
-            cps_viol += 1
-        cue_lines = txt.split("\n")
-        if len(cue_lines) > 2 or any(len(ln) > 42 for ln in cue_lines):
-            line_viol += 1
-    checks.append({"name": "caption_readability", "status": "pass" if cps_viol + line_viol == 0 else "warn",
-                   "detail": f"{cps_viol} cue(s) over 20 CPS, {line_viol} cue(s) over line limits"})
-
-    covered = sum(max(min(en, duration or en) - st, 0) for st, en, _ in cues)
-    pct = f", {round(100 * covered / duration, 1)}% of runtime covered" if duration else ""
-    checks.append({"name": "caption_coverage", "status": "pass", "detail": f"{n} cue(s){pct}"})
-    return checks
+# Caption parsing/QC now lives in qc/text.py (imported above); the AI lane and
+# summarize step keep using parse_caption_cues / load_caption_* from there.
 
 
 def run_qc(src: str, meta: dict, captions_path: str | None = None,
-           check_av: bool = True, check_captions: bool = True) -> dict:
-    """Deterministic media QC (the checks broadcast QC tools sell):
-    stream conformance, full-decode corruption pass, black/freeze/silence
-    detection, and EBU R128 loudness. Pure ffmpeg/ffprobe — no AI keys.
-    The AI-assisted QC lane (GMI vision models on sampled frames) plugs in
-    alongside this once a GMI key is present."""
+           check_av: bool = True, check_captions: bool = True,
+           profile: dict | None = None, key: str = "", tmp: str = ".",
+           ref_path: str | None = None) -> dict:
+    """Deterministic QC orchestrator — profile-driven, tiered, resilient.
+    Execution order per the delivery architecture: structural parsing first,
+    then signal-level video/audio metrics, then text. Each analyzer group is
+    isolated so one crashed probe degrades to a finding instead of killing
+    the report. The semantic AI layer (run_ai_qc) appends afterwards."""
+    profile = profile or qprofiles.get("standard")
     checks: list[dict] = []
 
-    def check(name: str, status: str, detail: str = "") -> None:
-        checks.append({"name": name, "status": status, "detail": detail})
+    def guarded(fn, *args, group=""):
+        try:
+            checks.extend(fn(*args) or [])
+        except Exception as e:  # analyzer resilience: degrade, don't die
+            checks.append(qreport.check(f"{group or fn.__name__}", "warn",
+                                        f"analyzer error: {str(e)[:140]}", "engine"))
 
     streams = meta.get("streams", [])
     kinds = [s.get("codec_type") for s in streams]
-    has_video = "video" in kinds
-    has_audio = "audio" in kinds
+    has_video, has_audio = "video" in kinds, "audio" in kinds
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    v = next((s for s in streams if s.get("codec_type") == "video"), {})
+    bit_depth = 10 if "10le" in str(v.get("pix_fmt", "")) else 8
 
     if check_av:
         codecs = ", ".join(f"{s.get('codec_type')}/{s.get('codec_name')}" for s in streams)
-        check("has_video", "pass" if has_video else "fail", codecs)
-        check("has_audio", "pass" if has_audio else "warn", "")
+        checks.append(qreport.check("has_video", "pass" if has_video else "fail", codecs))
+        checks.append(qreport.check("has_audio", "pass" if has_audio else "warn", "", "audio"))
 
-        # 1) full-decode pass — corruption / bitstream errors
-        dec = subprocess.run(["ffmpeg", "-v", "error", "-i", src, "-f", "null", "-"],
-                             capture_output=True, text=True)
-        errs = [ln for ln in dec.stderr.splitlines() if ln.strip()]
-        check("decode", "pass" if not errs else "fail",
-              f"{len(errs)} error line(s)" + (f"; first: {errs[0][:120]}" if errs else ""))
+        # ── Task 1: structural parsing first ──
+        guarded(qstructural.timecode_checks, src, group="timecode_continuity")
+        guarded(qstructural.container_checks, meta, key, profile, group="container_metadata")
+        if key.lower().endswith((".m3u8", ".mpd")):
+            guarded(qstructural.abr_lint, src, group="abr_manifest")
+        guarded(qimf.photon_checks, src, tmp, profile, group="imf_photon")
 
-        # 2) detections + loudness in one analysis pass (filters gated on streams)
-        cmd = ["ffmpeg", "-hide_banner", "-i", src]
+        # ── Task 2: signal video quality ──
+        blacks: list = []
+        if True:
+            try:
+                det, blacks = qvideo.decode_and_detections(src, has_video, has_audio)
+                checks.extend(det)
+            except Exception as e:
+                checks.append(qreport.check("decode", "warn", f"analyzer error: {str(e)[:140]}", "engine"))
         if has_video:
-            cmd += ["-vf", "blackdetect=d=0.5:pix_th=0.10,freezedetect=n=-60dB:d=2"]
+            guarded(qstructural.framerate_checks, src, meta, profile, group="framerate")
+            guarded(qvideo.boundary_check, blacks, duration, group="picture_boundaries")
+            guarded(qvideo.range_and_pse, src, duration, profile, bit_depth, group="video_legal_range")
+            guarded(qvideo.matte_and_aspect, src, meta, duration, group="letterbox_matte")
+            guarded(qvideo.upconversion_check, src, meta, duration, group="upconversion")
+            guarded(qvideo.operational_metadata, src, meta, profile, group="cc_metadata")
+            if ref_path:
+                guarded(qvideo.reference_checks, src, ref_path, tmp, group="reference_ssim")
+
+        # ── Task 3: audio analysis ──
         if has_audio:
-            cmd += ["-af", "silencedetect=noise=-50dB:d=2,ebur128"]
-        cmd += ["-f", "null", "-"]
-        log = subprocess.run(cmd, capture_output=True, text=True).stderr
+            guarded(qaudio.loudness_checks, src, profile, group="loudness")
+            guarded(qaudio.phase_check, src, meta, group="audio_phase")
+            guarded(qaudio.clipping_and_hum, src, group="audio_clipping")
+            guarded(qaudio.channel_map_check, meta, group="channel_map")
 
-        if has_video:
-            blacks = log.count("black_start")
-            freezes = log.count("freeze_start")
-            check("black_frames", "pass" if blacks == 0 else "warn", f"{blacks} black segment(s)")
-            check("freeze_frames", "pass" if freezes == 0 else "warn", f"{freezes} frozen segment(s)")
-        if has_audio:
-            silences = log.count("silence_start")
-            check("audio_silence", "pass" if silences == 0 else "warn", f"{silences} silent segment(s)")
-            lufs_matches = re.findall(r"I:\s*(-?[\d.]+)\s*LUFS", log)
-            if lufs_matches:
-                lufs = float(lufs_matches[-1])  # last = the summary block
-                check("loudness", "pass" if -30.0 <= lufs <= -10.0 else "warn",
-                      f"integrated {lufs} LUFS (broadcast target ~ -23)")
-            else:
-                check("loudness", "warn", "could not measure")
-
-    # 3) captions & subtitles — presence, then text QC on whatever we can read:
-    #    a sidecar .srt/.vtt if provided, else the first embedded text track.
-    sub_streams = [s for s in streams if s.get("codec_type") == "subtitle"] if check_captions else []
-    duration = float(meta.get("format", {}).get("duration", 0) or 0)
-    cap_text = cap_source = None
-    if captions_path:
-        with open(captions_path, encoding="utf-8", errors="replace") as f:
-            cap_text = f.read()
-        cap_source = "sidecar " + os.path.basename(captions_path)
-    elif sub_streams:
-        extracted = os.path.join(os.path.dirname(src) or ".", "embedded_captions.srt")
-        r = subprocess.run(["ffmpeg", "-y", "-i", src, "-map", "0:s:0", "-c:s", "srt", extracted],
-                           capture_output=True, text=True)
-        if r.returncode == 0 and os.path.exists(extracted):
-            with open(extracted, encoding="utf-8", errors="replace") as f:
-                cap_text = f.read()
-            cap_source = "embedded track"
-
+    # ── Task 4: captions, subtitles & text ──
     if check_captions:
+        sub_streams = [s for s in streams if s.get("codec_type") == "subtitle"]
+        cap_text = None
+        try:
+            cap_text = load_caption_text(src, captions_path, tmp)
+        except Exception:
+            pass
         if captions_path or sub_streams:
             detail = " + ".join(filter(None, [
                 "sidecar file" if captions_path else None,
                 f"{len(sub_streams)} embedded track(s)" if sub_streams else None]))
-            check("captions_present", "pass", detail)
+            checks.append(qreport.check("captions_present", "pass", detail, "text"))
             if cap_text is not None:
-                checks.extend(caption_checks(parse_caption_cues(cap_text), duration, cap_source))
+                source = ("sidecar " + os.path.basename(captions_path)) if captions_path else "embedded track"
+                cues = parse_caption_cues(cap_text)
+                guarded(lambda: qtext.caption_checks(cues, duration, source), group="caption_timing")
+                guarded(lambda: qtext.text_integrity_checks(cap_text), group="caption_encoding")
+                if has_audio:
+                    guarded(lambda: qtext.sync_check(src, cues, duration), group="caption_sync")
             else:
-                check("captions_valid", "warn",
-                      "subtitle track not text-extractable (bitmap subs?) — text checks skipped")
+                checks.append(qreport.check("captions_valid", "warn",
+                                            "subtitle track not text-extractable (bitmap subs?) — "
+                                            "text checks skipped", "text"))
         else:
-            check("captions_present", "warn",
-                  "no caption track or sidecar found (mastered deliveries usually require captions)")
+            checks.append(qreport.check("captions_present", "warn",
+                                        "no caption track or sidecar found (mastered deliveries "
+                                        "usually require captions)", "text"))
 
-    statuses = [c["status"] for c in checks]
-    overall = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "pass")
-    return {"status": overall, "checks": checks}
+    return qreport.finalize({"checks": checks}, profile)
 
 
 # ───────────────────────── AI-assisted QC lane ─────────────────────────
@@ -311,30 +264,20 @@ def word_error_rate(ref: list, hyp: list) -> float:
     return prev[-1] / len(ref)
 
 
-def load_caption_cues(src: str, captions_path: str | None, tmp: str) -> list:
-    """Caption cues from the sidecar if present, else the first embedded track."""
-    text = None
-    if captions_path:
-        with open(captions_path, encoding="utf-8", errors="replace") as f:
-            text = f.read()
-    else:
-        extracted = os.path.join(tmp, "ai_embedded.srt")
-        r = subprocess.run(["ffmpeg", "-y", "-i", src, "-map", "0:s:0", "-c:s", "srt", extracted],
-                           capture_output=True)
-        if r.returncode == 0 and os.path.exists(extracted):
-            with open(extracted, encoding="utf-8", errors="replace") as f:
-                text = f.read()
-    return parse_caption_cues(text) if text else []
-
-
 _VISUAL_PROMPT = (
     "You are a broadcast QC operator. These are frames sampled from a mastered "
     "video delivery. Report ONLY genuine delivery defects you can actually see: "
     "test patterns or color bars, slates or countdown leaders, all-black or blank "
-    "frames, severe compression artifacts or corruption, burned-in timecode, "
-    "watermarks or channel bugs, accidental letterboxing/pillarboxing. "
-    "Normal program content is NOT a defect. Respond with STRICT JSON only:\n"
-    '{"findings": [{"issue": "<short description>", "frames": [<1-based frame numbers>]}], '
+    "frames, macroblocking / heavy pixelation / compression breakdown, tape-hit "
+    "lines or digital dropouts, burned-in timecode, watermarks or channel bugs, "
+    "burned-in text or logos, accidental letterboxing/pillarboxing, censorship "
+    "artifacts (blur patches, mosaic/pixelation blocks over faces or objects), "
+    "graphic violence, or nudity. Normal program content is NOT a defect. "
+    "Respond with STRICT JSON only:\n"
+    '{"findings": [{"issue": "<short description>", '
+    '"category": "<test_pattern|slate|black|compression|dropout|timecode|watermark|'
+    'burned_text|matte|censorship|violence|nudity|other>", '
+    '"frames": [<1-based frame numbers>]}], '
     '"summary": "<one short sentence about what the frames show>"}\n'
     "Use an empty findings array if the frames look clean."
 )
@@ -359,16 +302,28 @@ def ai_visual_check(src: str, duration: float, tmp: str) -> tuple:
         return None, 0
     data = _json_from(_gmi_chat(parts))
     if data is None:
-        return {"name": "ai_visual", "status": "warn",
-                "detail": f"{used} frame(s) reviewed; model reply unparseable"}, used
+        return [{"name": "ai_visual", "status": "warn", "tier": "ISSUE",
+                 "detail": f"{used} frame(s) reviewed; model reply unparseable"}], used
     findings = data.get("findings") or []
+    checks = []
     if findings:
         detail = "; ".join(str(f.get("issue", "?")) for f in findings[:5])
-        return {"name": "ai_visual", "status": "warn",
-                "detail": f"{len(findings)} finding(s) in {used} frame(s): {detail}"}, used
-    summary = str(data.get("summary", "")).strip()
-    return {"name": "ai_visual", "status": "pass",
-            "detail": f"{used} frame(s) reviewed, no defects" + (f" — {summary}" if summary else "")}, used
+        checks.append({"name": "ai_visual", "status": "warn", "tier": "ISSUE",
+                       "detail": f"{len(findings)} finding(s) in {used} frame(s): {detail}"})
+    else:
+        summary = str(data.get("summary", "")).strip()
+        checks.append({"name": "ai_visual", "status": "pass",
+                       "detail": f"{used} frame(s) reviewed, no defects" + (f" — {summary}" if summary else "")})
+    # Rule 3 (censorship): blur/mosaic/bleep artifacts get their own check so
+    # the strict profile can hard-fail them.
+    cens = [f for f in findings
+            if f.get("category") == "censorship"
+            or re.search(r"blur|mosaic|pixelat.*censor|bleep", str(f.get("issue", "")), re.I)]
+    if cens:
+        checks.append({"name": "ai_censorship", "status": "fail", "tier": "BLOCKER",
+                       "detail": f"censorship element(s) detected: "
+                                 f"{'; '.join(str(f.get('issue')) for f in cens[:3])}"})
+    return checks, used
 
 
 def ai_caption_accuracy_check(src: str, meta: dict, cues: list, tmp: str) -> tuple:
@@ -404,20 +359,92 @@ def ai_caption_accuracy_check(src: str, meta: dict, cues: list, tmp: str) -> tup
                       f"({len(ref)} caption vs {len(hyp)} spoken words, {span})"}, window
 
 
-def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str) -> tuple:
-    """→ (checks, {"frames": n, "asr_seconds": s}) for the qc_ai step."""
+def ai_language_check(src: str, meta: dict, tmp: str) -> dict | None:
+    """Verify the spoken language matches the declared metadata tag (only runs
+    when the container actually declares one)."""
+    a = next((s for s in meta.get("streams", []) if s.get("codec_type") == "audio"), None)
+    declared = ((a or {}).get("tags", {}) or {}).get("language", "").lower()
+    if not a or declared in ("", "und"):
+        return None
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    window = min(20.0, duration) if duration else 20.0
+    wav = os.path.join(tmp, "ai_lang.wav")
+    subprocess.run(["ffmpeg", "-y", "-t", f"{window:.2f}", "-i", src,
+                    "-vn", "-ac", "1", "-ar", "16000", wav], capture_output=True)
+    if not os.path.exists(wav) or os.path.getsize(wav) < 1000:
+        return None
+    b64 = base64.b64encode(open(wav, "rb").read()).decode()
+    reply = _gmi_chat([
+        {"type": "text", "text": "Identify the language spoken in this audio. "
+                                 "Reply with ONLY the ISO 639-2 three-letter code (e.g. eng, spa, fra). "
+                                 "If there is no speech, reply exactly: none"},
+        {"type": "input_audio", "input_audio": {"data": b64, "format": "wav"}}], max_tokens=10)
+    heard = reply.strip().lower()[:3]
+    if heard in ("non", ""):
+        return {"name": "ai_language", "status": "info", "tier": "FYI",
+                "detail": f"declared '{declared}' but no speech recognized in the sample"}
+    if heard == declared[:3]:
+        return {"name": "ai_language", "status": "pass",
+                "detail": f"spoken language matches declared tag '{declared}'"}
+    return {"name": "ai_language", "status": "warn", "tier": "ISSUE",
+            "detail": f"declared '{declared}' but heard '{heard}' in the sample"}
+
+
+def ai_text_compliance_check(cap_text: str) -> dict | None:
+    """NLP pass over the timed text: profanity + regional-compliance screen."""
+    reply = _gmi_chat([{
+        "type": "text",
+        "text": "You are a content-compliance reviewer. Analyze this subtitle text for "
+                "profanity and regional compliance concerns (slurs, hate speech, adult content). "
+                "Respond with STRICT JSON only: "
+                '{"profanity_count": <int>, "flags": ["<short description>", ...]}\n\n'
+                + cap_text[:3000]}], max_tokens=200)
+    data = _json_from(reply)
+    if data is None:
+        return {"name": "ai_text_compliance", "status": "info", "tier": "FYI",
+                "detail": "compliance reply unparseable"}
+    n = int(data.get("profanity_count") or 0)
+    flags = data.get("flags") or []
+    if n or flags:
+        return {"name": "ai_text_compliance", "status": "warn", "tier": "ISSUE",
+                "detail": f"{n} profanity hit(s); {'; '.join(map(str, flags[:3])) or 'no other flags'}"}
+    return {"name": "ai_text_compliance", "status": "pass", "detail": "no profanity or compliance flags"}
+
+
+def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
+              profile: dict | None = None) -> tuple:
+    """Semantic AI layer → (checks, {"frames": n, "asr_seconds": s}).
+    Vision review, censorship screen (Rule 3), caption accuracy vs ASR,
+    spoken-language verification, and timed-text compliance."""
+    profile = profile or qprofiles.get("standard")
     checks: list = []
     frames, asr_seconds = 0, 0.0
     duration = float(meta.get("format", {}).get("duration", 0) or 0)
     if any(s.get("codec_type") == "video" for s in meta.get("streams", [])):
-        check, frames = ai_visual_check(src, duration, tmp)
-        if check:
-            checks.append(check)
+        vis_checks, frames = ai_visual_check(src, duration, tmp)
+        for c in vis_checks or []:
+            if c["name"] == "ai_censorship" and not profile["censorship"]["escalate"]:
+                c["status"], c["tier"] = "warn", "ISSUE"   # standard: review, don't block
+            checks.append(c)
     cues = load_caption_cues(src, captions_path, tmp)
     if cues:
         check, asr_seconds = ai_caption_accuracy_check(src, meta, cues, tmp)
         if check:
             checks.append(check)
+        try:
+            cap_text = load_caption_text(src, captions_path, tmp)
+            if cap_text:
+                c = ai_text_compliance_check(cap_text)
+                if c:
+                    checks.append(c)
+        except Exception as e:
+            print("text compliance failed:", e)
+    try:
+        c = ai_language_check(src, meta, tmp)
+        if c:
+            checks.append(c)
+    except Exception as e:
+        print("language check failed:", e)
     return checks, {"frames": frames, "asr_seconds": round(asr_seconds, 1)}
 
 
@@ -453,10 +480,16 @@ def summarize_via_gmi(meta: dict, captions_text: str | None = None) -> str | Non
 def run_pipeline(job: Job) -> None:
     progress(job, {"type": "pipeline_started", "key": job.key})
     tid = job.transferId
-    # Sender-selected services (missing = everything on).
-    opts = {"thumbnail": True, "qc_av": True, "qc_captions": True, "qc_ai": True, "summarize": True}
+    # Sender-selected services (missing = everything on). Non-boolean keys in
+    # options carry the QC profile and self-heal switch — don't coerce those.
+    SERVICE_FLAGS = ("thumbnail", "qc_av", "qc_captions", "qc_ai", "summarize")
+    opts = {k: True for k in SERVICE_FLAGS}
     if job.options:
-        opts.update({k: bool(v) for k, v in job.options.items()})
+        for k in SERVICE_FLAGS:
+            if k in job.options:
+                opts[k] = bool(job.options[k])
+    profile = qprofiles.get((job.options or {}).get("profile", "standard"))
+    self_heal = bool((job.options or {}).get("self_heal"))
     derivatives: list[dict] = []
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(tmp, "src")
@@ -499,27 +532,34 @@ def run_pipeline(job: Job) -> None:
         #    A caption sidecar (.srt/.vtt) uploaded alongside the master rides
         #    into the caption QC; it never triggers its own pipeline run (the
         #    gateway's event filter excludes those extensions).
-        captions_path = None
+        captions_path = ref_path = None
         try:
             listing = s3.list_objects_v2(Bucket=job.bucket, Prefix=f"transfers/{tid}/")
             for obj in listing.get("Contents", []):
                 k = obj["Key"]
-                if k.lower().endswith((".srt", ".vtt")) and k != job.key:
+                if k == job.key:
+                    continue
+                if k.lower().endswith((".srt", ".vtt")) and not captions_path:
                     captions_path = os.path.join(tmp, os.path.basename(k))
                     s3.download_file(job.bucket, k, captions_path)
-                    break
+                elif ".ref." in k.lower() and not ref_path:
+                    # source-master mezzanine → reference SSIM/PSNR/VMAF lane
+                    ref_path = os.path.join(tmp, os.path.basename(k))
+                    s3.download_file(job.bucket, k, ref_path)
         except Exception as e:
-            print("caption sidecar lookup failed:", e)
+            print("sidecar lookup failed:", e)
 
         qc_report = None
         if opts["qc_av"] or opts["qc_captions"]:
-            progress(job, {"type": "step_started", "step": "qc"})
+            progress(job, {"type": "step_started", "step": "qc", "profile": profile["name"]})
             try:
                 qc_report = run_qc(src, meta,
                                    captions_path if opts["qc_captions"] else None,
-                                   check_av=opts["qc_av"], check_captions=opts["qc_captions"])
+                                   check_av=opts["qc_av"], check_captions=opts["qc_captions"],
+                                   profile=profile, key=job.key, tmp=tmp, ref_path=ref_path)
                 dur_min = float(meta.get("format", {}).get("duration", 0) or 0) / 60.0
                 progress(job, {"type": "step_done", "step": "qc", "status": qc_report["status"],
+                               "tiers": qc_report["tiers"],
                                "billable": {"unit": "minutes", "units": round(max(dur_min, 0.01), 3)}})
             except Exception as e:
                 progress(job, {"type": "step_error", "step": "qc", "error": str(e)})
@@ -536,7 +576,7 @@ def run_pipeline(job: Job) -> None:
             else:
                 progress(job, {"type": "step_started", "step": "qc_ai"})
                 try:
-                    ai_checks, ai_units = run_ai_qc(src, meta, captions_path, tmp)
+                    ai_checks, ai_units = run_ai_qc(src, meta, captions_path, tmp, profile)
                     if qc_report is None:
                         qc_report = {"status": "pass", "checks": []}
                     qc_report["checks"].extend(ai_checks)
@@ -553,10 +593,54 @@ def run_pipeline(job: Job) -> None:
         else:
             progress(job, {"type": "step_skipped", "step": "qc_ai", "reason": "disabled by sender"})
 
-        # 3c. one provenance-covered report for both lanes
+        # 3c. self-healing (Task 6) — when enabled and the report shows healable
+        #     defects, produce a corrected copy, re-measure it with the same
+        #     instruments, and record the fix as its own provenance-covered step.
         if qc_report is not None:
-            statuses = [c["status"] for c in qc_report["checks"]]
-            qc_report["status"] = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "pass")
+            qc_report = qreport.finalize(qc_report, profile)
+            if self_heal:
+                bad = {c["name"] for c in qc_report["checks"] if c["status"] in ("warn", "fail")}
+                fix_audio = bool(bad & {"loudness", "true_peak", "audio_clipping"})
+                fix_video = "video_legal_range" in bad
+                if fix_audio or fix_video:
+                    progress(job, {"type": "step_started", "step": "heal"})
+                    try:
+                        t = profile["heal"]
+                        healed = qheal.heal(src, tmp, fix_audio, fix_video,
+                                            t["target_i"], t["target_tp"])
+                        if healed:
+                            hname = "healed_" + os.path.basename(job.key)
+                            hkey = f"derivatives/{tid}/{hname}"
+                            s3.upload_file(healed["path"], BUCKET, hkey,
+                                           ExtraArgs={"ContentType": "video/mp4"})
+                            derivatives.append({"step": "heal", "key": hkey,
+                                                "sha256": sha256_file(healed["path"]),
+                                                "mime": "video/mp4"})
+                            after = healed.get("after") or {}
+                            verified = (after.get("i") is not None
+                                        and abs(after["i"] - t["target_i"]) <= 1.2
+                                        and (after.get("tp") is None or after["tp"] <= t["target_tp"] + 0.3))
+                            detail = healed["detail"]
+                            if after.get("i") is not None:
+                                detail += (f" — re-measured: {after['i']} LUFS, "
+                                           f"TP {after.get('tp')} dBTP")
+                            qc_report["checks"].append(
+                                {"name": "self_heal", "status": "pass" if verified or not fix_audio else "warn",
+                                 "detail": detail, "category": "heal"})
+                            qc_report = qreport.finalize(qc_report, profile)
+                            progress(job, {"type": "step_done", "step": "heal", "key": hkey,
+                                           "billable": {"unit": "run", "units": 1}})
+                        else:
+                            progress(job, {"type": "step_error", "step": "heal",
+                                           "error": "healer produced no output"})
+                    except Exception as e:
+                        progress(job, {"type": "step_error", "step": "heal", "error": str(e)})
+                else:
+                    progress(job, {"type": "step_skipped", "step": "heal",
+                                   "reason": "nothing healable in the report"})
+
+        # 3d. one provenance-covered report for all lanes (deterministic + AI + heal)
+        if qc_report is not None:
             qc_key = f"derivatives/{tid}/qc_report.json"
             qc_body = json.dumps(qc_report, indent=2).encode()
             s3.put_object(Bucket=BUCKET, Key=qc_key, Body=qc_body, ContentType="application/json")

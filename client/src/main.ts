@@ -38,8 +38,10 @@ if (tid) {
   transferOnly.onchange = () => servicesEl.classList.toggle("off", transferOnly.checked);
 
   const currentOptions = (): ServiceOptions => {
+    const profile = $<HTMLSelectElement>("#profile").value;
     if (transferOnly.checked)
-      return { qc_av: false, qc_captions: false, qc_ai: false, thumbnail: false, summarize: false };
+      return { qc_av: false, qc_captions: false, qc_ai: false, thumbnail: false, summarize: false,
+               profile, self_heal: false };
     const val = (id: string) => $<HTMLInputElement>("#" + id).checked;
     return {
       qc_av: val("opt_qc_av"),
@@ -47,6 +49,8 @@ if (tid) {
       qc_ai: val("opt_qc_ai"),
       thumbnail: val("opt_thumbnail"),
       summarize: val("opt_summarize"),
+      profile,
+      self_heal: val("opt_self_heal"),
     };
   };
 
@@ -69,7 +73,10 @@ if (tid) {
 
       // All services off: the gateway skips the pipeline during `complete`,
       // before we could subscribe — no stream to wait on, say so directly.
-      if (!Object.values(options).some(Boolean)) {
+      // (Only the service booleans count — `profile` is a string, always truthy.)
+      const services = [options.qc_av, options.qc_captions, options.qc_ai,
+                        options.thumbnail, options.summarize];
+      if (!services.some(Boolean)) {
         pipe.textContent = "transfer only — no waystation services";
         sendBtn.disabled = false;
         return;

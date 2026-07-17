@@ -131,6 +131,54 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   `qc_ai_asr` (seconds). Proven without cloud spend by
   `scripts/ai-qc-proof.sh` (mock GMI server; matching vs mismatched
   captions, gating, metering) and live against real GMI.
+- ✅ **Comprehensive QC engine** (`pipeline/qc/` — structural → signal → AI
+  execution order, per-analyzer crash isolation, findings tiered
+  **BLOCKER / ISSUE / FYI**). Beyond the original lane:
+  - *Structural (Task 1)*: DTS monotonicity + timeline-gap scan,
+    header-vs-payload comparison, multipart-delivery detection, HLS/DASH
+    manifest lint, IMF detection with **Photon** wrapped as a subprocess
+    (graceful, explicit finding when JVM/jar absent).
+  - *Video (Task 2)*: EBU-R103-style legal range with a proper
+    **amplitude + picture-area** policy (lut violation-mask → exact
+    out-of-range pixel fraction; codec ringing doesn't false-flag),
+    letterbox/pillarbox mattes, aspect/anamorphic sanity, field order +
+    3:2 pulldown cadence (idet), picture boundaries, upconversion screen,
+    **PSE flash-risk scanner** (BT.1702-informed YDIF analysis),
+    CEA-608/A53 + AFD + Dolby Vision side-data detection, and a
+    **reference lane** vs an uploaded `*.ref.*` mezzanine: SSIM, PSNR, and
+    **VMAF as the PVQ model (reported as 1–5 MOS)**.
+  - *Audio (Task 3)*: BS.1770-4 integrated + max short-term + LRA +
+    **max true peak** (ebur128 peak=true), inter-channel phase correlation,
+    clipping monitor (astats), 50/60 Hz hum band-energy screen, channel-map
+    verification.
+  - *Text (Task 4)*: collision matrix + rapid transitions, CPS + WPM
+    density, encoding/markup validation, and a speech-alignment analyzer
+    that estimates sync drift by sliding cues against silencedetect speech
+    activity. AI lane adds profanity/compliance NLP + spoken-language-vs-tag
+    verification + censorship-artifact screening (Rule 3).
+- ✅ **Netflix strict profile** — single toggle in the sender UI. Enforces
+  the delivery constraints wherever the toolchain can measure them:
+  −24 LKFS ±1.0 / −2.0 dBTP hard limits, allowed native framerates only,
+  no VFR / pulldown / interlace, single-asset rule, censorship elements
+  blocked, PSE hard-fail, R103 escalation. Report carries
+  `profile_label: Netflix_Delivery_Specification_Strict` + tier counts,
+  rendered as chips on the delivery page.
+- ✅ **Self-Healing Engine** (sender toggle): two-pass linear loudnorm to
+  the profile target (video stream copied — no re-render) and a luma/chroma
+  limiter legalizer when levels are illegal. The healed copy is
+  **re-measured with the same instruments** and shipped as a provenance-
+  covered derivative with its own download button.
+  All proven by `scripts/netflix-qc-proof.sh`: compliant 24p/−24 LUFS
+  master passes with ZERO blockers (incl. VMAF 97.9 / MOS 4.9 vs its
+  mezzanine); a 30fps/superwhite/hot-audio master draws exactly 4 BLOCKERs
+  under Netflix but zero under Standard; its healed copy re-measures at
+  −24.0 LUFS / TP ≤ −2 / legal luma; a strobe clip hard-fails the PSE
+  scanner; `.ref` sidecars upload but never trigger pipeline runs.
+- **Declared, honestly gated** (explicit FYI findings, not silent gaps):
+  Dolby Vision dynamic-canvas verification (needs dovi_tool RPU parsing),
+  lip-sync ms offsets (no video-input modality on GMI's API), dead-pixel
+  tracking (needs long-window frame accumulation), Photon execution
+  (needs a JVM + `PHOTON_JAR`).
 
 Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
 `bash scripts/phase2-loop-proof.sh` · `bash scripts/delivery-proof.sh` ·

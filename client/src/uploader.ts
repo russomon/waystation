@@ -6,7 +6,11 @@ const API = "/api";
 const CONCURRENCY = 6;
 
 export interface Progress { bytes: number; total: number; phase: string; }
-export interface ServiceOptions { qc_av: boolean; qc_captions: boolean; qc_ai: boolean; thumbnail: boolean; summarize: boolean; }
+export interface ServiceOptions {
+  qc_av: boolean; qc_captions: boolean; qc_ai: boolean; thumbnail: boolean; summarize: boolean;
+  profile: string;      // "standard" | "netflix" — QC threshold profile
+  self_heal: boolean;   // auto-fix loudness / legalize video on failure
+}
 export interface SendExtras { captions?: File | null; options?: ServiceOptions; }
 
 export async function uploadFile(file: File, extras: SendExtras, onProgress: (p: Progress) => void) {

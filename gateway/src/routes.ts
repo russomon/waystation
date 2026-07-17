@@ -23,23 +23,28 @@ api.get("/uploads/parts", async (c) =>
   c.json(await g.listParts(c.req.query("key")!, c.req.query("uploadId")!)));
 api.post("/uploads/outboard-url", async (c) =>
   c.json({ url: await g.presignPut((await c.req.json()).key + ".obao") }));
-// Caption sidecar (.srt/.vtt) uploaded alongside the master. Rides into the
-// caption QC; never triggers its own pipeline run (event filter excludes it).
+// Sidecars uploaded alongside the master: captions (.srt/.vtt) ride into the
+// caption QC; a source mezzanine (*.ref.mp4/.mov/.mxf) powers the reference
+// SSIM/PSNR/VMAF lane. Neither triggers its own pipeline run (event filter).
 api.post("/uploads/sidecar-url", async (c) => {
   const { key, filename } = await c.req.json(); // key = the master's object key
-  if (!/\.(srt|vtt)$/i.test(String(filename ?? "")))
-    return c.json({ error: "only .srt/.vtt sidecars" }, 400);
+  if (!/(\.(srt|vtt)|\.ref\.(mp4|mov|mxf))$/i.test(String(filename ?? "")))
+    return c.json({ error: "only .srt/.vtt captions or .ref.* mezzanine sidecars" }, 400);
   const safe = String(filename).replace(/[^\w.\-]/g, "_");
   return c.json({ url: await g.presignPut(`transfers/${transferIdFromKey(key)}/${safe}`) });
 });
-// undefined options = everything on; explicit all-false = plain transfer.
-const anyServiceOn = (o?: Record<string, boolean>) => !o || Object.values(o).some(Boolean);
+// Transfer-only detection looks ONLY at the boolean service flags — options
+// also carries non-service keys (QC profile string, self_heal) that must not
+// count as "a service is on". undefined options = everything on.
+const SERVICE_KEYS = ["qc_av", "qc_captions", "qc_ai", "thumbnail", "summarize"];
+const anyServiceOn = (o?: Record<string, boolean | string>) =>
+  !o || SERVICE_KEYS.some((k) => o[k] !== false);
 
 api.post("/uploads/complete", async (c) => {
   const b = await c.req.json(); // { key, uploadId, blake3Root, options? }
   const { bytes } = await g.complete(b.key, b.uploadId);
   const transferId = transferIdFromKey(b.key);
-  const options = b.options as Record<string, boolean> | undefined;
+  const options = b.options as Record<string, boolean | string> | undefined;
   // Always record — the event path needs `options` even without a hash root.
   saveTransfer(transferId, { key: b.key, blake3Root: b.blake3Root, createdAt: Date.now(), options });
   // Billable event: the transfer itself, in GB delivered into the waystation.

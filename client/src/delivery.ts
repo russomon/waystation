@@ -51,17 +51,33 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     : `<p class="summary muted">No AI summary — the sender didn't order one for this delivery.</p>`));
   if (summary) (card.querySelector(".summary") as HTMLElement).textContent = summary;
 
-  // QC badge — the deterministic media checks run at the waystation.
+  // QC badge — deterministic + AI lanes, tiered BLOCKER / ISSUE / FYI.
   if (qc) {
     const cls = qc.status === "pass" ? "ok" : qc.status === "warn" ? "warnc" : "bad";
     const label = qc.status === "pass" ? "✓ QC passed" : qc.status === "warn" ? "⚠ QC warnings" : "✗ QC failed";
-    const badge = el(`<details class="prov"><summary><span class="${cls}">${label}</span></summary></details>`);
+    const profileTag = qc.profile_label ? ` · ${qc.profile_label}` : "";
+    const badge = el(`<details class="prov"><summary><span class="${cls}">${label}</span><span class="meta">${profileTag}</span></summary></details>`);
+    const tiers = qc.tiers ?? {};
+    if (tiers.BLOCKER || tiers.ISSUE || tiers.FYI) {
+      badge.append(el(`<p>` +
+        (tiers.BLOCKER ? `<span class="chip bad">${tiers.BLOCKER} BLOCKER</span>` : "") +
+        (tiers.ISSUE ? `<span class="chip warnc">${tiers.ISSUE} ISSUE</span>` : "") +
+        (tiers.FYI ? `<span class="chip mutedc">${tiers.FYI} FYI</span>` : "") + `</p>`));
+    }
+    const glyph = (s: string) => s === "pass" ? "✓" : s === "warn" ? "⚠" : s === "info" ? "ⓘ" : "✗";
     badge.append(el(`<p class="mono">${(qc.checks ?? []).map((c: any) =>
-      `${c.status === "pass" ? "✓" : c.status === "warn" ? "⚠" : "✗"} ${c.name}${c.detail ? " — " + c.detail : ""}`).join("<br>")}</p>`));
+      `${glyph(c.status)} ${c.tier ? `[${c.tier}] ` : ""}${c.name}${c.detail ? " — " + c.detail : ""}`).join("<br>")}</p>`));
     card.append(badge);
   }
 
   card.append(el(`<a class="btn" href="${t.original.url}" download="${t.original.filename}">Download original</a>`));
+
+  // Self-healed master — the corrected copy the waystation produced (Task 6).
+  const healed = t.derivatives.find((d) => d.key.includes("/healed_"));
+  if (healed) {
+    const hname = healed.key.split("/").pop()!;
+    card.append(el(`<a class="btn ghost" href="${healed.url}" download="${hname}">Download healed master</a>`));
+  }
 
   // Verified download — pulls the object in ranges and checks each against the
   // bao outboard before accepting it. Only offered when the outboard exists.

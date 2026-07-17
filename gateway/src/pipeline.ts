@@ -8,8 +8,8 @@ export interface PipelineJob {
   bucket: string;
   key: string;
   transferId: string;
-  // Sender-selected services; undefined = everything on.
-  options?: Record<string, boolean>;
+  // Sender-selected services + QC profile + self-heal; undefined = everything on.
+  options?: Record<string, boolean | string>;
 }
 
 export async function dispatchPipeline(job: PipelineJob): Promise<void> {

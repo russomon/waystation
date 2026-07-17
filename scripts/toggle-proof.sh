@@ -87,7 +87,7 @@ wait_sse() { # $1=tag $2=needle
 }
 
 echo "— T1: transfer only (all off) —"
-T1=$(send t1 '{"qc_av":false,"qc_captions":false,"thumbnail":false,"summarize":false}' "")
+T1=$(send t1 '{"qc_av":false,"qc_captions":false,"qc_ai":false,"thumbnail":false,"summarize":false}' "")
 wait_sse t1 pipeline_skipped || { echo "FAIL: no pipeline_skipped"; exit 1; }
 # fire the signed B2 event for the same object: stored options must ALSO skip it
 KEY1="transfers/$T1/clip.mp4"
@@ -98,7 +98,7 @@ sleep 2
 echo "✓ T1 skipped ($(grep -c pipeline_skipped /tmp/sse-t1.log) skips, $(grep -c pipeline_started /tmp/sse-t1.log || true) starts)"
 
 echo "— T2: caption QC only —"
-T2=$(send t2 '{"qc_av":false,"qc_captions":true,"thumbnail":false,"summarize":false}' "$WORK/caps.srt")
+T2=$(send t2 '{"qc_av":false,"qc_captions":true,"qc_ai":false,"thumbnail":false,"summarize":false}' "$WORK/caps.srt")
 wait_sse t2 pipeline_complete || { echo "FAIL: T2 never completed"; tail -5 /tmp/pipe.log; exit 1; }
 echo "✓ T2 completed"
 

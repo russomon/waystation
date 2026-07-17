@@ -6,8 +6,8 @@ export interface TransferMeta {
   key: string;
   blake3Root?: string; // absent if the client skipped hashing
   createdAt: number;
-  // Sender-selected services; undefined = everything on.
-  options?: Record<string, boolean>;
+  // Sender-selected services + QC profile + self-heal; undefined = everything on.
+  options?: Record<string, boolean | string>;
 }
 
 const transfers = new Map<string, TransferMeta>();
