@@ -96,10 +96,26 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   a pass/warn/fail badge on the delivery page. Proven by
   `scripts/qc-proof.sh` (clean master + compliant captions pass; black+
   silent clip with broken captions flagged with exact defect counts).
-- ⏳ Swap the **summarize/transcribe** seam in `pipeline/worker.py` for a real
-  GMI Cloud / Genblaze call (gated on `GMI_API_KEY` today) — and add the
-  AI-assisted QC steps (GMI vision on sampled frames) beside the
-  deterministic lane.
+- ✅ **AI summary via GMI Cloud** (`summarize_via_gmi`) — grounded in the
+  caption text + codec/resolution facts, so it describes the actual content.
+  Proven live against real B2 + GMI (`scripts/live-run.sh`,
+  `GMI_MODEL=google/gemini-3.5-flash`).
+- ✅ **Sender front end with per-service toggles.** The upload page
+  (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`
+  captions picker, and a services panel — AV QC, Caption QC, preview
+  thumbnail, AI summary — plus a **Transfer only** switch that turns
+  everything off and makes Waystation a plain verified file-transfer tool.
+  Selections ride the `complete` call, are stored per transfer, and gate
+  the pipeline at BOTH triggers (dev-complete and the signed B2 event
+  path); disabled steps emit `step_skipped`, all-off emits
+  `pipeline_skipped` and no worker run at all. Proven by
+  `scripts/toggle-proof.sh` (transfer-only produces zero derivatives;
+  caption-QC-only report contains no AV checks; no-options default runs
+  everything; non-caption sidecar names rejected).
+- ⏳ AI-assisted QC beside the deterministic lane: GMI vision on sampled
+  frames, and ASR-based caption-accuracy checking (internal QC instrument —
+  most masters arrive already captioned; we QC those captions rather than
+  transcribe).
 
 Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
 `bash scripts/phase2-loop-proof.sh` · `bash scripts/delivery-proof.sh` ·

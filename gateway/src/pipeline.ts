@@ -4,7 +4,13 @@
 // /api/internal/progress, which the SSE hub relays to the browser.
 const env = process.env as Record<string, string>;
 
-export interface PipelineJob { bucket: string; key: string; transferId: string; }
+export interface PipelineJob {
+  bucket: string;
+  key: string;
+  transferId: string;
+  // Sender-selected services; undefined = everything on.
+  options?: Record<string, boolean>;
+}
 
 export async function dispatchPipeline(job: PipelineJob): Promise<void> {
   try {

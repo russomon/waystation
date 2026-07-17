@@ -23,20 +23,37 @@ api.get("/uploads/parts", async (c) =>
   c.json(await g.listParts(c.req.query("key")!, c.req.query("uploadId")!)));
 api.post("/uploads/outboard-url", async (c) =>
   c.json({ url: await g.presignPut((await c.req.json()).key + ".obao") }));
+// Caption sidecar (.srt/.vtt) uploaded alongside the master. Rides into the
+// caption QC; never triggers its own pipeline run (event filter excludes it).
+api.post("/uploads/sidecar-url", async (c) => {
+  const { key, filename } = await c.req.json(); // key = the master's object key
+  if (!/\.(srt|vtt)$/i.test(String(filename ?? "")))
+    return c.json({ error: "only .srt/.vtt sidecars" }, 400);
+  const safe = String(filename).replace(/[^\w.\-]/g, "_");
+  return c.json({ url: await g.presignPut(`transfers/${transferIdFromKey(key)}/${safe}`) });
+});
+// undefined options = everything on; explicit all-false = plain transfer.
+const anyServiceOn = (o?: Record<string, boolean>) => !o || Object.values(o).some(Boolean);
+
 api.post("/uploads/complete", async (c) => {
-  const b = await c.req.json(); // { key, uploadId, blake3Root }
+  const b = await c.req.json(); // { key, uploadId, blake3Root, options? }
   const { bytes } = await g.complete(b.key, b.uploadId);
   const transferId = transferIdFromKey(b.key);
-  if (b.blake3Root) saveTransfer(transferId, { key: b.key, blake3Root: b.blake3Root, createdAt: Date.now() });
+  const options = b.options as Record<string, boolean> | undefined;
+  // Always record — the event path needs `options` even without a hash root.
+  saveTransfer(transferId, { key: b.key, blake3Root: b.blake3Root, createdAt: Date.now(), options });
   // Billable event: the transfer itself, in GB delivered into the waystation.
   meter({ transferId, event: "transfer", units: Number((bytes / 1e9).toFixed(6)), unit: "gb", ref: b.key });
   // Dev only: no real B2 event source locally, so simulate the
   // object-created trigger right after assembly. Production leaves
   // DEV_TRIGGER_ON_COMPLETE unset and the real B2 Event Notification drives it.
   if (env.DEV_TRIGGER_ON_COMPLETE === "true") {
-    const transferId = transferIdFromKey(b.key);
-    sse.publish(transferId, { type: "pipeline_queued", key: b.key });
-    void dispatchPipeline({ bucket: env.B2_BUCKET, key: b.key, transferId });
+    if (anyServiceOn(options)) {
+      sse.publish(transferId, { type: "pipeline_queued", key: b.key });
+      void dispatchPipeline({ bucket: env.B2_BUCKET, key: b.key, transferId, options });
+    } else {
+      sse.publish(transferId, { type: "pipeline_skipped", reason: "transfer-only" });
+    }
   }
   return c.json({ ok: true });
 });
@@ -90,8 +107,13 @@ api.post("/events/b2", async (c) => {
   for (const e of parseB2Events(JSON.parse(raw))) {
     if (!e.eventType.startsWith("b2:ObjectCreated") || !isOriginalMedia(e.objectName)) continue;
     const transferId = transferIdFromKey(e.objectName);
+    const options = getTransfer(transferId)?.options;
+    if (!anyServiceOn(options)) {
+      sse.publish(transferId, { type: "pipeline_skipped", reason: "transfer-only" });
+      continue;
+    }
     sse.publish(transferId, { type: "pipeline_queued", key: e.objectName });
-    void dispatchPipeline({ bucket: e.bucketName, key: e.objectName, transferId });
+    void dispatchPipeline({ bucket: e.bucketName, key: e.objectName, transferId, options });
   }
   return c.text("ok"); // ack fast; B2 retries on non-2xx
 });

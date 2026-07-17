@@ -6,8 +6,10 @@ const API = "/api";
 const CONCURRENCY = 6;
 
 export interface Progress { bytes: number; total: number; phase: string; }
+export interface ServiceOptions { qc_av: boolean; qc_captions: boolean; thumbnail: boolean; summarize: boolean; }
+export interface SendExtras { captions?: File | null; options?: ServiceOptions; }
 
-export async function uploadFile(file: File, onProgress: (p: Progress) => void) {
+export async function uploadFile(file: File, extras: SendExtras, onProgress: (p: Progress) => void) {
   const fp = `${file.name}:${file.size}:${file.lastModified}`; // stable local resume key
 
   // 1. initiate, or re-attach to an in-flight upload
@@ -52,8 +54,20 @@ export async function uploadFile(file: File, onProgress: (p: Progress) => void) 
   const obRes = await fetch(ob.url, { method: "PUT", body: outboard });
   if (!obRes.ok) throw new Error(`outboard upload failed: HTTP ${obRes.status}`);
 
-  // 6. complete — gateway assembles from ListParts; we send the id + content hash
-  await post("/uploads/complete", { key: st.key, uploadId: st.uploadId, blake3Root: root });
+  // 5b. caption sidecar (.srt/.vtt) — must land BEFORE complete so the
+  // pipeline's sidecar discovery sees it when the object-created event fires
+  if (extras.captions) {
+    const sc = await post("/uploads/sidecar-url", { key: st.key, filename: extras.captions.name });
+    if (sc.error) throw new Error(sc.error);
+    const scRes = await fetch(sc.url, { method: "PUT", body: extras.captions });
+    if (!scRes.ok) throw new Error(`caption upload failed: HTTP ${scRes.status}`);
+  }
+
+  // 6. complete — gateway assembles from ListParts; we send the id + content
+  //    hash + the sender's service selections (all-off = plain transfer)
+  await post("/uploads/complete", {
+    key: st.key, uploadId: st.uploadId, blake3Root: root, options: extras.options,
+  });
   await clearResume(fp);
 
   const transferId = st.key.split("/")[1];

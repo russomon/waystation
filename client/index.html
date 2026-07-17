@@ -3,21 +3,42 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OrbitXfer Web</title>
+    <title>Waystation</title>
     <style>
-      body { font: 15px/1.6 system-ui, sans-serif; max-width: 640px; margin: 6vh auto; padding: 0 1rem; color: #1a1a1a; }
-      h1 { margin-bottom: .2rem; }
-      #drop { display: block; border: 2px dashed #bbb; border-radius: 12px; padding: 3rem; text-align: center; color: #666; cursor: pointer; }
-      #log { white-space: pre-wrap; margin-top: 1rem; font: 13px/1.6 ui-monospace, monospace; color: #333; }
-      a { color: #2563eb; }
-      .deliv { border: 1px solid #e5e7eb; border-radius: 14px; padding: 1.25rem 1.5rem; }
+      :root { --blue: #2563eb; --ink: #111827; --mut: #6b7280; --line: #e5e7eb; --bg: #f8fafc; }
+      * { box-sizing: border-box; }
+      body { font: 15px/1.6 system-ui, sans-serif; max-width: 680px; margin: 5vh auto; padding: 0 1rem; color: var(--ink); }
+      h1 { margin: 0 0 .1rem; letter-spacing: -0.02em; }
+      .tag { color: var(--mut); margin: 0 0 1.4rem; }
+      .card { border: 1px solid var(--line); border-radius: 16px; padding: 1.4rem 1.5rem; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+
+      .pick { display: block; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 1.1rem 1.2rem; cursor: pointer; margin-bottom: .7rem; transition: border-color .15s; }
+      .pick:hover { border-color: var(--blue); }
+      .pick strong { display: block; }
+      .pick .muted { color: var(--mut); font-size: 13px; }
+      .pick.has-file { border-style: solid; border-color: var(--blue); background: #eff6ff; }
+
+      .services { border: 1px solid var(--line); border-radius: 12px; margin: 1rem 0; overflow: hidden; }
+      .svc-head { display: flex; justify-content: space-between; align-items: center; padding: .7rem 1rem; background: var(--bg); border-bottom: 1px solid var(--line); font-weight: 500; }
+      .svc-head label { font-weight: 400; font-size: 13px; color: var(--mut); display: flex; gap: .4rem; align-items: center; cursor: pointer; }
+      .svc { display: flex; gap: .6rem; align-items: baseline; padding: .55rem 1rem; border-bottom: 1px solid var(--line); cursor: pointer; }
+      .svc:last-child { border-bottom: 0; }
+      .svc input { transform: translateY(1px); }
+      .svc .muted { color: var(--mut); font-size: 12.5px; margin-left: auto; text-align: right; }
+      .services.off .svc { opacity: .4; pointer-events: none; }
+
+      .btn { display: inline-block; padding: .6rem 1.4rem; border-radius: 10px; background: var(--blue); color: #fff; text-decoration: none; border: 0; font: inherit; font-weight: 500; cursor: pointer; }
+      .btn:disabled { background: #94a3b8; cursor: not-allowed; }
+      .btn.ghost { background: #fff; color: var(--blue); border: 1px solid var(--blue); }
+      #log { white-space: pre-wrap; margin-top: 1rem; font: 13px/1.7 ui-monospace, monospace; color: #333; }
+      a { color: var(--blue); }
+
+      .deliv { border: 1px solid var(--line); border-radius: 16px; padding: 1.25rem 1.5rem; }
       .deliv h2 { margin: .6rem 0 .1rem; }
-      .deliv .meta { color: #6b7280; margin: 0 0 .8rem; font-size: 13px; }
-      .deliv .summary { background: #f8fafc; border-radius: 8px; padding: .7rem .9rem; }
+      .deliv .meta { color: var(--mut); margin: 0 0 .8rem; font-size: 13px; }
+      .deliv .summary { background: var(--bg); border-radius: 8px; padding: .7rem .9rem; }
       .deliv .summary.muted { color: #9ca3af; }
       img.thumb { width: 100%; border-radius: 10px; display: block; background: #f3f4f6; }
-      .btn { display: inline-block; margin-top: .9rem; padding: .55rem 1rem; border-radius: 8px; background: #2563eb; color: #fff; text-decoration: none; border: 0; font: inherit; cursor: pointer; }
-      .btn.ghost { background: #fff; color: #2563eb; border: 1px solid #2563eb; }
       .prov { margin-top: 1.1rem; border-top: 1px solid #eee; padding-top: .8rem; }
       .prov summary { cursor: pointer; font-weight: 500; }
       .mono { font: 12px/1.6 ui-monospace, monospace; color: #4b5563; word-break: break-all; }
@@ -31,10 +52,38 @@
   </head>
   <body>
     <div id="sender">
-      <h1>OrbitXfer Web</h1>
-      <p>Send huge media — it arrives smarter.</p>
-      <label id="drop"><input id="file" type="file" hidden /> Click to choose a file to send</label>
-      <div id="log"></div>
+      <h1>Waystation</h1>
+      <p class="tag">Send mastered video. It arrives QC&rsquo;d, summarized, and provable.</p>
+      <div class="card">
+        <label class="pick" id="pickMaster">
+          <input id="file" type="file" hidden />
+          <strong>Master file</strong>
+          <span class="muted" id="fname">video or audio — click to choose</span>
+        </label>
+        <label class="pick" id="pickCaps">
+          <input id="capfile" type="file" accept=".srt,.vtt" hidden />
+          <strong>Captions sidecar <span class="muted">(optional)</span></strong>
+          <span class="muted" id="capname">.srt or .vtt — rides along for caption QC</span>
+        </label>
+
+        <div class="services" id="services">
+          <div class="svc-head">
+            <span>Services at the waystation</span>
+            <label><input type="checkbox" id="transferOnly" /> Transfer only</label>
+          </div>
+          <label class="svc"><input type="checkbox" id="opt_qc_av" checked />
+            AV QC <span class="muted">decode &middot; black &middot; freeze &middot; silence &middot; loudness</span></label>
+          <label class="svc"><input type="checkbox" id="opt_qc_captions" checked />
+            Caption QC <span class="muted">timing &middot; readability &middot; coverage</span></label>
+          <label class="svc"><input type="checkbox" id="opt_thumbnail" checked />
+            Preview thumbnail <span class="muted">poster frame</span></label>
+          <label class="svc"><input type="checkbox" id="opt_summarize" checked />
+            AI summary <span class="muted">GMI Cloud</span></label>
+        </div>
+
+        <button id="send" class="btn" disabled>Send</button>
+        <div id="log"></div>
+      </div>
     </div>
     <div id="delivery" hidden></div>
     <script type="module" src="/src/main.ts"></script>

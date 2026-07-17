@@ -48,7 +48,7 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   card.append(el(`<p class="meta">${fmt(t.original.size)} · verified transfer</p>`));
   card.append(el(summary
     ? `<p class="summary"></p>`
-    : `<p class="summary muted">No AI summary yet — add a GMI Cloud key to enable transcribe / summarize.</p>`));
+    : `<p class="summary muted">No AI summary — the sender didn't order one for this delivery.</p>`));
   if (summary) (card.querySelector(".summary") as HTMLElement).textContent = summary;
 
   // QC badge — the deterministic media checks run at the waystation.

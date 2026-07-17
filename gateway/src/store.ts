@@ -4,8 +4,10 @@
 // transferId, plus recipients, expiry, and access control.
 export interface TransferMeta {
   key: string;
-  blake3Root: string;
+  blake3Root?: string; // absent if the client skipped hashing
   createdAt: number;
+  // Sender-selected services; undefined = everything on.
+  options?: Record<string, boolean>;
 }
 
 const transfers = new Map<string, TransferMeta>();
