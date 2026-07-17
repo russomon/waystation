@@ -50,7 +50,8 @@ GMI_API_KEY = os.environ.get("GMI_API_KEY")
 GMI_BASE_URL = os.environ.get("GMI_BASE_URL", "https://api.gmi-serving.com")
 # Confirmed served on GMI's Inference Engine (GET /v1/models); cheap + fast.
 # Override with GMI_MODEL for anything else in their 75-model catalog.
-GMI_MODEL = os.environ.get("GMI_MODEL", "openai/gpt-4o-mini")
+# (`or` guards an empty GMI_MODEL= line in .env.)
+GMI_MODEL = os.environ.get("GMI_MODEL") or "openai/gpt-4o-mini"
 
 
 class Job(BaseModel):
@@ -240,15 +241,25 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None) -> dict:
     return {"status": overall, "checks": checks}
 
 
-def summarize_via_gmi(meta: dict) -> str | None:
+def summarize_via_gmi(meta: dict, captions_text: str | None = None) -> str | None:
     if not GMI_API_KEY:
         return None
     fmt = meta.get("format", {})
+    parts = []
+    for s in meta.get("streams", []):
+        if s.get("codec_type") == "video":
+            parts.append(f"video {s.get('codec_name')} {s.get('width')}x{s.get('height')}")
+        elif s.get("codec_type") == "audio":
+            parts.append(f"audio {s.get('codec_name')}")
     prompt = (
-        "In one sentence, describe this media file for a recipient. "
-        f"Duration {fmt.get('duration')}s, streams: "
-        + ", ".join(s.get("codec_type", "?") + "/" + s.get("codec_name", "?") for s in meta.get("streams", []))
+        "Write ONE concise sentence describing this media delivery for its recipient. "
+        "Use only the information given. Never mention missing information, metadata, "
+        "or that you cannot see the file.\n"
+        f"Technical: duration {fmt.get('duration')}s; {', '.join(parts)}.\n"
     )
+    if captions_text:
+        prompt += f"Captions/dialogue from the file:\n{captions_text[:2000]}\n"
+    prompt += "One sentence:"
     r = httpx.post(
         f"{GMI_BASE_URL}/v1/chat/completions",
         headers={"authorization": f"Bearer {GMI_API_KEY}"},
@@ -331,8 +342,15 @@ def run_pipeline(job: Job) -> None:
         # 4. summarize — GMI Cloud seam (skipped cleanly until a key is set)
         progress(job, {"type": "step_started", "step": "summarize"})
         summary = None
+        cap_text_for_summary = None
+        if captions_path:
+            try:
+                with open(captions_path, encoding="utf-8", errors="replace") as f:
+                    cap_text_for_summary = f.read()
+            except Exception:
+                pass
         try:
-            summary = summarize_via_gmi(meta)
+            summary = summarize_via_gmi(meta, cap_text_for_summary)
             progress(job, {"type": "step_done" if summary else "step_skipped",
                            "step": "summarize", "summary": summary, "reason": None if summary else "no GMI_API_KEY",
                            **({"billable": {"unit": "run", "units": 1}} if summary else {})})
