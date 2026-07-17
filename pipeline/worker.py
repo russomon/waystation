@@ -48,7 +48,9 @@ s3 = boto3.client(
 # GMI Cloud is OpenAI-compatible; the summarize step uses it when a key is set.
 GMI_API_KEY = os.environ.get("GMI_API_KEY")
 GMI_BASE_URL = os.environ.get("GMI_BASE_URL", "https://api.gmi-serving.com")
-GMI_MODEL = os.environ.get("GMI_MODEL", "deepseek-ai/DeepSeek-V3")
+# Confirmed served on GMI's Inference Engine (GET /v1/models); cheap + fast.
+# Override with GMI_MODEL for anything else in their 75-model catalog.
+GMI_MODEL = os.environ.get("GMI_MODEL", "openai/gpt-4o-mini")
 
 
 class Job(BaseModel):
