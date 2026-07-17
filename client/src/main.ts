@@ -39,11 +39,12 @@ if (tid) {
 
   const currentOptions = (): ServiceOptions => {
     if (transferOnly.checked)
-      return { qc_av: false, qc_captions: false, thumbnail: false, summarize: false };
+      return { qc_av: false, qc_captions: false, qc_ai: false, thumbnail: false, summarize: false };
     const val = (id: string) => $<HTMLInputElement>("#" + id).checked;
     return {
       qc_av: val("opt_qc_av"),
       qc_captions: val("opt_qc_captions"),
+      qc_ai: val("opt_qc_ai"),
       thumbnail: val("opt_thumbnail"),
       summarize: val("opt_summarize"),
     };

@@ -112,10 +112,25 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   `scripts/toggle-proof.sh` (transfer-only produces zero derivatives;
   caption-QC-only report contains no AV checks; no-options default runs
   everything; non-caption sidecar names rejected).
-- ⏳ AI-assisted QC beside the deterministic lane: GMI vision on sampled
-  frames, and ASR-based caption-accuracy checking (internal QC instrument —
-  most masters arrive already captioned; we QC those captions rather than
-  transcribe).
+- ✅ **AI-assisted QC lane** (`qc_ai` toggle, on by default). Two checks via
+  GMI's multimodal gemini (`GMI_MULTIMODAL_MODEL`, default
+  `google/gemini-3.5-flash` — accepts both `image_url` AND `input_audio`
+  through the OpenAI-compatible API; GMI serves no whisper models, gemini
+  IS the ASR):
+  - **`ai_visual`** — vision review of `AI_QC_FRAMES` (4) sampled frames for
+    defects filters can't name: test patterns, slates, watermarks, burned-in
+    timecode, letterboxing, corruption. Live run correctly flagged a
+    `testsrc` clip as "Test pattern".
+  - **`ai_caption_accuracy`** — the caption-QC instrument: transcribe an
+    `AI_QC_ASR_SECONDS` (45s) audio window, word-error-rate the transcript
+    against the caption cues covering that window; ≥80% word match passes.
+    Live run: TTS speech + matching SRT → 100% (21/21 words); mismatched
+    captions → 0%, flagged.
+  Verdicts merge into the same provenance-covered `qc_report.json`
+  (`report.ai` records model + units); metered as `qc_ai` (frames) +
+  `qc_ai_asr` (seconds). Proven without cloud spend by
+  `scripts/ai-qc-proof.sh` (mock GMI server; matching vs mismatched
+  captions, gating, metering) and live against real GMI.
 
 Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
 `bash scripts/phase2-loop-proof.sh` · `bash scripts/delivery-proof.sh` ·

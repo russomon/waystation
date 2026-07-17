@@ -11,6 +11,7 @@ Run:  uvicorn worker:app --port 8000 --reload
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -53,6 +54,14 @@ GMI_BASE_URL = os.environ.get("GMI_BASE_URL", "https://api.gmi-serving.com")
 # Override with GMI_MODEL for anything else in their 75-model catalog.
 # (`or` guards an empty GMI_MODEL= line in .env.)
 GMI_MODEL = os.environ.get("GMI_MODEL") or "openai/gpt-4o-mini"
+# AI-assisted QC needs a natively multimodal model: the gemini family on GMI
+# accepts both image_url AND input_audio parts through the OpenAI-compatible
+# API (probed live — no whisper/ASR models are served, but gemini transcribes
+# audio verbatim). Kept separate from GMI_MODEL so text summaries can use a
+# cheaper model.
+GMI_MULTIMODAL_MODEL = os.environ.get("GMI_MULTIMODAL_MODEL") or "google/gemini-3.5-flash"
+AI_QC_FRAMES = int(os.environ.get("AI_QC_FRAMES", "4"))
+AI_QC_ASR_SECONDS = float(os.environ.get("AI_QC_ASR_SECONDS", "45"))
 
 
 class Job(BaseModel):
@@ -61,7 +70,7 @@ class Job(BaseModel):
     transferId: str
     gatewayUrl: str
     # Sender-selected services. Missing/None = everything on (default).
-    # {"thumbnail": bool, "qc_av": bool, "qc_captions": bool, "summarize": bool}
+    # {"thumbnail", "qc_av", "qc_captions", "qc_ai", "summarize"} → bool
     # Sender-selected services; None = everything on. (Optional[...] not `| None`:
     # pydantic evaluates this at runtime, and the py3.9 venv has no PEP 604.)
     options: Optional[dict] = None
@@ -251,6 +260,167 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
     return {"status": overall, "checks": checks}
 
 
+# ───────────────────────── AI-assisted QC lane ─────────────────────────
+# Runs beside the deterministic lane, gated by the sender's `qc_ai` toggle:
+#   ai_visual           — GMI vision reviews sampled frames for delivery
+#                         defects a filter can't name (test patterns, slates,
+#                         watermarks, burned-in timecode, letterboxing).
+#   ai_caption_accuracy — GMI transcribes a sampled audio window and the
+#                         transcript is diffed (word error rate) against the
+#                         caption text for that window. This is the QC
+#                         instrument for "are these captions actually right?"
+# All verdicts land in the same qc_report.json, provenance-covered.
+
+def _gmi_chat(content: list, max_tokens: int = 600) -> str:
+    r = httpx.post(
+        f"{GMI_BASE_URL}/v1/chat/completions",
+        headers={"authorization": f"Bearer {GMI_API_KEY}"},
+        json={"model": GMI_MULTIMODAL_MODEL, "max_tokens": max_tokens, "temperature": 0,
+              "messages": [{"role": "user", "content": content}]},
+        timeout=120,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def _json_from(text: str) -> dict | None:
+    """Extract the first JSON object from a model reply (tolerates fences/prose)."""
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+
+def _norm_words(text: str) -> list:
+    return re.findall(r"[a-z0-9']+", text.lower())
+
+
+def word_error_rate(ref: list, hyp: list) -> float:
+    """Standard word-level Levenshtein WER (substitutions+insertions+deletions / len(ref))."""
+    if not ref:
+        return 0.0 if not hyp else 1.0
+    prev = list(range(len(hyp) + 1))
+    for i, rw in enumerate(ref, 1):
+        cur = [i] + [0] * len(hyp)
+        for j, hw in enumerate(hyp, 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (rw != hw))
+        prev = cur
+    return prev[-1] / len(ref)
+
+
+def load_caption_cues(src: str, captions_path: str | None, tmp: str) -> list:
+    """Caption cues from the sidecar if present, else the first embedded track."""
+    text = None
+    if captions_path:
+        with open(captions_path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    else:
+        extracted = os.path.join(tmp, "ai_embedded.srt")
+        r = subprocess.run(["ffmpeg", "-y", "-i", src, "-map", "0:s:0", "-c:s", "srt", extracted],
+                           capture_output=True)
+        if r.returncode == 0 and os.path.exists(extracted):
+            with open(extracted, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+    return parse_caption_cues(text) if text else []
+
+
+_VISUAL_PROMPT = (
+    "You are a broadcast QC operator. These are frames sampled from a mastered "
+    "video delivery. Report ONLY genuine delivery defects you can actually see: "
+    "test patterns or color bars, slates or countdown leaders, all-black or blank "
+    "frames, severe compression artifacts or corruption, burned-in timecode, "
+    "watermarks or channel bugs, accidental letterboxing/pillarboxing. "
+    "Normal program content is NOT a defect. Respond with STRICT JSON only:\n"
+    '{"findings": [{"issue": "<short description>", "frames": [<1-based frame numbers>]}], '
+    '"summary": "<one short sentence about what the frames show>"}\n'
+    "Use an empty findings array if the frames look clean."
+)
+
+
+def ai_visual_check(src: str, duration: float, tmp: str) -> tuple:
+    """(check-dict | None, frames-analyzed). One vision call over all samples."""
+    n = max(AI_QC_FRAMES, 1)
+    dur = max(duration, 0.5)
+    parts: list = [{"type": "text", "text": _VISUAL_PROMPT}]
+    used = 0
+    for i in range(n):
+        t = dur * (i + 1) / (n + 1)  # evenly spaced, skips first/last stretch
+        fp = os.path.join(tmp, f"ai_frame_{i}.jpg")
+        subprocess.run(["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", src, "-frames:v", "1",
+                        "-vf", "scale=512:-2", fp], capture_output=True)
+        if os.path.exists(fp) and os.path.getsize(fp) > 0:
+            b64 = base64.b64encode(open(fp, "rb").read()).decode()
+            parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+            used += 1
+    if used == 0:
+        return None, 0
+    data = _json_from(_gmi_chat(parts))
+    if data is None:
+        return {"name": "ai_visual", "status": "warn",
+                "detail": f"{used} frame(s) reviewed; model reply unparseable"}, used
+    findings = data.get("findings") or []
+    if findings:
+        detail = "; ".join(str(f.get("issue", "?")) for f in findings[:5])
+        return {"name": "ai_visual", "status": "warn",
+                "detail": f"{len(findings)} finding(s) in {used} frame(s): {detail}"}, used
+    summary = str(data.get("summary", "")).strip()
+    return {"name": "ai_visual", "status": "pass",
+            "detail": f"{used} frame(s) reviewed, no defects" + (f" — {summary}" if summary else "")}, used
+
+
+def ai_caption_accuracy_check(src: str, meta: dict, cues: list, tmp: str) -> tuple:
+    """(check-dict | None, asr-seconds). Transcribe a sampled window, WER it
+    against the caption text covering that window."""
+    if not any(s.get("codec_type") == "audio" for s in meta.get("streams", [])):
+        return None, 0.0  # nothing to transcribe; has_audio already warns in the AV lane
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    window = min(AI_QC_ASR_SECONDS, duration) if duration else AI_QC_ASR_SECONDS
+    t0 = max(0.0, min(duration * 0.1, max(duration - window, 0.0)))
+    wav = os.path.join(tmp, "ai_asr.wav")
+    subprocess.run(["ffmpeg", "-y", "-ss", f"{t0:.2f}", "-t", f"{window:.2f}", "-i", src,
+                    "-vn", "-ac", "1", "-ar", "16000", wav], capture_output=True)
+    if not os.path.exists(wav) or os.path.getsize(wav) < 1000:
+        return None, 0.0
+    b64 = base64.b64encode(open(wav, "rb").read()).decode()
+    reply = _gmi_chat([
+        {"type": "text", "text": "Transcribe this audio verbatim. Output ONLY the spoken words. "
+                                 "If there is no speech, output exactly: [no speech]"},
+        {"type": "input_audio", "input_audio": {"data": b64, "format": "wav"}}])
+    hyp = [] if "[no speech]" in reply.lower() else _norm_words(reply)
+    ref = _norm_words(" ".join(txt for (st, en, txt) in cues if en > t0 and st < t0 + window))
+    span = f"{t0:.0f}s–{t0 + window:.0f}s window"
+    if not ref:
+        return {"name": "ai_caption_accuracy", "status": "warn",
+                "detail": f"no caption text within the sampled {span}"}, window
+    if not hyp:
+        return {"name": "ai_caption_accuracy", "status": "warn",
+                "detail": f"captions present but no speech recognized in the {span}"}, window
+    acc = max(0.0, 1.0 - word_error_rate(ref, hyp))
+    return {"name": "ai_caption_accuracy", "status": "pass" if acc >= 0.80 else "warn",
+            "detail": f"{round(acc * 100, 1)}% word match between captions and speech "
+                      f"({len(ref)} caption vs {len(hyp)} spoken words, {span})"}, window
+
+
+def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str) -> tuple:
+    """→ (checks, {"frames": n, "asr_seconds": s}) for the qc_ai step."""
+    checks: list = []
+    frames, asr_seconds = 0, 0.0
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    if any(s.get("codec_type") == "video" for s in meta.get("streams", [])):
+        check, frames = ai_visual_check(src, duration, tmp)
+        if check:
+            checks.append(check)
+    cues = load_caption_cues(src, captions_path, tmp)
+    if cues:
+        check, asr_seconds = ai_caption_accuracy_check(src, meta, cues, tmp)
+        if check:
+            checks.append(check)
+    return checks, {"frames": frames, "asr_seconds": round(asr_seconds, 1)}
+
+
 def summarize_via_gmi(meta: dict, captions_text: str | None = None) -> str | None:
     if not GMI_API_KEY:
         return None
@@ -284,7 +454,7 @@ def run_pipeline(job: Job) -> None:
     progress(job, {"type": "pipeline_started", "key": job.key})
     tid = job.transferId
     # Sender-selected services (missing = everything on).
-    opts = {"thumbnail": True, "qc_av": True, "qc_captions": True, "summarize": True}
+    opts = {"thumbnail": True, "qc_av": True, "qc_captions": True, "qc_ai": True, "summarize": True}
     if job.options:
         opts.update({k: bool(v) for k, v in job.options.items()})
     derivatives: list[dict] = []
@@ -341,25 +511,58 @@ def run_pipeline(job: Job) -> None:
         except Exception as e:
             print("caption sidecar lookup failed:", e)
 
+        qc_report = None
         if opts["qc_av"] or opts["qc_captions"]:
             progress(job, {"type": "step_started", "step": "qc"})
             try:
-                qc = run_qc(src, meta,
-                            captions_path if opts["qc_captions"] else None,
-                            check_av=opts["qc_av"], check_captions=opts["qc_captions"])
-                qc_key = f"derivatives/{tid}/qc_report.json"
-                qc_body = json.dumps(qc, indent=2).encode()
-                s3.put_object(Bucket=BUCKET, Key=qc_key, Body=qc_body, ContentType="application/json")
-                derivatives.append({"step": "qc", "key": qc_key,
-                                    "sha256": hashlib.sha256(qc_body).hexdigest(),
-                                    "mime": "application/json"})
+                qc_report = run_qc(src, meta,
+                                   captions_path if opts["qc_captions"] else None,
+                                   check_av=opts["qc_av"], check_captions=opts["qc_captions"])
                 dur_min = float(meta.get("format", {}).get("duration", 0) or 0) / 60.0
-                progress(job, {"type": "step_done", "step": "qc", "key": qc_key, "status": qc["status"],
+                progress(job, {"type": "step_done", "step": "qc", "status": qc_report["status"],
                                "billable": {"unit": "minutes", "units": round(max(dur_min, 0.01), 3)}})
             except Exception as e:
                 progress(job, {"type": "step_error", "step": "qc", "error": str(e)})
         else:
             progress(job, {"type": "step_skipped", "step": "qc", "reason": "disabled by sender"})
+
+        # 3b. AI-assisted QC — GMI multimodal beside the deterministic lane.
+        #     Vision review of sampled frames + ASR caption-accuracy diff.
+        #     Uses the sidecar regardless of the qc_captions toggle: this is
+        #     its own service. Verdicts merge into the same qc_report.json.
+        if opts["qc_ai"]:
+            if not GMI_API_KEY:
+                progress(job, {"type": "step_skipped", "step": "qc_ai", "reason": "no GMI_API_KEY"})
+            else:
+                progress(job, {"type": "step_started", "step": "qc_ai"})
+                try:
+                    ai_checks, ai_units = run_ai_qc(src, meta, captions_path, tmp)
+                    if qc_report is None:
+                        qc_report = {"status": "pass", "checks": []}
+                    qc_report["checks"].extend(ai_checks)
+                    qc_report["ai"] = {"model": GMI_MULTIMODAL_MODEL, **ai_units}
+                    progress(job, {"type": "step_done", "step": "qc_ai",
+                                   "checks": [c["name"] for c in ai_checks],
+                                   "billable": {"unit": "frames", "units": ai_units["frames"]}})
+                    if ai_units["asr_seconds"]:
+                        # second billable line: ASR is metered in seconds
+                        progress(job, {"type": "step_metered", "step": "qc_ai_asr",
+                                       "billable": {"unit": "seconds", "units": ai_units["asr_seconds"]}})
+                except Exception as e:
+                    progress(job, {"type": "step_error", "step": "qc_ai", "error": str(e)})
+        else:
+            progress(job, {"type": "step_skipped", "step": "qc_ai", "reason": "disabled by sender"})
+
+        # 3c. one provenance-covered report for both lanes
+        if qc_report is not None:
+            statuses = [c["status"] for c in qc_report["checks"]]
+            qc_report["status"] = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "pass")
+            qc_key = f"derivatives/{tid}/qc_report.json"
+            qc_body = json.dumps(qc_report, indent=2).encode()
+            s3.put_object(Bucket=BUCKET, Key=qc_key, Body=qc_body, ContentType="application/json")
+            derivatives.append({"step": "qc", "key": qc_key,
+                                "sha256": hashlib.sha256(qc_body).hexdigest(),
+                                "mime": "application/json"})
 
         # 4. summarize — GMI Cloud seam (skipped cleanly until a key is set)
         summary = None
