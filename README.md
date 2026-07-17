@@ -1,26 +1,44 @@
-# OrbitXfer Web
+# Waystation
 
-Send huge media — it arrives smarter. High-speed delivery over **Backblaze B2**
-(the cloud waystation) with an AI enrichment pipeline (**Genblaze + GMI Cloud**)
-that runs while the file is parked, and a verifiable provenance trail.
+Send mastered video — it arrives **QC'd, summarized, and provable**.
+High-speed verified delivery over **Backblaze B2** (the cloud waystation) with
+a broadcast-grade QC engine + AI lane (**GMI Cloud**) that runs while the file
+is parked, a single-toggle **Netflix strict profile**, **self-healing** for
+out-of-spec audio/video, and a WORM-locked provenance trail.
 
 Built for the [Backblaze Generative Media Hackathon](https://backblaze-generative-media.devpost.com/).
 
 ## Flow
 
 ```
-browser ──parallel multipart (BLAKE3)──▶ B2 (originals)
-                                          │ object-created Event Notification
+browser ──parallel multipart (BLAKE3 + bao outboard)──▶ B2 (originals)
+                                          │ b2:ObjectCreated Event Notification
                                           ▼
-                                   gateway /api/events/b2
-                                          │ dispatch
+                                   gateway /api/events/b2  (HMAC-verified)
+                                          │ dispatch (sender-selected services)
                                           ▼
-                              Genblaze pipeline (GMI Cloud)
-                       transcode preview · transcribe · caption · summarize · tag
-                                          │ derivatives + provenance manifest
+                          QC + AI pipeline (ffmpeg/ffprobe + GMI Cloud)
+        structural → signal (AV/caption QC, BS.1770-4, R103, PSE) → AI lane
+        (vision review · ASR caption accuracy · compliance) → self-heal
+                                          │ derivatives + WORM provenance manifest
                                           ▼
-                                  B2 (derivatives/)   ──CDN──▶ recipient
+                                  B2 (derivatives/)   ──CDN──▶ delivery page
         progress streams the whole way via SSE (gateway /api/progress/:id)
+```
+
+## For judges: verify the claims in one command each
+
+Every capability below is proven by a self-contained script (MinIO + ffmpeg,
+no cloud creds needed) that builds violating media, runs the pipeline, and
+asserts the results:
+
+```bash
+bash scripts/netflix-qc-proof.sh   # Netflix profile: 4 BLOCKERs, self-heal re-measured to -24 LUFS, PSE, VMAF/MOS
+bash scripts/ai-qc-proof.sh        # AI lane: vision findings + ASR caption-accuracy WER (mock GMI, zero spend)
+bash scripts/qc-proof.sh           # deterministic AV + caption QC with exact defect counts
+bash scripts/toggle-proof.sh       # sender toggles gate the pipeline; transfer-only = zero derivatives
+bash scripts/object-lock-proof.sh  # WORM manifest: locked version cannot be deleted
+bash scripts/phase2-loop-proof.sh  # signed event -> pipeline -> derivatives + manifest + SSE
 ```
 
 ## Layout
