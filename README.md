@@ -174,6 +174,23 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   under Netflix but zero under Standard; its healed copy re-measures at
   −24.0 LUFS / TP ≤ −2 / legal luma; a strobe clip hard-fails the PSE
   scanner; `.ref` sidecars upload but never trigger pipeline runs.
+- ✅ **Real-cloud run with the full engine** (`scripts/live-event-run.sh`):
+  cloudflared tunnel → public webhook → gateway with the dev trigger OFF —
+  a production-shaped, HMAC-signed `b2:ObjectCreated` event delivered over
+  the public internet drove the pipeline against real B2 + real GMI.
+  Live results: 3 BLOCKERs as mastered (30p framerate, −10.7 LKFS,
+  +8.1 dBTP); Gemini vision caught the **burned-in timecode** in the test
+  pattern; caption accuracy 100% (21/21 words vs real ASR); self-heal
+  re-measured at **−24.3 LUFS / TP −5.1**; summary grounded in captions.
+- ✅ **WORM provenance on real Backblaze B2** (`MANIFEST_LOCK_DAYS=1`):
+  the manifest wrote with COMPLIANCE retention (24 h). Versioned delete →
+  **AccessDenied**, retention shortening → refused — with a key that holds
+  `deleteFiles` AND `bypassGovernance`. The QC report's manifest is
+  provably immutable, even to the bucket owner.
+- ⏳ **B2-fired Event Notifications**: account-level feature enablement
+  requested from Backblaze support (≤1 day). Once enabled, run
+  `scripts/b2-register-events.sh` — it registers the webhook rule against
+  the running tunnel; every other link in the chain is already proven.
 - **Declared, honestly gated** (explicit FYI findings, not silent gaps):
   Dolby Vision dynamic-canvas verification (needs dovi_tool RPU parsing),
   lip-sync ms offsets (no video-input modality on GMI's API), dead-pixel

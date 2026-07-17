@@ -82,7 +82,11 @@ const mimeOf = (k: string) =>
 api.get("/transfers/:id", async (c) => {
   const id = c.req.param("id");
   const all = await g.listKeys(`transfers/${id}/`);
-  const originals = all.filter((o) => !o.key.endsWith(".obao"));
+  // The master is whatever ISN'T a sidecar — captions (.srt/.vtt), the bao
+  // outboard, and reference mezzanines ride along under the same prefix and
+  // can sort ahead of the master alphabetically.
+  const SIDECAR_RE = /\.(obao|srt|vtt)$|\.ref\.[^./]+$/i;
+  const originals = all.filter((o) => !SIDECAR_RE.test(o.key));
   if (originals.length === 0) return c.json({ error: "not found" }, 404);
   const orig = originals[0];
   const outboard = all.find((o) => o.key.endsWith(".obao"));
