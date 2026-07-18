@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Throwaway pom: lets maven resolve Netflix Photon + its transitive
+     dependency tree into the worker image (see Dockerfile stage 1). -->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>waystation</groupId>
+  <artifactId>photon-fetch</artifactId>
+  <version>1</version>
+  <dependencies>
+    <dependency>
+      <groupId>com.netflix.photon</groupId>
+      <artifactId>Photon</artifactId>
+      <version>5.0.1</version>
+    </dependency>
+  </dependencies>
+</project>

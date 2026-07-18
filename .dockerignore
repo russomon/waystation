@@ -1,0 +1,19 @@
+# Secrets NEVER enter a build context — env is injected at runtime.
+.env
+.env.local
+
+node_modules/
+**/node_modules/
+client/dist/
+crates/
+target/
+cdn-worker/
+docs/
+scripts/
+vendor/
+.devdata/
+.git/
+pipeline/.venv/
+**/__pycache__/
+*.pyc
+.DS_Store

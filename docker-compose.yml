@@ -1,0 +1,60 @@
+# Waystation — deploy the waystation anywhere:
+#     docker compose up --build
+#
+# Production shape: gateway (control plane, always-on, tiny) + worker
+# (the compute: ffmpeg + Photon + Genblaze, stateless, scale horizontally).
+# Secrets/config come from .env at RUNTIME (never baked into images; the
+# build contexts .dockerignore it). Required in .env: B2_S3_ENDPOINT,
+# B2_REGION, B2_BUCKET, B2_KEY_ID, B2_APP_KEY, B2_EVENT_SIGNING_SECRET,
+# PIPELINE_SHARED_SECRET, GMI_API_KEY (+ optional GMI_MODEL,
+# MANIFEST_LOCK_DAYS, CDN_*).
+#
+# Point your B2 Event Notification rule at  https://<your-host>/api/events/b2
+# (put TLS in front of :8787 — a reverse proxy or cloudflared tunnel).
+# Local kick-the-tires without B2 events: uncomment DEV_TRIGGER_ON_COMPLETE
+# and the minio service below.
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: 8787
+      PIPELINE_URL: http://worker:8000
+      # worker → gateway progress posts travel the compose network:
+      GATEWAY_PUBLIC_URL: http://gateway:8787
+      # DEV_TRIGGER_ON_COMPLETE: "true"   # local only: no B2 events needed
+    ports:
+      - "8787:8787"
+    depends_on:
+      - worker
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./pipeline
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PHOTON_JAR: /opt/photon        # baked into the image
+    volumes:
+      - scratch:/tmp                 # size this for your largest masters
+    restart: unless-stopped
+
+  # minio:                           # local B2 stand-in (optional)
+  #   image: minio/minio
+  #   command: server /data
+  #   environment:
+  #     MINIO_ROOT_USER: minioadmin
+  #     MINIO_ROOT_PASSWORD: minioadmin
+  #   ports: ["9000:9000"]
+  #   volumes: [minio-data:/data]
+
+volumes:
+  scratch:
+  # minio-data:

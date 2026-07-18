@@ -71,6 +71,29 @@ bash scripts/dev-up.sh                          # MinIO + gateway + pipeline + V
 Or run pieces individually: `npm run dev:gateway` · `dev:client` · `dev:pipeline`.
 For real B2 webhooks in dev, expose the gateway: `cloudflared tunnel --url http://localhost:8787`.
 
+## Deploy (anywhere)
+
+The waystation ships as two containers — gateway (control plane, tiny,
+always-on) and worker (the compute: python 3.13 + ffmpeg + a JRE +
+**Netflix Photon baked in**, stateless, scale horizontally):
+
+```bash
+docker compose up --build     # .env supplies B2/GMI config at runtime
+```
+
+Point your B2 Event Notification rule at `https://<host>/api/events/b2`
+(TLS via reverse proxy or cloudflared). The worker holds no state between
+jobs — everything durable lands in B2 — so it runs identically on a $30
+VPS (Hetzner; **Vultr has zero-cost transfer with Backblaze**), scale-to-
+zero platforms (Fly.io Machines), or k8s. Mount real scratch space over
+`/tmp` for large masters. Secrets never enter the images (`.dockerignore`
+excludes `.env`; config is injected at runtime).
+
+Proven by `scripts/docker-proof.sh`: the built containers + MinIO run the
+full loop — signed event → containerized pipeline → derivatives + an
+SDK-verified Genblaze manifest — and the worker image answers for ffmpeg,
+Java, and 61 Photon jars.
+
 Multipart is assembled server-side from `ListParts`, so the browser never reads
 part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
 
