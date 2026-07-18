@@ -18,7 +18,7 @@ export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 DATA=$(mktemp -d); WORK=$(mktemp -d)
-SECRET=evsecret; SHARED=ps; BUCKET=orbitxfer-test
+SECRET=evsecret; SHARED=ps; BUCKET=waystation-test
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 cleanup(){ { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
 trap cleanup EXIT
@@ -76,8 +76,8 @@ tid, file, sidecar = sys.argv[1:4]
 s3=boto3.client("s3",endpoint_url="http://localhost:9000",region_name="us-east-1",aws_access_key_id="minioadmin",aws_secret_access_key="minioadmin",config=Config(s3={"addressing_style":"path"}))
 if sidecar:
     for sc in sidecar.split(","):
-        s3.upload_file(sc, "orbitxfer-test", f"transfers/{tid}/{os.path.basename(sc)}")
-s3.upload_file(file, "orbitxfer-test", f"transfers/{tid}/{os.path.basename(file)}", ExtraArgs={"ContentType":"video/mp4"})
+        s3.upload_file(sc, "waystation-test", f"transfers/{tid}/{os.path.basename(sc)}")
+s3.upload_file(file, "waystation-test", f"transfers/{tid}/{os.path.basename(file)}", ExtraArgs={"ContentType":"video/mp4"})
 PYEOF
   curl -N -s "http://localhost:8787/api/progress/$tid" > "/tmp/sse-$tid.log" 2>&1 &
   until grep -q subscribed "/tmp/sse-$tid.log"; do sleep 0.2; done
@@ -125,7 +125,7 @@ sys.path.insert(0, f"{web}/pipeline")
 from qc.audio import measure_loudness
 from qc.util import metadata_print, tag_values
 s3=boto3.client("s3",endpoint_url="http://localhost:9000",region_name="us-east-1",aws_access_key_id="minioadmin",aws_secret_access_key="minioadmin",config=Config(s3={"addressing_style":"path"}))
-def qc(tid): return json.loads(s3.get_object(Bucket="orbitxfer-test", Key=f"derivatives/{tid}/qc_report.json")["Body"].read())
+def qc(tid): return json.loads(s3.get_object(Bucket="waystation-test", Key=f"derivatives/{tid}/qc_report.json")["Body"].read())
 def usage(tid): return json.load(urllib.request.urlopen(f"http://localhost:8787/api/transfers/{tid}/usage"))
 def ck(r, n):
     h = [c for c in r["checks"] if c["name"] == n]
@@ -163,11 +163,11 @@ heal = ck(b, "self_heal")
 need(heal and heal["status"] == "pass", f"B self_heal check ({heal})")
 if heal: print(f"    self_heal: {heal['detail'][:110]}")
 # healed derivative: download and re-measure with the same instruments
-healed = [o["Key"] for o in s3.list_objects_v2(Bucket="orbitxfer-test", Prefix=f"derivatives/{tb}/").get("Contents", [])
+healed = [o["Key"] for o in s3.list_objects_v2(Bucket="waystation-test", Prefix=f"derivatives/{tb}/").get("Contents", [])
           if "/healed_" in o["Key"]]
 need(healed, "B healed derivative missing")
 if healed:
-    s3.download_file("orbitxfer-test", healed[0], "/tmp/healed-proof.mp4")
+    s3.download_file("waystation-test", healed[0], "/tmp/healed-proof.mp4")
     m = measure_loudness("/tmp/healed-proof.mp4")
     lines = metadata_print("/tmp/healed-proof.mp4", "signalstats", 4.0)
     ymax = max(tag_values(lines, "lavfi.signalstats.YMAX") or [999])

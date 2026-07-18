@@ -17,7 +17,7 @@ verifier at the bottom.
 
 ## 3. Create the bucket (with Object Lock)
 In the B2 console → **Buckets → Create a Bucket**:
-- **Name:** something unique, e.g. `orbitxfer-<yourname>` → put this in `.env` as `B2_BUCKET`.
+- **Name:** something unique, e.g. `waystation-<yourname>` → put this in `.env` as `B2_BUCKET`.
 - **Files in Bucket are:** **Private**.
 - **Object Lock:** **Enable** ← important, must be set at creation (needed for the
   WORM manifest / `MANIFEST_LOCK_DAYS`). If you skip it, everything else still
@@ -30,7 +30,7 @@ In the B2 console → **Buckets → Create a Bucket**:
 
 ## 4. Create an Application Key (scoped to the bucket)
 B2 console → **Application Keys → Add a New Application Key**:
-- **Name:** `orbitxfer-web`
+- **Name:** `waystation`
 - **Allow access to Bucket(s):** select the bucket you just made.
 - **Type of Access:** Read and Write.
 - Create it. Backblaze shows the **keyID** and the **applicationKey** (secret)

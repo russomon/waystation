@@ -1,14 +1,14 @@
-name = "orbitxfer-cdn"
+name = "waystation-cdn"
 main = "src/index.ts"
 compatibility_date = "2024-11-01"
 
 # Bind to your Cloudflare zone once DNS is set up:
-# routes = [{ pattern = "cdn.orbitxfer.app/*", zone_name = "orbitxfer.app" }]
+# routes = [{ pattern = "cdn.waystation.app/*", zone_name = "waystation.app" }]
 
 [vars]
 B2_S3_ENDPOINT = "https://s3.us-west-004.backblazeb2.com"
 B2_REGION = "us-west-004"
-B2_BUCKET = "orbitxfer-transfers"
+B2_BUCKET = "waystation-transfers"
 
 # Secrets (do NOT put in this file):
 #   wrangler secret put B2_KEY_ID

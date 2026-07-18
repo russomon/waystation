@@ -1,4 +1,4 @@
-// Cloudflare Worker on cdn.orbitxfer.app.
+// Cloudflare Worker on cdn.waystation.app.
 // Verifies the gateway's short-lived HMAC token, then streams the object from
 // the PRIVATE B2 bucket. B2→Worker egress is free (Bandwidth Alliance);
 // Cloudflare caches hot ranges. Range requests pass through for verified

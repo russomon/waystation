@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
 const wasm = require("../../crates/blake3-outboard/pkg-node/blake3_outboard.js");
 
 const GATEWAY = process.env.GATEWAY ?? "http://localhost:8787";
-const BUCKET = process.env.B2_BUCKET ?? "orbitxfer-test";
+const BUCKET = process.env.B2_BUCKET ?? "waystation-test";
 const SIZE = (Number(process.env.SIZE_MB ?? 40)) * (1 << 20);
 
 const s3 = new S3Client({

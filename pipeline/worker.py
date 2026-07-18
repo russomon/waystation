@@ -1,5 +1,5 @@
 """
-OrbitXfer Web — Genblaze pipeline worker.
+Waystation — Genblaze pipeline worker.
 
 Triggered by the gateway when B2 reports a new original media object. Does
 real work on the file (probe + poster frame today; transcribe/summarize via

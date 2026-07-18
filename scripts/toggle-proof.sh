@@ -11,7 +11,7 @@ export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 DATA=$(mktemp -d); WORK=$(mktemp -d)
-SECRET=evsecret; SHARED=ps; BUCKET=orbitxfer-test
+SECRET=evsecret; SHARED=ps; BUCKET=waystation-test
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 cleanup(){ { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
 trap cleanup EXIT
@@ -118,7 +118,7 @@ import boto3, json, sys; from botocore.config import Config
 t1, t2, t3 = sys.argv[1:4]
 s3=boto3.client("s3",endpoint_url="http://localhost:9000",region_name="us-east-1",aws_access_key_id="minioadmin",aws_secret_access_key="minioadmin",config=Config(s3={"addressing_style":"path"}))
 def derivs(tid):
-    r = s3.list_objects_v2(Bucket="orbitxfer-test", Prefix=f"derivatives/{tid}/")
+    r = s3.list_objects_v2(Bucket="waystation-test", Prefix=f"derivatives/{tid}/")
     return sorted(o["Key"].split("/")[-1] for o in r.get("Contents", []))
 ok = True
 # T1: transfer-only → nothing derived, and the event path never started a run
@@ -131,7 +131,7 @@ if sse1.count("pipeline_skipped") < 2: print("  FAIL: event path did not skip vi
 d2 = derivs(t2); print(f"  T2 derivatives: {d2}")
 if "thumb.jpg" in d2 or "summary.txt" in d2: print("  FAIL: disabled steps produced artifacts"); ok = False
 if "qc_report.json" not in d2 or "manifest.json" not in d2: print("  FAIL: caption QC missing outputs"); ok = False
-qc = json.loads(s3.get_object(Bucket="orbitxfer-test", Key=f"derivatives/{t2}/qc_report.json")["Body"].read())
+qc = json.loads(s3.get_object(Bucket="waystation-test", Key=f"derivatives/{t2}/qc_report.json")["Body"].read())
 names = {c["name"] for c in qc["checks"]}
 av = {"has_video","has_audio","decode","black_frames","freeze_frames","audio_silence","loudness"}
 caps = {"captions_present","caption_timing","caption_readability"}
@@ -145,7 +145,7 @@ if not {"thumbnail","summarize"} <= set(skipped): print("  FAIL: skip events mis
 # T3: default → thumbnail runs (summary needs GMI key; absent here → its own step degrades, that's fine)
 d3 = derivs(t3); print(f"  T3 derivatives: {d3}")
 if "thumb.jpg" not in d3 or "qc_report.json" not in d3: print("  FAIL: defaults did not run everything"); ok = False
-qc3 = json.loads(s3.get_object(Bucket="orbitxfer-test", Key=f"derivatives/{t3}/qc_report.json")["Body"].read())
+qc3 = json.loads(s3.get_object(Bucket="waystation-test", Key=f"derivatives/{t3}/qc_report.json")["Body"].read())
 if not av <= {c["name"] for c in qc3["checks"]}: print("  FAIL: T3 missing AV checks"); ok = False
 print("PASS ✓  toggles gate the pipeline end to end" if ok else "FAIL")
 sys.exit(0 if ok else 1)

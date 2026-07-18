@@ -6,7 +6,7 @@ export interface ResumeState {
   done: Record<number, string>; // partNumber -> etag
 }
 
-const DB = "orbitxfer", STORE = "uploads";
+const DB = "waystation", STORE = "uploads";
 function db(): Promise<IDBDatabase> {
   return new Promise((res, rej) => {
     const r = indexedDB.open(DB, 1);

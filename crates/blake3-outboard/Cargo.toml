@@ -2,7 +2,7 @@
 name = "blake3-outboard"
 version = "0.1.0"
 edition = "2021"
-description = "Streaming BLAKE3 (root now; bao outboard next) for OrbitXfer Web, compiled to wasm."
+description = "Streaming BLAKE3 (root now; bao outboard next) for Waystation, compiled to wasm."
 
 [lib]
 crate-type = ["cdylib"]

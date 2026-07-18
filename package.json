@@ -1,5 +1,5 @@
 {
-  "name": "orbitxfer-web",
+  "name": "waystation",
   "private": true,
   "version": "0.0.1",
   "description": "High-speed media delivery + AI enrichment over Backblaze B2, Genblaze, and GMI Cloud.",

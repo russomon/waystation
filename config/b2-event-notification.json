@@ -2,13 +2,13 @@
   "_comment": "Apply with the B2 native API (b2_set_bucket_notification_rules) or the UI. The prefix limits events to uploaded originals; the gateway additionally drops .obao sidecars. Pipeline outputs live under derivatives/ so they never match this prefix and never loop.",
   "eventNotificationRules": [
     {
-      "name": "orbitxfer-originals",
+      "name": "waystation-pipeline",
       "isEnabled": true,
       "eventTypes": ["b2:ObjectCreated:*"],
       "objectNamePrefix": "transfers/",
       "targetConfiguration": {
         "targetType": "webhook",
-        "url": "https://gateway.orbitxfer.app/api/events/b2",
+        "url": "https://gateway.waystation.app/api/events/b2",
         "hmacSha256SigningSecret": "REPLACE_WITH_B2_EVENT_SIGNING_SECRET"
       }
     }

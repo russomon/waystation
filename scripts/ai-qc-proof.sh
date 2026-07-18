@@ -12,7 +12,7 @@ export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 DATA=$(mktemp -d); WORK=$(mktemp -d)
-SECRET=evsecret; SHARED=ps; BUCKET=orbitxfer-test
+SECRET=evsecret; SHARED=ps; BUCKET=waystation-test
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 cleanup(){ { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; lsof -ti:8009; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
 trap cleanup EXIT
@@ -132,7 +132,7 @@ echo "=== AI QC assertions ==="
 import boto3, json, sys, urllib.request; from botocore.config import Config
 ta, tb, tc = sys.argv[1:4]
 s3=boto3.client("s3",endpoint_url="http://localhost:9000",region_name="us-east-1",aws_access_key_id="minioadmin",aws_secret_access_key="minioadmin",config=Config(s3={"addressing_style":"path"}))
-def qc(tid): return json.loads(s3.get_object(Bucket="orbitxfer-test", Key=f"derivatives/{tid}/qc_report.json")["Body"].read())
+def qc(tid): return json.loads(s3.get_object(Bucket="waystation-test", Key=f"derivatives/{tid}/qc_report.json")["Body"].read())
 def usage(tid): return json.load(urllib.request.urlopen(f"http://localhost:8787/api/transfers/{tid}/usage"))
 def ck(r, n):
     hits = [c for c in r["checks"] if c["name"] == n]

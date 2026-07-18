@@ -8,7 +8,7 @@ export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 DATA="$WEB/.devdata"; mkdir -p "$DATA"
-SECRET=devevent; SHARED=devshared; BUCKET=orbitxfer-dev
+SECRET=devevent; SHARED=devshared; BUCKET=waystation-dev
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 \
        B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 
@@ -55,7 +55,7 @@ until curl -sf -o /dev/null --max-time 1 http://localhost:5173/; do sleep 0.5; d
 
 cat <<MSG
 
-  ✅ OrbitXfer Web is up.
+  ✅ Waystation is up.
        open  →  http://localhost:5173
        logs  →  /tmp/ox-{minio,gw,pipe,client}.log
        data  →  $DATA  (persists across runs)

@@ -8,7 +8,7 @@ export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 DATA=$(mktemp -d); WORK=$(mktemp -d)
-SECRET=evsecret; SHARED=ps; BUCKET=orbitxfer-test
+SECRET=evsecret; SHARED=ps; BUCKET=waystation-test
 TID=$(uuidgen | tr 'A-Z' 'a-z'); KEY="transfers/$TID/test.mp4"
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 cleanup(){ { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
