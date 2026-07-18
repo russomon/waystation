@@ -64,13 +64,19 @@ assert any(d["mime"]=="image/jpeg" for d in t["derivatives"]), "no thumbnail"
 man=json.load(urllib.request.urlopen(t["manifestUrl"]))
 def sha(url):
     h=hashlib.sha256(); h.update(urllib.request.urlopen(url).read()); return h.hexdigest()
-ok = sha(t["original"]["url"])==man["input"]["sha256"]
+# Genblaze manifest (genblaze-core): run.steps[].inputs/assets, s3:// asset urls
+from genblaze_core.models import parse_manifest
+gb = parse_manifest(man)
+print(f"    genblaze schema v{gb.schema_version}, canonical hash ok: {gb.verify_hash()}")
+assert gb.verify_hash(), "SDK hash verification failed"
+steps = man["run"]["steps"]
+ok = sha(t["original"]["url"])==steps[0]["inputs"][0]["sha256"]
 print(f"    verify original  sha256 == manifest: {'✓' if ok else '✗'}")
 thumb=[d for d in t["derivatives"] if d["mime"]=="image/jpeg"][0]
-tstep=[s for s in man["steps"] if s.get("step")=="thumbnail"][0]
-ok2 = sha(thumb["url"])==tstep["sha256"]
+tstep=[s for s in steps if s["step_id"]=="thumbnail"][0]
+ok2 = sha(thumb["url"])==tstep["assets"][0]["sha256"]
 print(f"    verify thumbnail sha256 == manifest: {'✓' if ok2 else '✗'}")
-sys.exit(0 if ok and ok2 else 1)
+sys.exit(0 if ok and ok2 and gb.verify_hash() else 1)
 PYEOF
 RC=$?
 echo "================================================================"

@@ -34,7 +34,10 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   if (!res.ok) { root.textContent = "Transfer not found or expired."; return; }
   const t: Transfer = await res.json();
   const manifest = t.manifestUrl ? await fetch(t.manifestUrl).then((r) => r.json()).catch(() => null) : null;
-  const summary: string | undefined = manifest?.steps?.find((s: any) => s.step === "summarize")?.text;
+  // Genblaze manifest (genblaze-core): run.steps[], assets with s3:// urls.
+  const gbSteps: any[] = manifest?.run?.steps ?? [];
+  const summary: string | undefined = gbSteps.find((s) => s.step_id === "summarize")?.metadata?.summary;
+  const keyOf = (url: string) => url.replace(/^s3:\/\/[^/]+\//, "");
   const thumb = t.derivatives.find((d) => d.mime === "image/jpeg");
   const qcAsset = t.derivatives.find((d) => d.key.endsWith("qc_report.json"));
   const qc = qcAsset ? await fetch(qcAsset.url).then((r) => r.json()).catch(() => null) : null;
@@ -105,9 +108,13 @@ export async function renderDelivery(id: string, root: HTMLElement) {
 
   if (manifest) {
     const prov = el(`<details class="prov" open><summary>Provenance</summary></details>`);
-    prov.append(el(`<p class="mono">original sha256: ${String(manifest.input.sha256).slice(0, 24)}…</p>`));
-    const steps = (manifest.steps ?? [])
-      .map((s: any) => "· " + s.step + (s.key ? " → " + s.key.split("/").pop() : ""))
+    prov.append(el(`<p class="mono">Genblaze manifest v${manifest.schema_version} · canonical hash ${String(manifest.canonical_hash).slice(0, 20)}…</p>`));
+    const inputAsset = gbSteps[0]?.inputs?.[0];
+    if (inputAsset?.sha256)
+      prov.append(el(`<p class="mono">original sha256: ${String(inputAsset.sha256).slice(0, 24)}…</p>`));
+    const steps = gbSteps
+      .map((s: any) => `· ${s.step_id} <span class="meta">(${s.provider}/${s.model})</span>` +
+        (s.assets?.[0]?.url ? " → " + keyOf(s.assets[0].url).split("/").pop() : ""))
       .join("<br>");
     prov.append(el(`<p class="mono">${steps || "· (no steps)"}</p>`));
     const btn = el(`<button class="btn ghost">Verify provenance</button>`) as HTMLButtonElement;
@@ -137,10 +144,15 @@ async function verify(t: Transfer, manifest: any, out: HTMLElement, btn: HTMLBut
     [t.original.key, t.original.url],
     ...t.derivatives.map((d) => [d.key, d.url] as [string, string]),
   ]);
+  // Walk the Genblaze run: the input asset once + every step's output assets.
+  const keyOf = (url: string) => url.replace(/^s3:\/\/[^/]+\//, "");
+  const gbSteps: any[] = manifest?.run?.steps ?? [];
+  const inputAsset = gbSteps[0]?.inputs?.[0];
   const items: { key: string; sha256: string; name: string }[] = [
-    { key: manifest.input.key, sha256: manifest.input.sha256, name: "original" },
-    ...(manifest.steps ?? []).filter((s: any) => s.key && s.sha256)
-      .map((s: any) => ({ key: s.key, sha256: s.sha256, name: s.step })),
+    ...(inputAsset?.sha256 ? [{ key: keyOf(inputAsset.url), sha256: inputAsset.sha256, name: "original" }] : []),
+    ...gbSteps.flatMap((s: any) => (s.assets ?? [])
+      .filter((a: any) => a.sha256)
+      .map((a: any) => ({ key: keyOf(a.url), sha256: a.sha256, name: s.step_id }))),
   ];
   const checks: { name: string; ok: boolean }[] = [];
   for (const it of items) {

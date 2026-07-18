@@ -18,7 +18,7 @@ kill_ports
 
 # preflight
 command -v minio >/dev/null || { echo "✗ minio not found — brew install minio"; exit 1; }
-[ -x "$PY" ] || { echo "✗ pipeline venv missing — cd pipeline && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
+[ -x "$PY" ] || { echo "✗ pipeline venv missing — cd pipeline && python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
 [ -d "$WEB/crates/blake3-outboard/pkg" ] || { echo "✗ wasm not built — npm run build:wasm"; exit 1; }
 [ -d "$WEB/node_modules" ] || { echo "✗ deps not installed — npm install"; exit 1; }
 

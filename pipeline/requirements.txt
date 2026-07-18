@@ -1,9 +1,12 @@
+# Python >= 3.11 required (genblaze-core floor). Build the venv with e.g.
+#   /opt/homebrew/bin/python3.13 -m venv .venv
 fastapi>=0.115
 uvicorn[standard]>=0.30
 httpx>=0.27
 boto3>=1.35
-# Genblaze pipeline + adapters (confirm exact names/versions on first install):
-genblaze-core
-genblaze-gmicloud
-genblaze-s3
+# Genblaze SDK — the provenance manifest IS a genblaze_core.models.Manifest,
+# canonical-hashed and self-verified before upload (worker.py step 4).
+genblaze-core>=0.3.6
+genblaze-gmicloud>=0.3.3
+genblaze-s3>=0.3.5
 # NOTE: ffmpeg/ffprobe must be installed on the host (brew install ffmpeg).

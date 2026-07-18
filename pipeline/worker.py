@@ -25,6 +25,11 @@ import boto3
 import httpx
 from botocore.config import Config
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
+from genblaze_core.models import Asset as GbAsset
+from genblaze_core.models import Manifest as GbManifest
+from genblaze_core.models import Run as GbRun
+from genblaze_core.models import Step as GbStep
+from genblaze_core.models.enums import Modality, RunStatus, StepStatus, StepType
 from pydantic import BaseModel
 
 from qc import audio as qaudio
@@ -669,18 +674,46 @@ def run_pipeline(job: Job) -> None:
         else:
             progress(job, {"type": "step_skipped", "step": "summarize", "reason": "disabled by sender"})
 
-        # 4. provenance manifest (the Object Lock target). Interim shape;
-        #    swap for the real Genblaze manifest when wiring genblaze-core.
-        manifest = {
-            "run_id": tid,
-            "input": {"key": job.key, "sha256": src_sha},
-            "steps": derivatives + ([{"step": "summarize", "provider": "gmicloud",
-                                      "model": GMI_MODEL, "text": summary}] if summary else []),
-            "created_at": datetime.now(timezone.utc).isoformat(),
+        # 4. provenance manifest — a REAL Genblaze manifest (genblaze-core),
+        #    canonical-hashed by the SDK and verified with the SDK's own
+        #    verifier before upload. B2 Object Lock stays the trust anchor
+        #    (the manifest itself is tamper-evident, not tamper-proof).
+        src_asset = GbAsset(
+            asset_id="master", url=f"s3://{BUCKET}/{job.key}",
+            media_type="video/mp4", sha256=src_sha, size_bytes=os.path.getsize(src),
+            duration=float(meta.get("format", {}).get("duration", 0) or 0) or None)
+        STEP_INFO = {   # provider/model/type/modality per pipeline step
+            "thumbnail": ("ffmpeg", "ffmpeg/poster-frame", StepType.TRANSCODE, Modality.IMAGE),
+            "qc": ("waystation", "qc-engine/deterministic+ai", StepType.CUSTOM, Modality.TEXT),
+            "heal": ("ffmpeg", "loudnorm+limiter", StepType.TRANSCODE, Modality.VIDEO),
         }
+        gb_steps = []
+        for i, d in enumerate(derivatives):
+            prov, model, stype, mod = STEP_INFO.get(d["step"], ("waystation", d["step"], StepType.CUSTOM, Modality.TEXT))
+            gb_steps.append(GbStep(
+                step_id=d["step"], run_id=tid, provider=prov, model=model,
+                step_type=stype, modality=mod, status=StepStatus.SUCCEEDED,
+                step_index=i, inputs=[src_asset],
+                assets=[GbAsset(asset_id=d["step"] + "-out", url=f"s3://{BUCKET}/{d['key']}",
+                                media_type=d["mime"], sha256=d["sha256"])]))
+        if summary:
+            gb_steps.append(GbStep(
+                step_id="summarize", run_id=tid, provider="gmicloud", model=GMI_MODEL,
+                step_type=StepType.GENERATE, modality=Modality.TEXT,
+                status=StepStatus.SUCCEEDED, step_index=len(gb_steps),
+                inputs=[src_asset], metadata={"summary": summary}))
+        manifest = GbManifest(run=GbRun(
+            run_id=tid, name="waystation-delivery", status=RunStatus.COMPLETED,
+            steps=gb_steps, completed_at=datetime.now(timezone.utc),
+            metadata={"transferId": tid, "profile": profile["name"], "services": opts,
+                      **({"qc_status": qc_report["status"], "qc_tiers": qc_report["tiers"]}
+                         if qc_report else {})}))
         mkey = f"derivatives/{tid}/manifest.json"
+        manifest.manifest_uri = f"s3://{BUCKET}/{mkey}"
+        manifest.canonical_hash = manifest.compute_hash()
+        assert manifest.verify_hash(), "genblaze manifest failed self-verification"
         put_args = dict(Bucket=BUCKET, Key=mkey,
-                        Body=json.dumps(manifest, indent=2).encode(),
+                        Body=manifest.model_dump_json(indent=2).encode(),
                         ContentType="application/json")
         locked_until = None
         if MANIFEST_LOCK_DAYS > 0:
@@ -689,6 +722,8 @@ def run_pipeline(job: Job) -> None:
             put_args["ObjectLockRetainUntilDate"] = locked_until
         s3.put_object(**put_args)
         progress(job, {"type": "manifest_written", "key": mkey,
+                       "schema": f"genblaze/{manifest.schema_version}",
+                       "canonical_hash": manifest.canonical_hash,
                        "locked_until": locked_until.isoformat() if locked_until else None})
 
     progress(job, {"type": "pipeline_complete", "derivatives": [d["key"] for d in derivatives], "manifest": mkey})

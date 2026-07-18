@@ -83,8 +83,8 @@ print(f"QC: {qc['status'].upper()}")
 for c in qc["checks"]:
     icon={"pass":"✓","warn":"⚠"}.get(c["status"],"✗")
     print(f"  {icon} {c['name']}" + (f" — {c['detail']}" if c.get("detail") else ""))
-summ=[s for s in man.get("steps",[]) if s.get("step")=="summarize"]
-print("\nAI summary (GMI):", summ[0]["text"] if summ else "(none — check GMI step in stream above)")
+summ=[s for s in man.get("run",{}).get("steps",[]) if s.get("step_id")=="summarize"]
+print("\nAI summary (GMI):", summ[0]["metadata"]["summary"] if summ else "(none — check GMI step in stream above)")
 u=json.load(urllib.request.urlopen("http://localhost:8787/api/transfers/$TID/usage"))
 print("usage ledger:", {k:f'{v["units"]} {v["unit"]}' for k,v in u["totals"].items()})
 PYEOF

@@ -61,7 +61,7 @@ One command brings up the whole stack on MinIO (no cloud creds needed) — open
 # one-time setup
 npm install                                    # workspaces
 npm run build:wasm                             # needs cargo + wasm-pack
-( cd pipeline && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt )  # needs ffmpeg
+( cd pipeline && python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt )  # needs ffmpeg
 
 # every time
 bash scripts/dev-up.sh                          # MinIO + gateway + pipeline + Vite client
@@ -209,6 +209,15 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   requested from Backblaze support (≤1 day). Once enabled, run
   `scripts/b2-register-events.sh` — it registers the webhook rule against
   the running tunnel; every other link in the chain is already proven.
+- ✅ **Real Genblaze manifests** (`genblaze-core` 0.3.6, schema v1.5): the
+  provenance manifest is a genuine `genblaze_core.models.Manifest` — Run →
+  Steps (with provider/model attribution: `ffmpeg/poster-frame`,
+  `waystation/qc-engine`, `gmicloud/<model>`) → Assets with SHA-256 —
+  canonical-hashed and **self-verified with the SDK's own verifier** before
+  upload, then WORM-locked. The delivery page shows the schema + canonical
+  hash and its Verify button re-hashes every asset against the manifest.
+  Proven by `scripts/delivery-proof.sh` (SDK `verify_hash()` + asset
+  re-hash assertions). Pipeline venv now Python 3.13.
 - **Declared, honestly gated** (explicit FYI findings, not silent gaps):
   Dolby Vision dynamic-canvas verification (needs dovi_tool RPU parsing),
   lip-sync ms offsets (no video-input modality on GMI's API), dead-pixel
