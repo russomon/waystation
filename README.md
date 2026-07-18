@@ -230,11 +230,21 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   "intentional transition". Proven by `scripts/ai-qc-proof.sh` (clip E:
   detection timecodes in the report, verdict surfaced, frames metered,
   and NO escalation call when nothing was flagged).
+- ✅ **Photon executes for real (Rule 4).** `scripts/fetch-photon.sh`
+  vendors Netflix's Photon 5.0.1 + its 60-jar dependency tree from Maven
+  Central (gitignored under `vendor/`); with `PHOTON_JAR` set, an IMF
+  package (zip carrying `ASSETMAP.xml`) is extracted and run through
+  **IMPAnalyzer** as a subprocess — its genuine ST 2067-21 schema findings
+  parse into the report and a non-conformant package is a **BLOCKER**
+  under the netflix profile. The wrapper probes for a *working* JVM
+  (macOS's `/usr/bin/java` stub famously exists-but-fails) and flags
+  "no analysis output" rather than false-passing. Proven by
+  `scripts/photon-proof.sh` (self-skips with instructions when Photon
+  isn't fetched).
 - **Declared, honestly gated** (explicit FYI findings, not silent gaps):
   Dolby Vision dynamic-canvas verification (needs dovi_tool RPU parsing),
   lip-sync ms offsets (no video-input modality on GMI's API), dead-pixel
-  tracking (needs long-window frame accumulation), Photon execution
-  (needs a JVM + `PHOTON_JAR`).
+  tracking (needs long-window frame accumulation).
 
 Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
 `bash scripts/phase2-loop-proof.sh` · `bash scripts/delivery-proof.sh` ·

@@ -117,8 +117,10 @@ lanes, and the provenance layer must anchor *both* kinds of verdicts.
 
 ## What's next
 
-Dolby Vision canvas verification via dovi_tool, IMF/Photon execution in a
-JVM container, and per-customer billing on the metering ledger.
+Dolby Vision canvas verification via dovi_tool, and per-customer billing
+on the metering ledger. (IMF validation via Netflix's Photon already
+executes: a non-conformant package is a BLOCKER with Photon's own ST
+2067-21 schema findings in the report.)
 
 ---
 
