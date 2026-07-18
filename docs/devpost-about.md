@@ -44,6 +44,12 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   artifacts); Gemini's audio modality transcribes a sample window and the
   transcript is **word-error-rate diffed against the captions** - automated
   caption accuracy. Plus a caption-grounded one-line summary for the recipient.
+- **AI-targeted escalation** - the lanes cooperate: when the deterministic
+  scanner flags black/frozen segments, Gemini adjudicates before/inside/after
+  frames from those exact timecodes - same-shot-continuing means DEFECT,
+  scene-change means intentional editorial event. Live-verified: it called a
+  spliced-in black hole "an accidental dropout" and a fade-to-black between
+  scenes "an intentional transition."
 - **Netflix strict profile** - one toggle swaps thresholds for a
   zero-tolerance delivery spec (−24 LKFS ±1, −2 dBTP, native frame rates
   only, no pulldown, PSE hard-fail). Findings tier into
@@ -111,10 +117,8 @@ lanes, and the provenance layer must anchor *both* kinds of verdicts.
 
 ## What's next
 
-AI-targeted escalation (vision review at the exact timecodes the
-deterministic lane flags), Dolby Vision canvas verification via dovi_tool,
-IMF/Photon execution in a JVM container, and per-customer billing on the
-metering ledger.
+Dolby Vision canvas verification via dovi_tool, IMF/Photon execution in a
+JVM container, and per-customer billing on the metering ledger.
 
 ---
 

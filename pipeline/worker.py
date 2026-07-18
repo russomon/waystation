@@ -162,16 +162,15 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
         guarded(qimf.photon_checks, src, tmp, profile, group="imf_photon")
 
         # ── Task 2: signal video quality ──
-        blacks: list = []
-        if True:
-            try:
-                det, blacks = qvideo.decode_and_detections(src, has_video, has_audio)
-                checks.extend(det)
-            except Exception as e:
-                checks.append(qreport.check("decode", "warn", f"analyzer error: {str(e)[:140]}", "engine"))
+        segments: dict = {"black": [], "freeze": []}
+        try:
+            det, segments = qvideo.decode_and_detections(src, has_video, has_audio, duration)
+            checks.extend(det)
+        except Exception as e:
+            checks.append(qreport.check("decode", "warn", f"analyzer error: {str(e)[:140]}", "engine"))
         if has_video:
             guarded(qstructural.framerate_checks, src, meta, profile, group="framerate")
-            guarded(qvideo.boundary_check, blacks, duration, group="picture_boundaries")
+            guarded(qvideo.boundary_check, segments["black"], duration, group="picture_boundaries")
             guarded(qvideo.range_and_pse, src, duration, profile, bit_depth, group="video_legal_range")
             guarded(qvideo.matte_and_aspect, src, meta, duration, group="letterbox_matte")
             guarded(qvideo.upconversion_check, src, meta, duration, group="upconversion")
@@ -215,7 +214,13 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
                                         "no caption track or sidecar found (mastered deliveries "
                                         "usually require captions)", "text"))
 
-    return qreport.finalize({"checks": checks}, profile)
+    report = qreport.finalize({"checks": checks}, profile)
+    # Flagged segment timecodes ride in the report: consumers see WHERE the
+    # detections fired, and the AI escalation adjudicates those exact moments.
+    if check_av and (segments["black"] or segments["freeze"]):
+        report["detections"] = {k: [[round(s, 2), round(e, 2)] for s, e in v]
+                                for k, v in segments.items() if v}
+    return report
 
 
 # ───────────────────────── AI-assisted QC lane ─────────────────────────
@@ -331,6 +336,73 @@ def ai_visual_check(src: str, duration: float, tmp: str) -> tuple:
     return checks, used
 
 
+AI_QC_ESCALATION_MAX = int(os.environ.get("AI_QC_ESCALATION_MAX", "4"))
+
+_ESCALATION_PROMPT = (
+    "You are the supervising broadcast QC operator. The deterministic scanner "
+    "flagged suspect segments in a mastered delivery. For each segment you see "
+    "three frames: BEFORE the segment, INSIDE it, and AFTER it (times labeled). "
+    "Adjudicate each segment: an INTENTIONAL editorial event (fade to black, "
+    "chapter break, title card, scene transition, deliberate hold) or a "
+    "delivery DEFECT (dropout, accidental black insert, encoder failure, "
+    "stuck/frozen frame interrupting action). Key heuristic: if the BEFORE and "
+    "AFTER frames belong to the same continuing shot, an interruption between "
+    "them is a DEFECT; if they are different scenes, black between them is "
+    "likely an intentional transition. Respond with STRICT JSON only:\n"
+    '{"verdicts": [{"segment": <n>, "verdict": "intentional|defect|uncertain", '
+    '"reason": "<short>"}]}'
+)
+
+
+def ai_escalation_check(src: str, detections: dict, duration: float, tmp: str) -> tuple:
+    """AI-targeted escalation: the deterministic lane found black/frozen
+    segments at exact timecodes — sample frames AROUND those moments and have
+    Gemini adjudicate intent. Returns (check-dict | None, frames_used)."""
+    suspects = ([("black", s, e) for s, e in detections.get("black", [])] +
+                [("freeze", s, e) for s, e in detections.get("freeze", [])])[:AI_QC_ESCALATION_MAX]
+    if not suspects:
+        return None, 0
+    parts: list = [{"type": "text", "text": _ESCALATION_PROMPT}]
+    frames = 0
+    end_cap = max((duration or 0) - 0.05, 0.1)
+    for n, (kind, s, e) in enumerate(suspects, 1):
+        parts.append({"type": "text",
+                      "text": f"Segment {n}: {kind.upper()} {s:.1f}s–{e:.1f}s. "
+                              f"Frames: before / inside / after:"})
+        for t in (max(s - 0.5, 0.0), (s + e) / 2, min(e + 0.5, end_cap)):
+            fp = os.path.join(tmp, f"esc_{n}_{t:.2f}.jpg")
+            subprocess.run(["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", src, "-frames:v", "1",
+                            "-vf", "scale=448:-2", fp], capture_output=True)
+            if os.path.exists(fp) and os.path.getsize(fp) > 0:
+                b64 = base64.b64encode(open(fp, "rb").read()).decode()
+                parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+                frames += 1
+    if frames == 0:
+        return None, 0
+    data = _json_from(_gmi_chat(parts))
+    if data is None:
+        return {"name": "ai_escalation", "status": "info", "tier": "FYI",
+                "detail": f"{len(suspects)} flagged segment(s) sent for adjudication; reply unparseable"}, frames
+    verdicts = data.get("verdicts") or []
+    by = {"intentional": [], "defect": [], "uncertain": []}
+    for v in verdicts:
+        by.setdefault(str(v.get("verdict", "uncertain")).lower(), by["uncertain"]).append(v)
+    if by["defect"]:
+        detail = "; ".join(f"segment {v.get('segment', '?')}: {v.get('reason', '')}" for v in by["defect"][:3])
+        return {"name": "ai_escalation", "status": "warn", "tier": "ISSUE",
+                "detail": f"{len(by['defect'])} of {len(suspects)} flagged segment(s) adjudicated as "
+                          f"DEFECTS — {detail}"}, frames
+    if by["uncertain"]:
+        return {"name": "ai_escalation", "status": "warn", "tier": "ISSUE",
+                "detail": f"{len(by['uncertain'])} flagged segment(s) could not be adjudicated — "
+                          f"human review advised"}, frames
+    reasons = "; ".join(str(v.get("reason", "")) for v in by["intentional"][:2])
+    return {"name": "ai_escalation", "status": "pass",
+            "detail": f"all {len(suspects)} flagged segment(s) adjudicated as intentional editorial "
+                      f"events ({reasons}) — deterministic black/freeze warnings are editorial, "
+                      f"not defects"}, frames
+
+
 def ai_caption_accuracy_check(src: str, meta: dict, cues: list, tmp: str) -> tuple:
     """(check-dict | None, asr-seconds). Transcribe a sampled window, WER it
     against the caption text covering that window."""
@@ -417,13 +489,14 @@ def ai_text_compliance_check(cap_text: str) -> dict | None:
 
 
 def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
-              profile: dict | None = None) -> tuple:
-    """Semantic AI layer → (checks, {"frames": n, "asr_seconds": s}).
-    Vision review, censorship screen (Rule 3), caption accuracy vs ASR,
+              profile: dict | None = None, detections: dict | None = None) -> tuple:
+    """Semantic AI layer → (checks, {"frames", "asr_seconds", "escalation_frames"}).
+    Vision review, censorship screen (Rule 3), AI-targeted escalation of the
+    deterministic lane's flagged timecodes, caption accuracy vs ASR,
     spoken-language verification, and timed-text compliance."""
     profile = profile or qprofiles.get("standard")
     checks: list = []
-    frames, asr_seconds = 0, 0.0
+    frames, asr_seconds, esc_frames = 0, 0.0, 0
     duration = float(meta.get("format", {}).get("duration", 0) or 0)
     if any(s.get("codec_type") == "video" for s in meta.get("streams", [])):
         vis_checks, frames = ai_visual_check(src, duration, tmp)
@@ -431,6 +504,13 @@ def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
             if c["name"] == "ai_censorship" and not profile["censorship"]["escalate"]:
                 c["status"], c["tier"] = "warn", "ISSUE"   # standard: review, don't block
             checks.append(c)
+        if detections:
+            try:
+                c, esc_frames = ai_escalation_check(src, detections, duration, tmp)
+                if c:
+                    checks.append(c)
+            except Exception as e:
+                print("escalation failed:", e)
     cues = load_caption_cues(src, captions_path, tmp)
     if cues:
         check, asr_seconds = ai_caption_accuracy_check(src, meta, cues, tmp)
@@ -450,7 +530,8 @@ def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
             checks.append(c)
     except Exception as e:
         print("language check failed:", e)
-    return checks, {"frames": frames, "asr_seconds": round(asr_seconds, 1)}
+    return checks, {"frames": frames, "asr_seconds": round(asr_seconds, 1),
+                    "escalation_frames": esc_frames}
 
 
 def summarize_via_gmi(meta: dict, captions_text: str | None = None) -> str | None:
@@ -581,7 +662,8 @@ def run_pipeline(job: Job) -> None:
             else:
                 progress(job, {"type": "step_started", "step": "qc_ai"})
                 try:
-                    ai_checks, ai_units = run_ai_qc(src, meta, captions_path, tmp, profile)
+                    ai_checks, ai_units = run_ai_qc(src, meta, captions_path, tmp, profile,
+                                                    detections=(qc_report or {}).get("detections"))
                     if qc_report is None:
                         qc_report = {"status": "pass", "checks": []}
                     qc_report["checks"].extend(ai_checks)
@@ -593,6 +675,10 @@ def run_pipeline(job: Job) -> None:
                         # second billable line: ASR is metered in seconds
                         progress(job, {"type": "step_metered", "step": "qc_ai_asr",
                                        "billable": {"unit": "seconds", "units": ai_units["asr_seconds"]}})
+                    if ai_units.get("escalation_frames"):
+                        # third billable line: targeted escalation, in frames
+                        progress(job, {"type": "step_metered", "step": "qc_ai_escalation",
+                                       "billable": {"unit": "frames", "units": ai_units["escalation_frames"]}})
                 except Exception as e:
                     progress(job, {"type": "step_error", "step": "qc_ai", "error": str(e)})
         else:

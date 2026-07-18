@@ -28,11 +28,18 @@ class H(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         content = body["messages"][0]["content"]
         kinds = [p.get("type") for p in content] if isinstance(content, list) else []
+        texts = " ".join(p.get("text", "") for p in content if isinstance(p, dict)) \
+            if isinstance(content, list) else str(content)
         if "input_audio" in kinds:
             text = "hello world a fine master"
+        elif "Adjudicate" in texts:   # AI-targeted escalation prompt
+            text = json.dumps({"verdicts": [{"segment": 1, "verdict": "defect",
+                                             "reason": "same shot continues after the black insert"}]})
         elif "image_url" in kinds:
             text = json.dumps({"findings": [{"issue": "SMPTE color bars test pattern", "frames": [1, 2]}],
                                "summary": "synthetic test pattern frames"})
+        elif "compliance" in texts.lower():
+            text = json.dumps({"profanity_count": 0, "flags": []})
         else:
             text = "A short synthetic test clip."
         data = json.dumps({"choices": [{"message": {"content": text}}]}).encode()
@@ -127,10 +134,28 @@ curl -sS -o /dev/null -X POST http://localhost:8000/jobs -H "content-type: appli
 for i in $(seq 1 120); do grep -q pipeline_complete "/tmp/sse-$TID_C.log" && break; sleep 0.5; done
 echo "✓ clip C (qc_ai off) processed"
 
+# clip E: a black hole spliced mid-content → blackdetect flags the segment →
+# AI-targeted escalation sends before/inside/after frames for adjudication
+ffmpeg -y -f lavfi -i "testsrc2=duration=5:size=640x360:rate=15" -f lavfi -i sine=frequency=440:duration=5 \
+  -vf "drawbox=enable='between(t,2,3)':x=0:y=0:w=iw:h=ih:color=black:t=fill" \
+  -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$WORK/blackhole.mp4" >/tmp/ffE.log 2>&1
+TID_E=$(uuidgen | tr 'A-Z' 'a-z')
+"$PY" - <<PYEOF
+import boto3; from botocore.config import Config
+s3=boto3.client("s3",endpoint_url="http://localhost:9000",region_name="us-east-1",aws_access_key_id="minioadmin",aws_secret_access_key="minioadmin",config=Config(s3={"addressing_style":"path"}))
+s3.upload_file("$WORK/blackhole.mp4","$BUCKET","transfers/$TID_E/blackhole.mp4",ExtraArgs={"ContentType":"video/mp4"})
+PYEOF
+curl -N -s "http://localhost:8787/api/progress/$TID_E" > "/tmp/sse-$TID_E.log" 2>&1 &
+until grep -q subscribed "/tmp/sse-$TID_E.log"; do sleep 0.2; done
+curl -sS -o /dev/null -X POST http://localhost:8000/jobs -H "content-type: application/json" -H "authorization: Bearer $SHARED" \
+  --data "{\"bucket\":\"$BUCKET\",\"key\":\"transfers/$TID_E/blackhole.mp4\",\"transferId\":\"$TID_E\",\"gatewayUrl\":\"http://localhost:8787\",\"options\":{\"qc_captions\":false,\"summarize\":false}}"
+for i in $(seq 1 120); do grep -q pipeline_complete "/tmp/sse-$TID_E.log" && break; sleep 0.5; done
+echo "✓ clip E (black hole → escalation) processed"
+
 echo "=== AI QC assertions ==="
-"$PY" - "$TID_A" "$TID_B" "$TID_C" <<'PYEOF'
+"$PY" - "$TID_A" "$TID_B" "$TID_C" "$TID_E" <<'PYEOF'
 import boto3, json, sys, urllib.request; from botocore.config import Config
-ta, tb, tc = sys.argv[1:4]
+ta, tb, tc, te = sys.argv[1:5]
 s3=boto3.client("s3",endpoint_url="http://localhost:9000",region_name="us-east-1",aws_access_key_id="minioadmin",aws_secret_access_key="minioadmin",config=Config(s3={"addressing_style":"path"}))
 def qc(tid): return json.loads(s3.get_object(Bucket="waystation-test", Key=f"derivatives/{tid}/qc_report.json")["Body"].read())
 def usage(tid): return json.load(urllib.request.urlopen(f"http://localhost:8787/api/transfers/{tid}/usage"))
@@ -164,6 +189,26 @@ print("  metering (A):", {k: f'{v["units"]} {v["unit"]}' for k, v in ua.items()}
 if "qc_ai" not in ua or ua["qc_ai"]["unit"] != "frames": print("  FAIL: qc_ai frames not metered"); ok = False
 if "qc_ai_asr" not in ua or ua["qc_ai_asr"]["unit"] != "seconds": print("  FAIL: ASR seconds not metered"); ok = False
 
-print("PASS ✓  AI QC lane: vision + caption accuracy + gating + metering" if ok else "FAIL")
+# E: AI-targeted escalation — the black hole's timecodes were adjudicated
+e = qc(te)
+if "detections" not in e or not e["detections"].get("black"):
+    print("  FAIL: E report missing detection timecodes"); ok = False
+else:
+    print(f"  E detections: {e['detections']}")
+esc = ck(e, "ai_escalation")
+if not esc: print("  FAIL: ai_escalation check missing"); ok = False
+else:
+    print(f"  E ai_escalation: {esc['status']} — {esc['detail'][:90]}")
+    if esc["status"] != "warn" or "DEFECT" not in esc["detail"]:
+        print("  FAIL: mock defect verdict not surfaced"); ok = False
+ue = usage(te)["totals"]
+if "qc_ai_escalation" not in ue or ue["qc_ai_escalation"]["unit"] != "frames":
+    print("  FAIL: escalation frames not metered"); ok = False
+else:
+    print(f"  E metering: qc_ai_escalation = {ue['qc_ai_escalation']['units']} frames")
+# escalation must NOT run when nothing was flagged (clean clip A)
+if ck(a, "ai_escalation"): print("  FAIL: escalation ran with no flagged segments"); ok = False
+
+print("PASS ✓  AI QC lane: vision + caption accuracy + escalation + gating + metering" if ok else "FAIL")
 sys.exit(0 if ok else 1)
 PYEOF

@@ -218,6 +218,18 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   hash and its Verify button re-hashes every asset against the manifest.
   Proven by `scripts/delivery-proof.sh` (SDK `verify_hash()` + asset
   re-hash assertions). Pipeline venv now Python 3.13.
+- ✅ **AI-targeted escalation** — the two lanes cooperate: when blackdetect/
+  freezedetect flag segments, their exact timecodes ride in the report
+  (`report.detections`) and the AI lane samples a **before / inside / after**
+  frame triple around each one for Gemini to adjudicate — same-shot-
+  continuing ⇒ DEFECT, scene-change ⇒ intentional editorial event. Verdicts
+  land as an `ai_escalation` supervisor annotation (instrument readings are
+  never mutated) and are metered separately (`qc_ai_escalation`, frames).
+  Live-verified both ways: a black hole punched into a continuing shot →
+  "accidental dropout/defect"; a fade–hold–fade into a new scene →
+  "intentional transition". Proven by `scripts/ai-qc-proof.sh` (clip E:
+  detection timecodes in the report, verdict surfaced, frames metered,
+  and NO escalation call when nothing was flagged).
 - **Declared, honestly gated** (explicit FYI findings, not silent gaps):
   Dolby Vision dynamic-canvas verification (needs dovi_tool RPU parsing),
   lip-sync ms offsets (no video-input modality on GMI's API), dead-pixel

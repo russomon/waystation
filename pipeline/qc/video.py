@@ -16,9 +16,12 @@ from .util import metadata_print, run, tag_values
 ANALYSIS_WINDOW_S = 60.0   # bounded window keeps runtime flat on long masters
 
 
-def decode_and_detections(src: str, has_video: bool, has_audio: bool) -> tuple:
+def decode_and_detections(src: str, has_video: bool, has_audio: bool,
+                          duration: float = 0.0) -> tuple:
     """Full-decode corruption pass + black/freeze/silence detections.
-    Returns (checks, black_segments) — segments feed the boundary check."""
+    Returns (checks, {"black": [(s,e)…], "freeze": [(s,e)…]}) — the black
+    segments feed the boundary check, and BOTH segment lists feed the
+    AI-targeted escalation (Gemini adjudicates the exact flagged moments)."""
     checks = []
     dec = run(["ffmpeg", "-v", "error", "-i", src, "-f", "null", "-"])
     errs = [ln for ln in dec.stderr.splitlines() if ln.strip()]
@@ -33,20 +36,25 @@ def decode_and_detections(src: str, has_video: bool, has_audio: bool) -> tuple:
     cmd += ["-f", "null", "-"]
     log = run(cmd).stderr
 
-    blacks = []
+    segments = {"black": [], "freeze": []}
     if has_video:
-        blacks = [(float(a), float(b)) for a, b in
-                  re.findall(r"black_start:([\d.]+).*?black_end:([\d.]+)", log)]
-        freezes = log.count("freeze_start")
-        checks.append(check("black_frames", "pass" if not blacks else "warn",
-                            f"{len(blacks)} black segment(s)"))
-        checks.append(check("freeze_frames", "pass" if freezes == 0 else "warn",
-                            f"{freezes} frozen segment(s)"))
+        segments["black"] = [(float(a), float(b)) for a, b in
+                             re.findall(r"black_start:([\d.]+).*?black_end:([\d.]+)", log)]
+        f_starts = [float(x) for x in re.findall(r"freeze_start:\s*([\d.]+)", log)]
+        f_ends = [float(x) for x in re.findall(r"freeze_end:\s*([\d.]+)", log)]
+        # a freeze running to EOF has no freeze_end — close it at the duration
+        while len(f_ends) < len(f_starts):
+            f_ends.append(duration or (f_starts[len(f_ends)] + 2.0))
+        segments["freeze"] = list(zip(f_starts, f_ends))
+        checks.append(check("black_frames", "pass" if not segments["black"] else "warn",
+                            f"{len(segments['black'])} black segment(s)"))
+        checks.append(check("freeze_frames", "pass" if not segments["freeze"] else "warn",
+                            f"{len(segments['freeze'])} frozen segment(s)"))
     if has_audio:
         silences = log.count("silence_start")
         checks.append(check("audio_silence", "pass" if silences == 0 else "warn",
                             f"{silences} silent segment(s)", "audio"))
-    return checks, blacks
+    return checks, segments
 
 
 def boundary_check(blacks: list, duration: float) -> list:
