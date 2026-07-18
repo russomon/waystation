@@ -44,6 +44,15 @@ services:
     environment:
       PHOTON_JAR: /opt/photon        # baked into the image
       WORKER_LABEL: cloud-docker     # stamped into progress events + the manifest
+    # Vertical knob: WORKER_CPUS=8 docker compose up   (0 = unlimited).
+    # Per-job speedup plateaus ~8-16 cores (ffmpeg decode threads); past that,
+    # scale HORIZONTALLY instead — jobs are independent and workers stateless:
+    #   docker compose up --scale worker=3
+    # (compose DNS round-robins http://worker:8000 across replicas)
+    deploy:
+      resources:
+        limits:
+          cpus: "${WORKER_CPUS:-0}"
     volumes:
       - scratch:/tmp                 # size this for your largest masters
     restart: unless-stopped

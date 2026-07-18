@@ -94,6 +94,23 @@ full loop — signed event → containerized pipeline → derivatives + an
 SDK-verified Genblaze manifest — and the worker image answers for ffmpeg,
 Java, and 61 Photon jars.
 
+**Scaling the worker.** Two axes, with a plateau worth knowing:
+
+```bash
+WORKER_CPUS=8 docker compose up          # vertical: cap/grant CPU per worker (0 = unlimited)
+docker compose up --scale worker=3       # horizontal: N stateless workers, DNS round-robined
+```
+
+A standard QC run costs ~0.1–0.3× content duration on 8 cores (full-decode
+passes dominate; the AI lane is ~zero local CPU — inference is GMI's).
+The heavy hitters are opt-in: video legalization (full x264 re-encode)
+and reference VMAF (~content duration). Per-job speedup plateaus around
+8–16 cores — ffmpeg decode threads saturate — so past one beefy worker,
+scale horizontally: jobs are independent and workers stateless.
+Roadmap: the metering ledger already bills QC in media-minutes, which IS
+the autoscaling signal — a queue + KEDA scaling workers on backlogged
+media-minutes.
+
 **Hybrid compute — a sender checkbox.** Register two workers on the
 gateway (`PIPELINE_URL` = local, `PIPELINE_URL_CLOUD` = the Docker/cloud
 worker) and the sender's **"Cloud compute"** checkbox routes each transfer
