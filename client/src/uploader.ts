@@ -10,6 +10,7 @@ export interface ServiceOptions {
   qc_av: boolean; qc_captions: boolean; qc_ai: boolean; thumbnail: boolean; summarize: boolean;
   profile: string;      // "standard" | "netflix" — QC threshold profile
   self_heal: boolean;   // auto-fix loudness / legalize video on failure
+  compute: string;      // "local" | "cloud" — where the waystation crunches
 }
 export interface SendExtras { captions?: File | null; options?: ServiceOptions; }
 

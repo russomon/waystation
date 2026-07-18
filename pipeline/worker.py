@@ -46,6 +46,13 @@ app = FastAPI()
 SHARED = os.environ["PIPELINE_SHARED_SECRET"]
 BUCKET = os.environ["B2_BUCKET"]
 
+# Compute identity: which waystation worker is this? Rides in progress events
+# and the provenance manifest so the delivery records WHERE it was processed.
+WORKER_LABEL = os.environ.get("WORKER_LABEL", "local")
+# A deployed worker may reach the gateway at a different address than the one
+# the dispatch payload carries (containers, NAT) — its own env wins.
+GATEWAY_URL_OVERRIDE = os.environ.get("GATEWAY_URL")
+
 # Tamper-proof provenance: when > 0, the manifest is written under B2 Object
 # Lock in COMPLIANCE mode (write-once-read-many) for this many days — nobody,
 # not even the account owner, can alter or delete it until then. Requires the
@@ -94,7 +101,7 @@ class Job(BaseModel):
 def progress(job: "Job", event: dict) -> None:
     try:
         httpx.post(
-            f"{job.gatewayUrl}/api/internal/progress",
+            f"{GATEWAY_URL_OVERRIDE or job.gatewayUrl}/api/internal/progress",
             headers={"authorization": f"Bearer {SHARED}"},
             json={"transferId": job.transferId, **event},
             timeout=10,
@@ -564,7 +571,7 @@ def summarize_via_gmi(meta: dict, captions_text: str | None = None) -> str | Non
 
 
 def run_pipeline(job: Job) -> None:
-    progress(job, {"type": "pipeline_started", "key": job.key})
+    progress(job, {"type": "pipeline_started", "key": job.key, "compute": WORKER_LABEL})
     tid = job.transferId
     # Sender-selected services (missing = everything on). Non-boolean keys in
     # options carry the QC profile and self-heal switch — don't coerce those.
@@ -792,6 +799,7 @@ def run_pipeline(job: Job) -> None:
             run_id=tid, name="waystation-delivery", status=RunStatus.COMPLETED,
             steps=gb_steps, completed_at=datetime.now(timezone.utc),
             metadata={"transferId": tid, "profile": profile["name"], "services": opts,
+                      "compute": WORKER_LABEL,
                       **({"qc_status": qc_report["status"], "qc_tiers": qc_report["tiers"]}
                          if qc_report else {})}))
         mkey = f"derivatives/{tid}/manifest.json"

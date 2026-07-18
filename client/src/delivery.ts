@@ -108,7 +108,8 @@ export async function renderDelivery(id: string, root: HTMLElement) {
 
   if (manifest) {
     const prov = el(`<details class="prov" open><summary>Provenance</summary></details>`);
-    prov.append(el(`<p class="mono">Genblaze manifest v${manifest.schema_version} · canonical hash ${String(manifest.canonical_hash).slice(0, 20)}…</p>`));
+    const compute = manifest?.run?.metadata?.compute;
+    prov.append(el(`<p class="mono">Genblaze manifest v${manifest.schema_version} · canonical hash ${String(manifest.canonical_hash).slice(0, 20)}…${compute ? ` · processed @ ${compute}` : ""}</p>`));
     const inputAsset = gbSteps[0]?.inputs?.[0];
     if (inputAsset?.sha256)
       prov.append(el(`<p class="mono">original sha256: ${String(inputAsset.sha256).slice(0, 24)}…</p>`));

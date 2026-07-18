@@ -39,10 +39,11 @@ if (tid) {
 
   const currentOptions = (): ServiceOptions => {
     const profile = $<HTMLSelectElement>("#profile").value;
+    const val = (id: string) => $<HTMLInputElement>("#" + id).checked;
+    const compute = val("opt_cloud") ? "cloud" : "local";
     if (transferOnly.checked)
       return { qc_av: false, qc_captions: false, qc_ai: false, thumbnail: false, summarize: false,
-               profile, self_heal: false };
-    const val = (id: string) => $<HTMLInputElement>("#" + id).checked;
+               profile, self_heal: false, compute };
     return {
       qc_av: val("opt_qc_av"),
       qc_captions: val("opt_qc_captions"),
@@ -51,6 +52,7 @@ if (tid) {
       summarize: val("opt_summarize"),
       profile,
       self_heal: val("opt_self_heal"),
+      compute,
     };
   };
 
@@ -83,11 +85,13 @@ if (tid) {
       }
 
       const es = new EventSource(`/api/progress/${transferId}`);
+      let where = "";  // compute label from pipeline_started ("local", "cloud-docker", …)
       es.onmessage = (e) => {
         const ev = JSON.parse(e.data);
         if (ev.type === "pipeline_skipped") { pipe.textContent = "transfer only — no waystation services"; es.close(); return; }
-        pipe.textContent = `waystation: ${ev.type}${ev.step ? " · " + ev.step : ""}`;
-        if (ev.type === "pipeline_complete") { pipe.textContent = "waystation ✓ — open the share link"; es.close(); }
+        if (ev.type === "pipeline_started" && ev.compute) where = ` @ ${ev.compute}`;
+        pipe.textContent = `waystation${where}: ${ev.type}${ev.step ? " · " + ev.step : ""}`;
+        if (ev.type === "pipeline_complete") { pipe.textContent = `waystation${where} ✓ — open the share link`; es.close(); }
       };
     } catch (err) {
       logEl.textContent = "error: " + (err as Error).message;

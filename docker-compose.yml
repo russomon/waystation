@@ -25,6 +25,7 @@ services:
     environment:
       PORT: 8787
       PIPELINE_URL: http://worker:8000
+      PIPELINE_URL_CLOUD: http://worker:8000   # both compute choices land here in all-cloud deploys
       # worker → gateway progress posts travel the compose network:
       GATEWAY_PUBLIC_URL: http://gateway:8787
       # DEV_TRIGGER_ON_COMPLETE: "true"   # local only: no B2 events needed
@@ -42,6 +43,7 @@ services:
         required: false
     environment:
       PHOTON_JAR: /opt/photon        # baked into the image
+      WORKER_LABEL: cloud-docker     # stamped into progress events + the manifest
     volumes:
       - scratch:/tmp                 # size this for your largest masters
     restart: unless-stopped

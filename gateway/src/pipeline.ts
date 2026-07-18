@@ -13,8 +13,15 @@ export interface PipelineJob {
 }
 
 export async function dispatchPipeline(job: PipelineJob): Promise<void> {
+  // Sender-selected compute location: "cloud" routes to the Docker/cloud
+  // worker when one is registered (PIPELINE_URL_CLOUD); anything else — or
+  // no cloud worker configured — goes to the default worker (PIPELINE_URL).
+  const wantCloud = job.options?.compute === "cloud";
+  const url = (wantCloud && env.PIPELINE_URL_CLOUD) || env.PIPELINE_URL;
+  if (wantCloud && !env.PIPELINE_URL_CLOUD)
+    console.warn("compute=cloud requested but PIPELINE_URL_CLOUD not set — using default worker");
   try {
-    await fetch(`${env.PIPELINE_URL}/jobs`, {
+    await fetch(`${url}/jobs`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -24,6 +31,6 @@ export async function dispatchPipeline(job: PipelineJob): Promise<void> {
     });
   } catch (err) {
     // Don't fail the webhook; log and rely on a future re-drive / retry queue.
-    console.error("pipeline dispatch failed", job.key, err);
+    console.error("pipeline dispatch failed", job.key, url, err);
   }
 }

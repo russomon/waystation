@@ -94,6 +94,19 @@ full loop — signed event → containerized pipeline → derivatives + an
 SDK-verified Genblaze manifest — and the worker image answers for ffmpeg,
 Java, and 61 Photon jars.
 
+**Hybrid compute — a sender checkbox.** Register two workers on the
+gateway (`PIPELINE_URL` = local, `PIPELINE_URL_CLOUD` = the Docker/cloud
+worker) and the sender's **"Cloud compute"** checkbox routes each transfer
+at dispatch. Every worker carries a `WORKER_LABEL` stamped into progress
+events (`waystation @ cloud-docker: …`) and into the **Genblaze manifest**
+(`run.metadata.compute`) — the delivery page's provenance line shows
+exactly where the master was processed. A deployed worker sets
+`GATEWAY_URL` for its own route back to the gateway. Proven by
+`scripts/compute-proof.sh`: two transfers through the same gateway, one
+per checkbox state — manifests record `local` and `cloud-docker`
+respectively, each crunched by a genuinely different process (host python
+vs the shipped container).
+
 Multipart is assembled server-side from `ListParts`, so the browser never reads
 part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
 
