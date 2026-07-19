@@ -31,6 +31,7 @@ export function isOriginalMedia(key: string): boolean {
   if (key.endsWith(".obao")) return false;
   if (/\.(srt|vtt)$/i.test(key)) return false; // caption sidecars ride along with the master
   if (/\.ref\.[^./]+$/i.test(key)) return false; // reference mezzanine for the SSIM/PSNR/VMAF lane
+  if (/\.genblaze\.json$/i.test(key)) return false; // source Genblaze manifest (prompt-adherence QC)
   if (key.includes("/derivatives/")) return false;
   return true;
 }

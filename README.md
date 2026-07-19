@@ -294,6 +294,27 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   "no analysis output" rather than false-passing. Proven by
   `scripts/photon-proof.sh` (self-skips with instructions when Photon
   isn't fetched).
+- ✅ **Category-A prompt-native QC** — the semantic checks the incumbents
+  attack with decades of trained classifiers, reimplemented as structured
+  prompts in ONE batched vision call: slate detection **with reading + a
+  delivery cross-check**, burned-text/QR/timecode **reading** (live run
+  read testsrc2's frame counter values off the pixels), rating/warning
+  cards, perceptual severity judgment ("would a viewer object?"), a
+  prompted no-reference **MOS 1–5** (our TekMOS answer), and caption
+  **proofreading** (spelling/grammar) beside the compliance screen.
+- ✅ **Synthetic QC lane** (`qc_synthetic` toggle) — QC for media that was
+  never shot. Three prompt engines: **generation artifacts** (anatomy,
+  garbled glyphs, physics, seams, AI sheen + an origin assessment),
+  **temporal coherence** (frame bursts checked for identity drift and
+  object permanence — the live run caught testsrc2's morphing shape as a
+  permanence violation), and **prompt adherence**: an uploaded
+  `.genblaze.json` generation record makes the manifest's own prompt the
+  QC reference — live-scored **98/100** for a matching prompt and
+  **0/100** for a mismatched one ("no red ball visible; nothing bounces").
+  Metered as `qc_synthetic` frames; redacted prompts reported honestly as
+  not-scorable. Proven by `scripts/synthetic-qc-proof.sh` (mock GMI:
+  defects surfaced, gating, sidecar event-filtering, metering) and live
+  against real GMI. GMI calls now pace themselves and back off on 429s.
 - **Declared, honestly gated** (explicit FYI findings, not silent gaps):
   Dolby Vision dynamic-canvas verification (needs dovi_tool RPU parsing),
   lip-sync ms offsets (no video-input modality on GMI's API), dead-pixel

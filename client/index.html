@@ -71,6 +71,11 @@
           <strong>Captions sidecar <span class="muted">(optional)</span></strong>
           <span class="muted" id="capname">.srt or .vtt — rides along for caption QC</span>
         </label>
+        <label class="pick" id="pickGen">
+          <input id="genfile" type="file" accept=".json" hidden />
+          <strong>Genblaze manifest <span class="muted">(optional)</span></strong>
+          <span class="muted" id="genname">.json — the generation record; enables prompt-adherence QC</span>
+        </label>
 
         <div class="services" id="services">
           <div class="svc-head">
@@ -89,7 +94,9 @@
           <label class="svc"><input type="checkbox" id="opt_qc_captions" checked />
             Caption QC <span class="muted">timing &middot; readability &middot; coverage</span></label>
           <label class="svc"><input type="checkbox" id="opt_qc_ai" checked />
-            AI QC <span class="muted">vision review &middot; caption accuracy (ASR)</span></label>
+            AI QC <span class="muted">vision review &middot; slate/text reading &middot; caption accuracy &middot; MOS</span></label>
+          <label class="svc"><input type="checkbox" id="opt_qc_synthetic" checked />
+            Synthetic QC <span class="muted">AI-media defects &middot; temporal coherence &middot; prompt adherence</span></label>
           <label class="svc"><input type="checkbox" id="opt_thumbnail" checked />
             Preview thumbnail <span class="muted">poster frame</span></label>
           <label class="svc"><input type="checkbox" id="opt_summarize" checked />

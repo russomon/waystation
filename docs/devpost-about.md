@@ -50,6 +50,19 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   scene-change means intentional editorial event. Live-verified: it called a
   spliced-in black hole "an accidental dropout" and a fade-to-black between
   scenes "an intentional transition."
+- **Prompt-native QC** - the semantic checks incumbents sell as trained
+  classifiers, done as structured prompts: slates READ and cross-checked
+  against the delivery, burned-in text/QR/timecode read off the pixels
+  (a live run transcribed the test pattern's frame counter), rating cards,
+  viewer-perception severity judgments, a prompted no-reference MOS, and
+  subtitle proofreading.
+- **Synthetic QC for generative media** - QC for video that was never shot:
+  generation artifacts (anatomy, garbled text, physics, AI sheen), temporal
+  coherence across frame bursts (identity drift, object permanence), and the
+  one no incumbent can build - **prompt adherence**: the Genblaze manifest's
+  recorded generation prompt becomes the QC reference, and the waystation
+  scores whether the output matches its own declared intent. Live: 98/100
+  for a faithful clip, 0/100 for a mismatched one.
 - **Netflix strict profile** - one toggle swaps thresholds for a
   zero-tolerance delivery spec (−24 LKFS ±1, −2 dBTP, native frame rates
   only, no pulldown, PSE hard-fail). Findings tier into

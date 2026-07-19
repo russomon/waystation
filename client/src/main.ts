@@ -33,6 +33,13 @@ if (tid) {
     capname.textContent = f ? f.name : ".srt or .vtt — rides along for caption QC";
     capIn.closest(".pick")!.classList.toggle("has-file", !!f);
   };
+  const genIn = $<HTMLInputElement>("#genfile");
+  const genname = $("#genname");
+  genIn.onchange = () => {
+    const f = genIn.files?.[0];
+    genname.textContent = f ? f.name : ".json — the generation record; enables prompt-adherence QC";
+    genIn.closest(".pick")!.classList.toggle("has-file", !!f);
+  };
 
   // "Transfer only" greys out and overrides the individual services.
   transferOnly.onchange = () => servicesEl.classList.toggle("off", transferOnly.checked);
@@ -42,12 +49,13 @@ if (tid) {
     const val = (id: string) => $<HTMLInputElement>("#" + id).checked;
     const compute = val("opt_cloud") ? "cloud" : "local";
     if (transferOnly.checked)
-      return { qc_av: false, qc_captions: false, qc_ai: false, thumbnail: false, summarize: false,
-               profile, self_heal: false, compute };
+      return { qc_av: false, qc_captions: false, qc_ai: false, qc_synthetic: false,
+               thumbnail: false, summarize: false, profile, self_heal: false, compute };
     return {
       qc_av: val("opt_qc_av"),
       qc_captions: val("opt_qc_captions"),
       qc_ai: val("opt_qc_ai"),
+      qc_synthetic: val("opt_qc_synthetic"),
       thumbnail: val("opt_thumbnail"),
       summarize: val("opt_summarize"),
       profile,
@@ -64,7 +72,7 @@ if (tid) {
       const options = currentOptions(); // snapshot — ignore toggles mid-upload
       const { transferId } = await uploadFile(
         file,
-        { captions: capIn.files?.[0] ?? null, options },
+        { captions: capIn.files?.[0] ?? null, genManifest: genIn.files?.[0] ?? null, options },
         (p) => (logEl.textContent = `${p.phase}: ${gb(p.bytes)} / ${gb(p.total)} GB`),
       );
 
@@ -77,7 +85,7 @@ if (tid) {
       // before we could subscribe — no stream to wait on, say so directly.
       // (Only the service booleans count — `profile` is a string, always truthy.)
       const services = [options.qc_av, options.qc_captions, options.qc_ai,
-                        options.thumbnail, options.summarize];
+                        options.qc_synthetic, options.thumbnail, options.summarize];
       if (!services.some(Boolean)) {
         pipe.textContent = "transfer only — no waystation services";
         sendBtn.disabled = false;

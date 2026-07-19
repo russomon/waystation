@@ -28,17 +28,20 @@ api.post("/uploads/outboard-url", async (c) =>
 // SSIM/PSNR/VMAF lane. Neither triggers its own pipeline run (event filter).
 api.post("/uploads/sidecar-url", async (c) => {
   const { key, filename } = await c.req.json(); // key = the master's object key
-  if (!/(\.(srt|vtt)|\.ref\.(mp4|mov|mxf))$/i.test(String(filename ?? "")))
-    return c.json({ error: "only .srt/.vtt captions or .ref.* mezzanine sidecars" }, 400);
+  if (!/(\.(srt|vtt)|\.ref\.(mp4|mov|mxf)|\.genblaze\.json)$/i.test(String(filename ?? "")))
+    return c.json({ error: "only .srt/.vtt captions, .ref.* mezzanine, or .genblaze.json manifest sidecars" }, 400);
   const safe = String(filename).replace(/[^\w.\-]/g, "_");
   return c.json({ url: await g.presignPut(`transfers/${transferIdFromKey(key)}/${safe}`) });
 });
 // Transfer-only detection looks ONLY at the boolean service flags — options
 // also carries non-service keys (QC profile string, self_heal) that must not
 // count as "a service is on". undefined options = everything on.
+// Default-ON services: a missing key means "on" (matches the worker).
+// qc_synthetic is OPT-IN (worker defaults it off), so it only counts as
+// "a service is on" when explicitly true.
 const SERVICE_KEYS = ["qc_av", "qc_captions", "qc_ai", "thumbnail", "summarize"];
 const anyServiceOn = (o?: Record<string, boolean | string>) =>
-  !o || SERVICE_KEYS.some((k) => o[k] !== false);
+  !o || SERVICE_KEYS.some((k) => o[k] !== false) || o["qc_synthetic"] === true;
 
 api.post("/uploads/complete", async (c) => {
   const b = await c.req.json(); // { key, uploadId, blake3Root, options? }

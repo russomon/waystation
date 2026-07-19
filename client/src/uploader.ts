@@ -7,12 +7,17 @@ const CONCURRENCY = 6;
 
 export interface Progress { bytes: number; total: number; phase: string; }
 export interface ServiceOptions {
-  qc_av: boolean; qc_captions: boolean; qc_ai: boolean; thumbnail: boolean; summarize: boolean;
+  qc_av: boolean; qc_captions: boolean; qc_ai: boolean; qc_synthetic: boolean;
+  thumbnail: boolean; summarize: boolean;
   profile: string;      // "standard" | "netflix" — QC threshold profile
   self_heal: boolean;   // auto-fix loudness / legalize video on failure
   compute: string;      // "local" | "cloud" — where the waystation crunches
 }
-export interface SendExtras { captions?: File | null; options?: ServiceOptions; }
+export interface SendExtras {
+  captions?: File | null;
+  genManifest?: File | null;  // source Genblaze manifest → prompt-adherence QC
+  options?: ServiceOptions;
+}
 
 export async function uploadFile(file: File, extras: SendExtras, onProgress: (p: Progress) => void) {
   const fp = `${file.name}:${file.size}:${file.lastModified}`; // stable local resume key
@@ -59,13 +64,20 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
   const obRes = await fetch(ob.url, { method: "PUT", body: outboard });
   if (!obRes.ok) throw new Error(`outboard upload failed: HTTP ${obRes.status}`);
 
-  // 5b. caption sidecar (.srt/.vtt) — must land BEFORE complete so the
-  // pipeline's sidecar discovery sees it when the object-created event fires
+  // 5b. sidecars — must land BEFORE complete so the pipeline's sidecar
+  // discovery sees them when the object-created event fires
   if (extras.captions) {
     const sc = await post("/uploads/sidecar-url", { key: st.key, filename: extras.captions.name });
     if (sc.error) throw new Error(sc.error);
     const scRes = await fetch(sc.url, { method: "PUT", body: extras.captions });
     if (!scRes.ok) throw new Error(`caption upload failed: HTTP ${scRes.status}`);
+  }
+  if (extras.genManifest) {
+    // fixed name: the worker discovers the generation record by this suffix
+    const gm = await post("/uploads/sidecar-url", { key: st.key, filename: "source.genblaze.json" });
+    if (gm.error) throw new Error(gm.error);
+    const gmRes = await fetch(gm.url, { method: "PUT", body: extras.genManifest });
+    if (!gmRes.ok) throw new Error(`genblaze manifest upload failed: HTTP ${gmRes.status}`);
   }
 
   // 6. complete — gateway assembles from ListParts; we send the id + content

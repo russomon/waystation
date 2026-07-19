@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -241,14 +242,32 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
 #                         instrument for "are these captions actually right?"
 # All verdicts land in the same qc_report.json, provenance-covered.
 
-def _gmi_chat(content: list, max_tokens: int = 600) -> str:
-    r = httpx.post(
-        f"{GMI_BASE_URL}/v1/chat/completions",
-        headers={"authorization": f"Bearer {GMI_API_KEY}"},
-        json={"model": GMI_MULTIMODAL_MODEL, "max_tokens": max_tokens, "temperature": 0,
-              "messages": [{"role": "user", "content": content}]},
-        timeout=120,
-    )
+# GMI paces multi-image calls per-minute; the AI lanes fire several in a row.
+# Enforce a minimum inter-call gap and back off hard on 429s — a background
+# pipeline can afford to wait, but must not lose a whole QC step to a limit.
+AI_QC_MIN_INTERVAL = float(os.environ.get("AI_QC_MIN_INTERVAL", "4"))
+_gmi_last_call = 0.0
+
+
+def _gmi_chat(content: list, max_tokens: int = 2000) -> str:
+    global _gmi_last_call
+    r = None
+    for attempt in range(4):
+        wait = AI_QC_MIN_INTERVAL - (time.monotonic() - _gmi_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        _gmi_last_call = time.monotonic()
+        r = httpx.post(
+            f"{GMI_BASE_URL}/v1/chat/completions",
+            headers={"authorization": f"Bearer {GMI_API_KEY}"},
+            json={"model": GMI_MULTIMODAL_MODEL, "max_tokens": max_tokens, "temperature": 0,
+                  "messages": [{"role": "user", "content": content}]},
+            timeout=120,
+        )
+        if r.status_code in (429, 500, 502, 503) and attempt < 3:
+            time.sleep(15 * (attempt + 1))   # 15s, 30s, 45s
+            continue
+        break
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
@@ -282,29 +301,50 @@ def word_error_rate(ref: list, hyp: list) -> float:
 
 
 _VISUAL_PROMPT = (
-    "You are a broadcast QC operator. These are frames sampled from a mastered "
-    "video delivery. Report ONLY genuine delivery defects you can actually see: "
-    "test patterns or color bars, slates or countdown leaders, all-black or blank "
-    "frames, macroblocking / heavy pixelation / compression breakdown, tape-hit "
-    "lines or digital dropouts, burned-in timecode, watermarks or channel bugs, "
-    "burned-in text or logos, accidental letterboxing/pillarboxing, censorship "
-    "artifacts (blur patches, mosaic/pixelation blocks over faces or objects), "
-    "graphic violence, or nudity. Normal program content is NOT a defect. "
-    "Respond with STRICT JSON only:\n"
-    '{"findings": [{"issue": "<short description>", '
-    '"category": "<test_pattern|slate|black|compression|dropout|timecode|watermark|'
-    'burned_text|matte|censorship|violence|nudity|other>", '
-    '"frames": [<1-based frame numbers>]}], '
-    '"summary": "<one short sentence about what the frames show>"}\n'
-    "Use an empty findings array if the frames look clean."
+    "You are a broadcast QC operator reviewing frames sampled from a mastered "
+    "video delivery (declared filename: {declared}). Perform ALL of these "
+    "reviews and respond with ONE strict JSON object.\n"
+    "1. DEFECTS — report only genuine delivery defects you can actually see: "
+    "test patterns or color bars, slates or countdown leaders, all-black or "
+    "blank frames, macroblocking / heavy pixelation / compression breakdown, "
+    "tape-hit lines or digital dropouts, burned-in timecode, watermarks or "
+    "channel bugs, accidental letterboxing/pillarboxing, censorship artifacts "
+    "(blur patches, mosaic blocks), graphic violence, or nudity. Normal "
+    "program content is NOT a defect.\n"
+    "2. SLATE — if any frame is a slate/leader card, READ it (title, episode, "
+    "date, anything legible) and judge whether it matches the declared "
+    "filename.\n"
+    "3. BURNED TEXT — read any burned-in text: timecodes, URLs, QR codes "
+    "(describe what a QR encodes if legible), rating/warning cards (FBI, age "
+    "ratings), logos, subtitles burned into picture. Note misspellings.\n"
+    "4. PERCEPTUAL — judge visible compression/processing artifacts a viewer "
+    "would object to: banding, blockiness, moire, ghosting, aliasing. "
+    "severity: minor (visible if you look) or objectionable (a viewer would "
+    "complain).\n"
+    "5. MOS — a 1.0-5.0 mean-opinion score for perceived picture quality of "
+    "the program content (5 = pristine).\n"
+    "JSON shape:\n"
+    '{"findings": [{"issue": "<short>", "category": "<test_pattern|slate|black|'
+    "compression|dropout|timecode|watermark|burned_text|matte|censorship|"
+    'violence|nudity|other>", "frames": [<1-based>]}],'
+    ' "slate": {"present": <bool>, "text": "<what it says>", "matches_delivery": <bool or null>},'
+    ' "burned_text": {"items": ["<each text element read>"], "issues": ["<misspellings/concerns>"]},'
+    ' "rating_cards": ["<any rating/warning cards seen>"],'
+    ' "perceptual": [{"type": "<banding|blockiness|moire|ghosting|aliasing|other>", "severity": "<minor|objectionable>"}],'
+    ' "mos": <1.0-5.0>,'
+    ' "summary": "<one short sentence>"}\n'
+    "Use empty arrays / false / null when a section has nothing to report."
 )
 
 
-def ai_visual_check(src: str, duration: float, tmp: str) -> tuple:
-    """(check-dict | None, frames-analyzed). One vision call over all samples."""
+def ai_visual_check(src: str, duration: float, tmp: str, declared: str = "") -> tuple:
+    """(checks, frames-analyzed). ONE vision call covers the whole Category-A
+    semantic review: defects, slate reading + delivery cross-check, burned
+    text/QR/rating cards, perceptual severity judgment, and a prompted
+    no-reference MOS."""
     n = max(AI_QC_FRAMES, 1)
     dur = max(duration, 0.5)
-    parts: list = [{"type": "text", "text": _VISUAL_PROMPT}]
+    parts: list = [{"type": "text", "text": _VISUAL_PROMPT.replace("{declared}", declared or "unknown")}]
     used = 0
     for i in range(n):
         t = dur * (i + 1) / (n + 1)  # evenly spaced, skips first/last stretch
@@ -317,7 +357,7 @@ def ai_visual_check(src: str, duration: float, tmp: str) -> tuple:
             used += 1
     if used == 0:
         return None, 0
-    data = _json_from(_gmi_chat(parts))
+    data = _json_from(_gmi_chat(parts, max_tokens=5000))
     if data is None:
         return [{"name": "ai_visual", "status": "warn", "tier": "ISSUE",
                  "detail": f"{used} frame(s) reviewed; model reply unparseable"}], used
@@ -340,6 +380,47 @@ def ai_visual_check(src: str, duration: float, tmp: str) -> tuple:
         checks.append({"name": "ai_censorship", "status": "fail", "tier": "BLOCKER",
                        "detail": f"censorship element(s) detected: "
                                  f"{'; '.join(str(f.get('issue')) for f in cens[:3])}"})
+
+    # ── Category-A prompt-native upgrades (each tolerant of absent fields,
+    #    so older/mock replies degrade to the classic ai_visual behavior) ──
+    slate = data.get("slate") or {}
+    if slate.get("present"):
+        matches = slate.get("matches_delivery")
+        txt = str(slate.get("text", "")).strip()[:120]
+        if matches is False:
+            checks.append({"name": "ai_slate_read", "status": "warn", "tier": "ISSUE",
+                           "detail": f"slate read as {txt!r} — does NOT match the declared delivery"})
+        else:
+            checks.append({"name": "ai_slate_read", "status": "info", "tier": "FYI",
+                           "detail": f"slate read: {txt!r}"
+                                     + (" — matches delivery" if matches else "")})
+    bt = data.get("burned_text") or {}
+    items = [str(x) for x in (bt.get("items") or [])][:6]
+    issues = [str(x) for x in (bt.get("issues") or [])][:4]
+    if issues:
+        checks.append({"name": "ai_burned_text", "status": "warn", "tier": "ISSUE",
+                       "detail": f"burned-in text concerns: {'; '.join(issues)}"})
+    elif items:
+        checks.append({"name": "ai_burned_text", "status": "info", "tier": "FYI",
+                       "detail": f"burned-in text read: {'; '.join(items)}"})
+    cards = [str(x) for x in (data.get("rating_cards") or [])][:4]
+    if cards:
+        checks.append({"name": "ai_rating_cards", "status": "info", "tier": "FYI",
+                       "detail": f"rating/warning card(s): {'; '.join(cards)}"})
+    perc = data.get("perceptual") or []
+    objectionable = [p for p in perc if str(p.get("severity")) == "objectionable"]
+    if objectionable:
+        checks.append({"name": "ai_perceptual_quality", "status": "warn", "tier": "ISSUE",
+                       "detail": "viewer-objectionable artifacts: "
+                                 + ", ".join(str(p.get("type", "?")) for p in objectionable[:4])})
+    elif perc:
+        checks.append({"name": "ai_perceptual_quality", "status": "pass",
+                       "detail": "minor artifacts only: "
+                                 + ", ".join(str(p.get("type", "?")) for p in perc[:4])})
+    mos = data.get("mos")
+    if isinstance(mos, (int, float)) and 1.0 <= float(mos) <= 5.0:
+        checks.append({"name": "ai_mos", "status": "info", "tier": "FYI",
+                       "detail": f"prompted no-reference MOS {float(mos):.1f}/5.0"})
     return checks, used
 
 
@@ -474,39 +555,60 @@ def ai_language_check(src: str, meta: dict, tmp: str) -> dict | None:
             "detail": f"declared '{declared}' but heard '{heard}' in the sample"}
 
 
-def ai_text_compliance_check(cap_text: str) -> dict | None:
-    """NLP pass over the timed text: profanity + regional-compliance screen."""
+def ai_text_compliance_check(cap_text: str) -> list:
+    """NLP pass over the timed text: profanity/regional compliance PLUS the
+    prompt-native upgrade — spelling and grammar proofread (BATON sells
+    subtitle spell-check as a feature; an LLM does it natively)."""
     reply = _gmi_chat([{
         "type": "text",
-        "text": "You are a content-compliance reviewer. Analyze this subtitle text for "
-                "profanity and regional compliance concerns (slurs, hate speech, adult content). "
-                "Respond with STRICT JSON only: "
-                '{"profanity_count": <int>, "flags": ["<short description>", ...]}\n\n'
-                + cap_text[:3000]}], max_tokens=200)
+        "text": "You are a content-compliance reviewer and proofreader. Analyze this "
+                "subtitle text for (a) profanity and regional compliance concerns "
+                "(slurs, hate speech, adult content) and (b) spelling and grammar "
+                "errors. Respond with STRICT JSON only: "
+                '{"profanity_count": <int>, "flags": ["<short>", ...], '
+                '"spelling_errors": <int>, "grammar_issues": <int>, '
+                '"examples": ["<up to 3 misspelled/incorrect fragments>", ...]}\n\n'
+                + cap_text[:3000]}], max_tokens=300)
     data = _json_from(reply)
     if data is None:
-        return {"name": "ai_text_compliance", "status": "info", "tier": "FYI",
-                "detail": "compliance reply unparseable"}
+        return [{"name": "ai_text_compliance", "status": "info", "tier": "FYI",
+                 "detail": "compliance reply unparseable"}]
+    checks = []
     n = int(data.get("profanity_count") or 0)
     flags = data.get("flags") or []
     if n or flags:
-        return {"name": "ai_text_compliance", "status": "warn", "tier": "ISSUE",
-                "detail": f"{n} profanity hit(s); {'; '.join(map(str, flags[:3])) or 'no other flags'}"}
-    return {"name": "ai_text_compliance", "status": "pass", "detail": "no profanity or compliance flags"}
+        checks.append({"name": "ai_text_compliance", "status": "warn", "tier": "ISSUE",
+                       "detail": f"{n} profanity hit(s); {'; '.join(map(str, flags[:3])) or 'no other flags'}"})
+    else:
+        checks.append({"name": "ai_text_compliance", "status": "pass",
+                       "detail": "no profanity or compliance flags"})
+    if "spelling_errors" in data or "grammar_issues" in data:
+        sp, gr = int(data.get("spelling_errors") or 0), int(data.get("grammar_issues") or 0)
+        ex = [str(x) for x in (data.get("examples") or [])][:3]
+        if sp + gr:
+            checks.append({"name": "ai_caption_proofread", "status": "warn", "tier": "ISSUE",
+                           "detail": f"{sp} spelling / {gr} grammar issue(s)"
+                                     + (f" — e.g. {'; '.join(ex)}" if ex else "")})
+        else:
+            checks.append({"name": "ai_caption_proofread", "status": "pass",
+                           "detail": "spelling and grammar clean"})
+    return checks
 
 
 def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
-              profile: dict | None = None, detections: dict | None = None) -> tuple:
+              profile: dict | None = None, detections: dict | None = None,
+              declared: str = "") -> tuple:
     """Semantic AI layer → (checks, {"frames", "asr_seconds", "escalation_frames"}).
-    Vision review, censorship screen (Rule 3), AI-targeted escalation of the
-    deterministic lane's flagged timecodes, caption accuracy vs ASR,
-    spoken-language verification, and timed-text compliance."""
+    Vision review with the Category-A upgrades (slate reading, burned text/QR,
+    rating cards, perceptual severity, prompted MOS), censorship screen
+    (Rule 3), AI-targeted escalation, caption accuracy vs ASR, caption
+    proofread, spoken-language verification, and timed-text compliance."""
     profile = profile or qprofiles.get("standard")
     checks: list = []
     frames, asr_seconds, esc_frames = 0, 0.0, 0
     duration = float(meta.get("format", {}).get("duration", 0) or 0)
     if any(s.get("codec_type") == "video" for s in meta.get("streams", [])):
-        vis_checks, frames = ai_visual_check(src, duration, tmp)
+        vis_checks, frames = ai_visual_check(src, duration, tmp, declared)
         for c in vis_checks or []:
             if c["name"] == "ai_censorship" and not profile["censorship"]["escalate"]:
                 c["status"], c["tier"] = "warn", "ISSUE"   # standard: review, don't block
@@ -526,9 +628,7 @@ def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
         try:
             cap_text = load_caption_text(src, captions_path, tmp)
             if cap_text:
-                c = ai_text_compliance_check(cap_text)
-                if c:
-                    checks.append(c)
+                checks.extend(ai_text_compliance_check(cap_text) or [])
         except Exception as e:
             print("text compliance failed:", e)
     try:
@@ -539,6 +639,170 @@ def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
         print("language check failed:", e)
     return checks, {"frames": frames, "asr_seconds": round(asr_seconds, 1),
                     "escalation_frames": esc_frames}
+
+
+# ─────────────────────── Synthetic QC lane (generative media) ───────────────────────
+# QC for media that was never shot. AI-generated video fails in ways no
+# signal filter has a name for — anatomy, physics, identity drift, garbled
+# glyphs — and, uniquely, it ARRIVES with its generation intent recorded in a
+# Genblaze manifest, so the prompt itself becomes the QC reference.
+
+AI_QC_SYNTH_FRAMES = int(os.environ.get("AI_QC_SYNTH_FRAMES", "6"))
+
+_SYNTH_PROMPT = (
+    "You are a QC operator specializing in AI-GENERATED video. These frames are "
+    "sampled from a delivery that may be partly or wholly generated. Report "
+    "generation defects: anatomical errors (hands, fingers, teeth, limbs, "
+    "faces), garbled or nonsensical rendered text/signage, physics violations "
+    "(impossible shadows, reflections, liquids), melted/merged objects, "
+    "generation seams or tiling, over-smoothed 'AI sheen'. Also give your "
+    "assessment of whether the content appears AI-generated at all. "
+    "Respond with STRICT JSON only:\n"
+    '{"findings": [{"issue": "<short>", "category": "<anatomy|text|physics|'
+    'merge|seam|sheen|other>", "frames": [<1-based>]}], '
+    '"appears_generated": <bool>, "confidence": "<low|medium|high>", '
+    '"summary": "<one short sentence>"}\n'
+    "Empty findings array if the frames are clean."
+)
+
+_TEMPORAL_PROMPT = (
+    "You are a QC operator checking TEMPORAL COHERENCE in possibly AI-generated "
+    "video. You see bursts of frames sampled close together in time (labeled). "
+    "Within and across bursts, check: do characters keep the same identity "
+    "(face, clothing, build)? Do objects persist (nothing appears/vanishes "
+    "impossibly)? Is the background stable (no melting/morphing)? Is motion "
+    "natural? Respond with STRICT JSON only:\n"
+    '{"issues": [{"issue": "<short>", "kind": "<identity|permanence|background|'
+    'motion>"}], "verdict": "<coherent|incoherent>", "summary": "<one sentence>"}'
+)
+
+_ADHERENCE_PROMPT = (
+    "You are QC-ing an AI-generated video against its RECORDED GENERATION "
+    "PROMPT (from the delivery's Genblaze provenance manifest). The prompt "
+    "was:\n---\n{prompt}\n---\n"
+    "Looking at these sampled frames, score how faithfully the video realizes "
+    "that prompt. Respond with STRICT JSON only:\n"
+    '{"adherence_score": <0-100>, "matches": ["<prompt elements clearly '
+    'present>", ...], "mismatches": ["<prompt elements missing or wrong>", ...],'
+    ' "summary": "<one sentence>"}'
+)
+
+
+def _sample_frames(src: str, times: list, tmp: str, tag: str, scale: int = 448) -> list:
+    """Extract frames at the given times → list of image_url content parts."""
+    parts = []
+    for i, t in enumerate(times):
+        fp = os.path.join(tmp, f"{tag}_{i}_{t:.2f}.jpg")
+        subprocess.run(["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", src, "-frames:v", "1",
+                        "-vf", f"scale={scale}:-2", fp], capture_output=True)
+        if os.path.exists(fp) and os.path.getsize(fp) > 0:
+            b64 = base64.b64encode(open(fp, "rb").read()).decode()
+            parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+    return parts
+
+
+def extract_gen_prompt(path: str) -> str | None:
+    """Pull the generation prompt out of a Genblaze manifest sidecar (or a
+    plain {"prompt": ...} JSON). Prompts may be redacted (prompt_visibility)
+    — absence is a fact to report, not an error."""
+    try:
+        data = json.loads(open(path, encoding="utf-8", errors="replace").read())
+    except (OSError, ValueError):
+        return None
+    steps = (data.get("run") or {}).get("steps") or []
+    prompts = [s.get("prompt") for s in steps if s.get("prompt")]
+    if prompts:
+        return str(prompts[-1])
+    return str(data["prompt"]) if data.get("prompt") else None
+
+
+def run_synthetic_qc(src: str, meta: dict, tmp: str, gen_manifest_path: str | None) -> tuple:
+    """→ (checks, frames_used). Three prompt engines: generation artifacts,
+    temporal coherence (frame bursts), and prompt adherence vs the Genblaze
+    manifest's recorded prompt."""
+    checks: list = []
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    dur = max(duration, 0.5)
+    if not any(s.get("codec_type") == "video" for s in meta.get("streams", [])):
+        return checks, 0
+
+    # 1. generation artifacts — evenly sampled stills
+    n = max(AI_QC_SYNTH_FRAMES, 2)
+    still_times = [dur * (i + 1) / (n + 1) for i in range(n)]
+    stills = _sample_frames(src, still_times, tmp, "synth")
+    frames = len(stills)
+    if stills:
+        data = _json_from(_gmi_chat([{"type": "text", "text": _SYNTH_PROMPT}] + stills, max_tokens=4000))
+        if data is None:
+            checks.append({"name": "ai_synthetic_artifacts", "status": "info", "tier": "FYI",
+                           "detail": f"{frames} frame(s) reviewed; reply unparseable"})
+        else:
+            findings = data.get("findings") or []
+            if findings:
+                detail = "; ".join(f"{f.get('category', '?')}: {f.get('issue', '?')}" for f in findings[:4])
+                checks.append({"name": "ai_synthetic_artifacts", "status": "warn", "tier": "ISSUE",
+                               "detail": f"{len(findings)} generation defect(s): {detail}"})
+            else:
+                checks.append({"name": "ai_synthetic_artifacts", "status": "pass",
+                               "detail": f"{frames} frame(s): no generation defects"})
+            if "appears_generated" in data:
+                checks.append({"name": "ai_origin_assessment", "status": "info", "tier": "FYI",
+                               "detail": f"appears AI-generated: {bool(data['appears_generated'])} "
+                                         f"(confidence {data.get('confidence', '?')})"})
+
+    # 2. temporal coherence — bursts of close-together frames
+    burst_starts = [dur * f for f in (0.2, 0.5, 0.8)]
+    parts: list = [{"type": "text", "text": _TEMPORAL_PROMPT}]
+    for bn, t0 in enumerate(burst_starts, 1):
+        burst_times = [t0, min(t0 + 0.4, dur - 0.05), min(t0 + 0.8, dur - 0.02)]
+        burst = _sample_frames(src, burst_times, tmp, f"burst{bn}")
+        if burst:
+            parts.append({"type": "text", "text": f"Burst {bn} (t≈{t0:.1f}s, 3 frames ~0.4s apart):"})
+            parts.extend(burst)
+            frames += len(burst)
+    if len(parts) > 1:
+        data = _json_from(_gmi_chat(parts, max_tokens=4000))
+        if data is None:
+            checks.append({"name": "ai_temporal_coherence", "status": "info", "tier": "FYI",
+                           "detail": "coherence reply unparseable"})
+        else:
+            issues = data.get("issues") or []
+            if issues or data.get("verdict") == "incoherent":
+                detail = "; ".join(f"{i.get('kind', '?')}: {i.get('issue', '?')}" for i in issues[:4]) \
+                         or "model judged the sequence incoherent"
+                checks.append({"name": "ai_temporal_coherence", "status": "warn", "tier": "ISSUE",
+                               "detail": detail})
+            else:
+                checks.append({"name": "ai_temporal_coherence", "status": "pass",
+                               "detail": f"identity/permanence/background stable across "
+                                         f"{len(burst_starts)} sampled bursts"})
+
+    # 3. prompt adherence — the provenance record IS the QC reference
+    if gen_manifest_path:
+        gen_prompt = extract_gen_prompt(gen_manifest_path)
+        if not gen_prompt:
+            checks.append({"name": "ai_prompt_adherence", "status": "info", "tier": "FYI",
+                           "detail": "generation manifest supplied but carries no visible prompt "
+                                     "(redacted prompt_visibility?) — adherence not scorable"})
+        elif stills:
+            data = _json_from(_gmi_chat(
+                [{"type": "text", "text": _ADHERENCE_PROMPT.replace("{prompt}", gen_prompt[:1500])}] + stills,
+                max_tokens=4000))
+            if data is None or not isinstance(data.get("adherence_score"), (int, float)):
+                checks.append({"name": "ai_prompt_adherence", "status": "info", "tier": "FYI",
+                               "detail": "adherence reply unparseable"})
+            elif True:
+                score = float(data["adherence_score"])
+                mism = [str(m) for m in (data.get("mismatches") or [])][:3]
+                if score >= 70:
+                    checks.append({"name": "ai_prompt_adherence", "status": "pass",
+                                   "detail": f"{score:.0f}/100 — output matches its recorded "
+                                             f"generation prompt" + (f" (minor: {'; '.join(mism)})" if mism else "")})
+                else:
+                    checks.append({"name": "ai_prompt_adherence", "status": "warn", "tier": "ISSUE",
+                                   "detail": f"{score:.0f}/100 vs recorded prompt — mismatches: "
+                                             f"{'; '.join(mism) or 'unspecified'}"})
+    return checks, frames
 
 
 def summarize_via_gmi(meta: dict, captions_text: str | None = None) -> str | None:
@@ -575,8 +839,9 @@ def run_pipeline(job: Job) -> None:
     tid = job.transferId
     # Sender-selected services (missing = everything on). Non-boolean keys in
     # options carry the QC profile and self-heal switch — don't coerce those.
-    SERVICE_FLAGS = ("thumbnail", "qc_av", "qc_captions", "qc_ai", "summarize")
+    SERVICE_FLAGS = ("thumbnail", "qc_av", "qc_captions", "qc_ai", "qc_synthetic", "summarize")
     opts = {k: True for k in SERVICE_FLAGS}
+    opts["qc_synthetic"] = False   # specialized for generative media — opt-in
     if job.options:
         for k in SERVICE_FLAGS:
             if k in job.options:
@@ -625,7 +890,7 @@ def run_pipeline(job: Job) -> None:
         #    A caption sidecar (.srt/.vtt) uploaded alongside the master rides
         #    into the caption QC; it never triggers its own pipeline run (the
         #    gateway's event filter excludes those extensions).
-        captions_path = ref_path = None
+        captions_path = ref_path = gen_manifest_path = None
         try:
             listing = s3.list_objects_v2(Bucket=job.bucket, Prefix=f"transfers/{tid}/")
             for obj in listing.get("Contents", []):
@@ -635,6 +900,10 @@ def run_pipeline(job: Job) -> None:
                 if k.lower().endswith((".srt", ".vtt")) and not captions_path:
                     captions_path = os.path.join(tmp, os.path.basename(k))
                     s3.download_file(job.bucket, k, captions_path)
+                elif k.lower().endswith(".genblaze.json") and not gen_manifest_path:
+                    # source Genblaze manifest → prompt-adherence QC reference
+                    gen_manifest_path = os.path.join(tmp, os.path.basename(k))
+                    s3.download_file(job.bucket, k, gen_manifest_path)
                 elif ".ref." in k.lower() and not ref_path:
                     # source-master mezzanine → reference SSIM/PSNR/VMAF lane
                     ref_path = os.path.join(tmp, os.path.basename(k))
@@ -670,7 +939,8 @@ def run_pipeline(job: Job) -> None:
                 progress(job, {"type": "step_started", "step": "qc_ai"})
                 try:
                     ai_checks, ai_units = run_ai_qc(src, meta, captions_path, tmp, profile,
-                                                    detections=(qc_report or {}).get("detections"))
+                                                    detections=(qc_report or {}).get("detections"),
+                                                    declared=os.path.basename(job.key))
                     if qc_report is None:
                         qc_report = {"status": "pass", "checks": []}
                     qc_report["checks"].extend(ai_checks)
@@ -690,6 +960,30 @@ def run_pipeline(job: Job) -> None:
                     progress(job, {"type": "step_error", "step": "qc_ai", "error": str(e)})
         else:
             progress(job, {"type": "step_skipped", "step": "qc_ai", "reason": "disabled by sender"})
+
+        # 3b-2. Synthetic QC — the generative-media lane: generation-artifact
+        #       review, temporal coherence, and prompt adherence against the
+        #       Genblaze manifest's recorded prompt (the provenance record as
+        #       the QC reference). Opt-in via the sender's Synthetic QC toggle.
+        if opts["qc_synthetic"]:
+            if not GMI_API_KEY:
+                progress(job, {"type": "step_skipped", "step": "qc_synthetic", "reason": "no GMI_API_KEY"})
+            else:
+                progress(job, {"type": "step_started", "step": "qc_synthetic"})
+                try:
+                    syn_checks, syn_frames = run_synthetic_qc(src, meta, tmp, gen_manifest_path)
+                    if qc_report is None:
+                        qc_report = {"status": "pass", "checks": []}
+                    qc_report["checks"].extend(syn_checks)
+                    qc_report["synthetic"] = {"model": GMI_MULTIMODAL_MODEL, "frames": syn_frames,
+                                              "prompt_reference": bool(gen_manifest_path)}
+                    progress(job, {"type": "step_done", "step": "qc_synthetic",
+                                   "checks": [c["name"] for c in syn_checks],
+                                   "billable": {"unit": "frames", "units": syn_frames}})
+                except Exception as e:
+                    progress(job, {"type": "step_error", "step": "qc_synthetic", "error": str(e)})
+        else:
+            progress(job, {"type": "step_skipped", "step": "qc_synthetic", "reason": "disabled by sender"})
 
         # 3c. self-healing (Task 6) — when enabled and the report shows healable
         #     defects, produce a corrected copy, re-measure it with the same
