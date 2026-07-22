@@ -16,8 +16,10 @@ chat threads.
   file sync is never used for live source. `origin` uses SSH.
 - Why: Git keeps source exact; repo-local notes keep agents aligned without
   depending on chat history.
-- Follow-up: The local directory is still `orbitxfer-web` while the repo is
-  `waystation`; rename queued in `NEXT_STEPS.md`.
+- Follow-up: Done — the local checkout was renamed from `orbitxfer-web` to
+  `waystation` on 2026-07-19 so the path matches the repo on every machine.
+  The repo still needs adding to the active-repo list in the shared-environment
+  plan document.
 
 ### 2026-07-19 - Every capability claim carries a proof script
 

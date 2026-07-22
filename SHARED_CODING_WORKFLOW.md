@@ -7,10 +7,11 @@ Google Drive) is never used for live source.
 ## Start On A Computer
 
 ```sh
-cd /Users/Shared/Orbit/Code/waystation      # see the path note below
+cd /Users/Shared/Orbit/Code/waystation
 git status --short --branch
 git fetch origin
 git switch main
+git branch --set-upstream-to=origin/main main
 git pull --ff-only
 ```
 
@@ -25,13 +26,6 @@ Then ask the coding agent to read:
 - `NEXT_STEPS.md`
 - `DECISIONS.md`
 - `SETUP.md` when the task touches B2 or GMI credentials
-
-### Path note
-
-On the M4 mini this checkout is still at
-`/Users/Shared/Orbit/Code/orbitxfer-web` (the directory predates the rename to
-Waystation). A fresh clone should use `.../Code/waystation`. See
-`NEXT_STEPS.md`.
 
 ## Fresh-Machine Setup
 

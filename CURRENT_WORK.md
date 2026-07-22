@@ -60,11 +60,11 @@ Eleven one-command proof scripts, all passing (see
   WORM-locked for 24h. Demo with `scripts/worm-demo.sh <transferId>`.
 - Photon jars live in `vendor/photon` (gitignored); recreate with
   `bash scripts/fetch-photon.sh`.
-- **Path mismatch**: this checkout is at `/Users/Shared/Orbit/Code/orbitxfer-web`
-  but the GitHub repo is `waystation`. A fresh clone elsewhere will be
-  `.../Code/waystation`. Renaming the local directory is queued in
-  `NEXT_STEPS.md`; it also requires updating the Claude launch config that
-  points at the old path.
+- The local checkout is at `/Users/Shared/Orbit/Code/waystation`, matching the
+  repo name (renamed from `orbitxfer-web` on 2026-07-19). Gitignored assets
+  that do NOT come from a clone and must be rebuilt on a fresh machine:
+  `.env` (per `SETUP.md`), `vendor/photon` (`scripts/fetch-photon.sh`),
+  `pipeline/.venv` (Python 3.13), `node_modules`, and the wasm `pkg/` output.
 
 ## Handoff
 

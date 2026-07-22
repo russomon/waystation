@@ -19,10 +19,8 @@ history.
 
 ## Soon
 
-- Rename the local checkout to match the repo:
-  `mv /Users/Shared/Orbit/Code/orbitxfer-web /Users/Shared/Orbit/Code/waystation`,
-  then update the Claude launch config that references the old path. Do this
-  when no dev stack is running.
+- Add `git@github.com:russomon/waystation.git` to the active-repo list in the
+  shared-environment plan document, so other Macs clone it during setup.
 - Dolby Vision dynamic-metadata canvas verification via `dovi_tool` (currently
   an honest FYI finding; Venera Pulsar ships this, so it is a real gap).
 - Per-customer billing on the metering ledger (Stripe/Lago meters).
