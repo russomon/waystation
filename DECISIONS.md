@@ -38,8 +38,8 @@ chat threads.
 - Why: Git keeps source exact; repo-local notes keep agents aligned without
   depending on chat history.
 - Follow-up: Done — the local checkout was renamed from `orbitxfer-web` to
-  `waystation` on 2026-07-19 so the path matches the repo on every machine.
-  The repo still needs adding to the active-repo list in the shared-environment
+  `waystation` on 2026-07-19 so the path matches the repo on every machine,
+  and the repo was added to the active-repo list in the shared-environment
   plan document.
 
 ### 2026-07-19 - Every capability claim carries a proof script

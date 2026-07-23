@@ -19,8 +19,6 @@ history.
 
 ## Soon
 
-- Add `git@github.com:russomon/waystation.git` to the active-repo list in the
-  shared-environment plan document, so other Macs clone it during setup.
 - Dolby Vision dynamic-metadata canvas verification via `dovi_tool` (currently
   an honest FYI finding; Venera Pulsar ships this, so it is a real gap).
 - Per-customer billing on the metering ledger (Stripe/Lago meters).

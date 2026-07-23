@@ -1,9 +1,9 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-19
+Updated: 2026-07-19 (session-end handoff)
 Machine: Mac Studio
-Mode: active — hackathon submission run (deadline 2026-08-03)
+Mode: paused — clean handoff; hackathon submission run (deadline 2026-08-03)
 
 Use this file for the active handoff state that should survive machine
 switches and chat history gaps.
@@ -62,7 +62,10 @@ Eleven one-command proof scripts, all passing (see
   directory rename: venvs bake absolute-path shebangs into console scripts
   (e.g. uvicorn), so `.venv` must be recreated (not moved) when the checkout
   path changes. `.venv/bin/python` is a symlink and kept working, which
-  masked the break until a console script was run.
+  masked the break until a console script was run. **All 11 proof scripts
+  were re-run green on the rebuilt venv at session end** (including the
+  uvicorn-dependent `delivery-proof` and `phase2-loop-proof` that had hung
+  before the rebuild), so the environment is confirmed good.
 - `.env` holds real B2 + GMI credentials, is gitignored, and the full history
   has been scanned clean. The B2 application key was rotated on 2026-07-18
   after an accidental exposure in a terminal transcript; both prior keys were
@@ -80,11 +83,11 @@ Eleven one-command proof scripts, all passing (see
 
 ## Handoff
 
-- Safe stopping point: yes. `main` is green, all proofs pass, nothing is
-  half-migrated.
-- Risks or open questions: Backblaze Event Notifications enablement is an
-  external dependency with no ETA beyond "≤1 day" as of 2026-07-17. The demo
-  video has a documented Plan B (`docs/demo-script.md`) that fires the same
-  signed webhook payload manually if enablement has not landed by recording
-  time.
+- Safe stopping point: yes. `main` is green, all 11 proofs pass on the
+  rebuilt venv, no stack processes or tunnels are running, and the B2
+  notification rule was cleared (so nothing points at a dead tunnel).
+- Risks or open questions: none technical. Remaining work is presentational
+  (demo video + Devpost copy). When recording, bring the stack up with
+  `scripts/live-event-run.sh` then `scripts/b2-register-events.sh` — the
+  quick-tunnel URL is fresh each run, so the rule must be re-registered.
 - Who should pick this up next: current Waystation maintainer, on any machine.
