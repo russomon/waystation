@@ -5,6 +5,27 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-19 - Reactive loop proven with genuine Backblaze events; rename requires venv rebuild
+
+- Context: Backblaze enabled Event Notifications on the account. The last
+  unproven link was whether B2 itself (not a manually-fired webhook) would
+  drive the pipeline.
+- Decision / result: Register a `b2:ObjectCreated:*` rule (prefix
+  `transfers/`) via the native API pointing at the gateway through a
+  cloudflared tunnel, dev trigger OFF. Proven airtight by uploading an object
+  **directly to B2** (gateway never contacted) and observing B2 fire the
+  event, which drove the full pipeline to a COMPLIANCE-locked manifest. Also
+  learned: renaming the checkout directory breaks the Python venv, because
+  console-script shebangs hold absolute paths — the venv must be REBUILT
+  (`python3.13 -m venv .venv`) after a move, not relocated. `.venv/bin/python`
+  is a symlink and keeps working, which masks the break until a console script
+  (uvicorn) is run.
+- Why it matters: the reactive architecture is a scored hackathon criterion,
+  and it is now demonstrable with real B2 events rather than a stand-in.
+- Follow-up: quick-tunnel URLs are ephemeral; re-run
+  `scripts/b2-register-events.sh` after any tunnel restart. A fresh clone must
+  build its own venv per `SHARED_CODING_WORKFLOW.md`.
+
 ### 2026-07-19 - Adopt the shared cross-machine coding workflow
 
 - Context: This Mac joined a shared workflow spanning multiple Macs, Codex,

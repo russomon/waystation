@@ -7,12 +7,12 @@ history.
 
 ## Now
 
-- **Backblaze Event Notifications**: when the account feature is enabled, run
-  `bash scripts/live-event-run.sh`, then `bash scripts/b2-register-events.sh`,
-  and confirm a genuine B2-fired webhook drives the pipeline. This is the last
-  unproven link in the reactive architecture.
-- **Demo video**: record against `docs/demo-script.md` (≤3:00 shot list, with
-  a Plan B that fires the signed event manually if enablement has not landed).
+- **Demo video**: record against `docs/demo-script.md` (≤3:00 shot list). The
+  Plan B manual-event path is no longer needed — Backblaze Event
+  Notifications are enabled and proven, so the demo can show B2 firing the
+  event for real. Start `scripts/live-event-run.sh`, run
+  `scripts/b2-register-events.sh` to point the rule at the current tunnel,
+  then upload and let B2 drive the pipeline.
 - **Devpost**: re-paste the updated "What it does" and "What's next" sections
   from `docs/devpost-about.md`; the repo URL is
   `https://github.com/russomon/waystation`.
@@ -35,7 +35,5 @@ history.
 
 ## Blockers
 
-- Backblaze Event Notifications is not enabled on the account. Support request
-  submitted 2026-07-17; quoted turnaround was up to one day. The API returns
-  `400 bad_request: API not enabled` until then. Everything downstream of the
-  webhook is already proven, so this blocks verification only, not the build.
+- None. Backblaze Event Notifications were enabled on 2026-07-19 and the
+  B2-fired reactive loop is proven end to end. No technical work is blocked.

@@ -12,12 +12,11 @@ switches and chat history gaps.
 
 - Current branch: `main`
 - Active task: Backblaze Generative Media Hackathon submission. The product is
-  feature-complete and proven; what remains is external (Backblaze feature
-  enablement) and presentational (demo video, Devpost copy).
-- Immediate next action: when Backblaze enables Event Notifications on the
-  account, run `bash scripts/live-event-run.sh` then
-  `bash scripts/b2-register-events.sh` and verify a B2-fired webhook drives
-  the pipeline end to end. Everything else in that chain is already proven.
+  feature-complete and proven end to end, including — as of 2026-07-19 —
+  Backblaze firing the event notifications itself. What remains is purely
+  presentational: the demo video and Devpost copy.
+- Immediate next action: record the demo video (`docs/demo-script.md`) and
+  re-paste the updated Devpost sections. Nothing technical is blocked.
 
 ## What Exists And Is Proven
 
@@ -48,9 +47,22 @@ Eleven one-command proof scripts, all passing (see
 
 ## Notes
 
-- Live verification against real B2 + real GMI has been done for the QC
-  engine, self-heal, AI lanes, and WORM manifests. The only unproven link is
-  Backblaze firing the webhook itself (account feature pending).
+- Live verification against real B2 + real GMI is complete for the QC engine,
+  self-heal, AI lanes, WORM manifests, AND Backblaze firing the event
+  notifications. On 2026-07-19 an object uploaded directly to B2 (gateway
+  never contacted, dev trigger off) caused B2 to fire `b2:ObjectCreated`,
+  which drove the full pipeline — proving the reactive loop with genuine B2
+  events, not a manually-fired webhook. Every link is now proven live.
+- Event Notifications are registered per-tunnel: a cloudflared quick-tunnel
+  URL is ephemeral, so after starting `scripts/live-event-run.sh`, run
+  `scripts/b2-register-events.sh` to (re)point the B2 rule at the current
+  tunnel. A rule left pointing at a dead tunnel is harmless (events just do
+  not deliver) but should be re-registered before a demo.
+- The pipeline venv is Python 3.13 and was REBUILT on 2026-07-19 after the
+  directory rename: venvs bake absolute-path shebangs into console scripts
+  (e.g. uvicorn), so `.venv` must be recreated (not moved) when the checkout
+  path changes. `.venv/bin/python` is a symlink and kept working, which
+  masked the break until a console script was run.
 - `.env` holds real B2 + GMI credentials, is gitignored, and the full history
   has been scanned clean. The B2 application key was rotated on 2026-07-18
   after an accidental exposure in a terminal transcript; both prior keys were

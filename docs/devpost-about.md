@@ -32,6 +32,9 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   content root before it's accepted).
 - **Reactive pipeline** - B2 Event Notifications (HMAC-signed webhook) fire
   the QC worker the moment the object lands. No polling, no compute babysitting.
+  Proven with real Backblaze events: an object uploaded straight to the bucket
+  (the gateway never touched) had B2 itself fire the event and drive the whole
+  pipeline within seconds.
 - **Broadcast-grade QC** - structural (timecode continuity, container
   integrity, multipart detection), signal (full-decode pass, black/freeze/
   silence, EBU R103 legal range with a real amplitude+area policy, ITU-R

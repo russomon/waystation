@@ -258,10 +258,19 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   **AccessDenied**, retention shortening → refused — with a key that holds
   `deleteFiles` AND `bypassGovernance`. The QC report's manifest is
   provably immutable, even to the bucket owner.
-- ⏳ **B2-fired Event Notifications**: account-level feature enablement
-  requested from Backblaze support (≤1 day). Once enabled, run
-  `scripts/b2-register-events.sh` — it registers the webhook rule against
-  the running tunnel; every other link in the chain is already proven.
+- ✅ **B2-fired Event Notifications — the reactive loop, proven end to end
+  by Backblaze itself** (`scripts/live-event-run.sh` +
+  `scripts/b2-register-events.sh`). A `b2:ObjectCreated:*` rule (prefix
+  `transfers/`, HMAC-signed) is registered on the bucket via the native
+  API, pointing at the gateway through a cloudflared tunnel, with the dev
+  trigger OFF. Airtight test: an object uploaded **directly to B2**, with
+  the gateway never contacted for the upload — within ~3 s **B2 fired the
+  event**, the gateway dispatched, and the pipeline ran 28 QC checks and
+  wrote a thumbnail, QC report, and a COMPLIANCE-locked Genblaze manifest
+  back to B2 (delete then refused with AccessDenied). The only registered
+  path that dispatches a job is the webhook, so Backblaze — not the
+  browser, not the gateway — started the pipeline. Quick-tunnel URLs are
+  ephemeral; re-run `scripts/b2-register-events.sh` after a tunnel restart.
 - ✅ **Real Genblaze manifests** (`genblaze-core` 0.3.6, schema v1.5): the
   provenance manifest is a genuine `genblaze_core.models.Manifest` — Run →
   Steps (with provider/model attribution: `ffmpeg/poster-frame`,
