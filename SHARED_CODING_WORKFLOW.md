@@ -60,6 +60,7 @@ handoff:
 |---|---|
 | `scripts/coverage-proof.sh` | detection-coverage upgrades: tiled signal analysis, blind-pass audio, scene/anomaly frame selection, duration scaling, lip-sync proxy |
 | `scripts/avsync-proof.sh` | SyncNet AV-sync analyzer: honest-absence FYI, model cannot clear lip_sync; measures offset when SyncNet installed |
+| `scripts/hybrid-proof.sh` | perceive-then-compute hybrid: align recovers/abstains, channel-semantics flags dialogue-on-LFE, hybrid WARN→SUSPECTED but PASS never CLEARs (no cloud) |
 | `scripts/agentic-qc-proof.sh` | agentic charter, evidence allowlist, 18-risk accounting, no-repair contract |
 | `scripts/qc-proof.sh` | deterministic AV + caption QC |
 | `scripts/netflix-qc-proof.sh` | Netflix profile, tiers, reporter-only mode, PSE, VMAF |

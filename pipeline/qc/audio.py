@@ -25,10 +25,13 @@ LIPSYNC_MIN_CORR = 0.35
 LIPSYNC_FLAG_MS = 120.0
 
 
-def _audio_envelope(src: str, offset: float, window: float) -> list:
+def _audio_envelope(src: str, offset: float, window: float, rate: int = LIPSYNC_RATE_HZ) -> list:
+    """Audio-energy envelope (linear RMS) resampled to `rate` Hz over a window.
+    The default 25 Hz feeds the deterministic proxy; the hybrid lip-sync lane
+    passes a lower `rate` so the envelope aligns 1:1 with per-frame perception."""
     log = run(["ffmpeg", "-hide_banner", "-nostats", "-ss", f"{offset:.2f}", "-t", f"{window:.2f}",
                "-i", src, "-map", "0:a:0",
-               "-af", f"aresample=8000,asetnsamples={8000 // LIPSYNC_RATE_HZ}:p=0,"
+               "-af", f"aresample=8000,asetnsamples={max(1, 8000 // rate)}:p=0,"
                       "astats=metadata=1:reset=1,ametadata=mode=print:file=-",
                "-f", "null", "-"]).stdout
     out = []

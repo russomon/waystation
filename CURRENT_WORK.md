@@ -61,9 +61,43 @@ each asserted by `scripts/coverage-proof.sh` (ffmpeg + venv only, no cloud):
   `lip_sync` is flagged `model_unreliable` so the VLM can never CLEAR/CONFIRM
   it. Verified green by agentic-qc / ai-qc proofs.
 - PENDING: the end-to-end SyncNet torch run. `fetch-syncnet.sh` clones the
-  repo + downloads weights, but the ~8-year-old upstream (torch + PySceneDetect
-  0.5 + S3FD) will likely need dep pinning on a modern machine. Not a blocker —
-  until then the analyzer reports an honest FYI.
+  repo + downloads weights; the upstream is CURRENT (2026-04-17 "modernize-code"
+  commit: torch 2.5.1, PySceneDetect 0.6.7.1, Python 3.10 + S3FD), so standing
+  up the venv is bounded, not dependency archaeology (earlier "~8-year-old"
+  notes were wrong). Not a blocker — until then the analyzer reports an honest
+  FYI.
+
+## Hybrid QC lane — perceive-then-compute (2026-07-23)
+
+- A reusable framework (`pipeline/qc/hybrid.py`, pure — no GMI/subprocess
+  import) built on a principle proven this session: the multimodal model is
+  reliable at PERCEPTION (per-window descriptors) but confabulates when asked to
+  JUDGE timing/consistency, so every hybrid check pairs an AI perception step
+  (run by the worker) with a DETERMINISTIC reducer that owns the decision —
+  `align` (cross-correlation offset), `compare_declared` (perceived vs declared
+  layout), `persistence` (tag consistency).
+- Two instances ship, wired through `worker.run_hybrid_qc` inside `run_ai_qc`
+  and metered as `qc_hybrid` (frames) / `qc_hybrid_audio` (seconds):
+  1. **Perceptual lip-sync** — per-frame mouth-openness perception cross-
+     correlated with the audio-energy envelope at the same rate. On a ground-
+     truthed talking-face probe it recovered a +833 ms offset exactly and, on a
+     gross/aliased case, honestly ABSTAINS (the hardened `align` requires a
+     peak-margin over the runner-up) instead of the confident-wrong number the
+     raw kernel gave. Feeds `lip_sync`.
+  2. **Audio channel semantics** — splits each channel of a multichannel master
+     and asks the model to classify dialogue/music/effects/silence per channel,
+     then `compare_declared` flags layout violations (e.g. dialogue on the LFE).
+     On a probe the model labelled all four channels correctly and the reducer
+     flagged the planted LFE-dialogue. Feeds `channel_assignment`.
+- Coverage (`qc/agentic.py build_coverage`) now treats `source in
+  {deterministic, hybrid}` as instruments: a hybrid WARN raises SUSPECTED, but
+  a hybrid PASS never CLEARs (both risks are `partial`/`model_unreliable` — AI
+  perception can flag, never certify). Proven by `scripts/hybrid-proof.sh`
+  (ffmpeg + venv, no cloud) and exercised live (mock GMI) in `ai-qc-proof`
+  (`qc_hybrid` appears in the metering).
+- REMAINING: validate the lip-sync instance on a REAL-face clip (the cartoon
+  proved the mechanism only). Logo/watermark persistence and shot continuity
+  are now easy follow-on `HybridCheck` specs (see NEXT_STEPS).
 
 ## What Exists And Is Proven
 

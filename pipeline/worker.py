@@ -39,6 +39,7 @@ from pydantic import BaseModel
 from qc import agentic as qagentic
 from qc import audio as qaudio
 from qc import avsync as qavsync
+from qc import hybrid as qhybrid
 from qc import imf as qimf
 from qc import mediainfo as qmediainfo
 from qc import profiles as qprofiles
@@ -765,6 +766,112 @@ def ai_text_compliance_check(cap_text: str) -> list:
     return checks
 
 
+# ─────────────────────── Hybrid QC lane (perceive-then-compute) ───────────────────────
+# The generative model PERCEIVES per-window (mouth openness, per-channel
+# content); deterministic reducers in qc/hybrid.py OWN the decision (offset via
+# cross-correlation, channel semantics vs the declared layout). The model never
+# judges timing/consistency — it confabulates there (proven this session). This
+# worker supplies evidence + context and calls GMI; qc/hybrid.py stays pure.
+HYBRID_LIPSYNC_FRAMES_MAX = int(os.environ.get("HYBRID_LIPSYNC_FRAMES_MAX", "36"))
+HYBRID_CHANNEL_WINDOW_S = float(os.environ.get("HYBRID_CHANNEL_WINDOW_S", "4.0"))
+
+
+def _hybrid_lip_sync(src: str, meta: dict, tmp: str) -> tuple[dict | None, int]:
+    """Perceptual lip-sync proxy: sample a bounded window at LIPSYNC_RATE_HZ,
+    ask the model ONLY for per-frame mouth openness, cross-correlate that against
+    the audio-energy envelope at the same rate. Returns (check, frames_used).
+    Honest by construction: no face / ambiguous peak → an info, never a clear."""
+    streams = meta.get("streams", [])
+    if not any(s.get("codec_type") == "video" for s in streams):
+        return None, 0
+    if not any(s.get("codec_type") == "audio" for s in streams):
+        return None, 0
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    if duration < 2.0:
+        return None, 0
+    rate = qhybrid.LIPSYNC_RATE_HZ
+    off = min(duration * 0.25, 10.0)
+    n = min(HYBRID_LIPSYNC_FRAMES_MAX, max(8, int(min(duration - off, 8.0) * rate)))
+    window = n / rate
+    parts = [{"type": "text", "text": qhybrid.MOUTH_OPENNESS.prompt.format(n=n, rate=rate)}]
+    for i in range(n):
+        t = off + i / rate
+        fp = os.path.join(tmp, f"hyblip_{i}.jpg")
+        subprocess.run(["ffmpeg", "-y", "-ss", f"{t:.3f}", "-i", src, "-frames:v", "1",
+                        "-vf", "scale=288:-2", fp], capture_output=True)
+        if not (os.path.exists(fp) and os.path.getsize(fp) > 0):
+            continue
+        b64 = base64.b64encode(open(fp, "rb").read()).decode()
+        parts.append({"type": "text", "text": f"frame {i + 1} t={t - off:.3f}s:"})
+        parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+    data = _json_from(_gmi_chat(parts, max_tokens=4000)) or {}
+    ref = qaudio._audio_envelope(src, off, window, rate=rate)
+    check = qhybrid.reduce_to_check(qhybrid.MOUTH_OPENNESS, data, ref_signal=ref,
+                                    rate_hz=rate, max_lag_s=qhybrid.LIPSYNC_MAX_LAG_S)
+    return check, n
+
+
+def _hybrid_channel_semantics(src: str, meta: dict, tmp: str) -> tuple[dict | None, float]:
+    """Per-channel content perception vs the declared multichannel layout.
+    Splits each channel, asks the model to classify dialogue/music/effects/
+    silence, and compare_declared flags e.g. dialogue on the LFE. Returns
+    (check, audio_seconds_used). Skipped for mono/stereo (no role to violate)."""
+    a = next((s for s in meta.get("streams", []) if s.get("codec_type") == "audio"), None)
+    if not a:
+        return None, 0.0
+    try:
+        n_ch = int(a.get("channels") or 0)
+    except (TypeError, ValueError):
+        n_ch = 0
+    roles = qhybrid.layout_roles(a.get("channel_layout", ""), n_ch)
+    if not roles:
+        return None, 0.0
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    win = min(HYBRID_CHANNEL_WINDOW_S, max(duration - 0.5, 1.0))
+    start = max(0.0, duration / 2 - win / 2)
+    parts = [{"type": "text", "text": qhybrid.CHANNEL_SEMANTICS.prompt.format(n=n_ch)}]
+    used = 0.0
+    for i in range(n_ch):
+        wav = os.path.join(tmp, f"hybch_{i}.wav")
+        subprocess.run(["ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{win:.3f}", "-i", src,
+                        "-map", "0:a:0", "-af", f"pan=mono|c0=c{i}", "-ar", "16000", wav],
+                       capture_output=True)
+        if not (os.path.exists(wav) and os.path.getsize(wav) > 1000):
+            continue
+        b64 = base64.b64encode(open(wav, "rb").read()).decode()
+        parts.append({"type": "text", "text": f"channel index {i}:"})
+        parts.append({"type": "input_audio", "input_audio": {"data": b64, "format": "wav"}})
+        used += win
+    if used == 0.0:
+        return None, 0.0
+    data = _json_from(_gmi_chat(parts, max_tokens=1000)) or {}
+    check = qhybrid.reduce_to_check(qhybrid.CHANNEL_SEMANTICS, data, declared=roles)
+    return check, round(used, 1)
+
+
+def run_hybrid_qc(src: str, meta: dict, tmp: str) -> tuple[list, dict]:
+    """Run the hybrid (perceive-then-compute) checks. Each sub-check is isolated
+    so one failing never sinks the others or the surrounding AI QC. Returns
+    (checks, units) with units metered separately from the agentic passes."""
+    checks: list = []
+    frames, audio_seconds = 0, 0.0
+    try:
+        c, n = _hybrid_lip_sync(src, meta, tmp)
+        if c:
+            checks.append(c)
+        frames += n
+    except Exception as e:
+        print("hybrid lip-sync failed:", e)
+    try:
+        c, secs = _hybrid_channel_semantics(src, meta, tmp)
+        if c:
+            checks.append(c)
+        audio_seconds += secs
+    except Exception as e:
+        print("hybrid channel semantics failed:", e)
+    return checks, {"hybrid_frames": frames, "hybrid_audio_seconds": round(audio_seconds, 1)}
+
+
 def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
               profile: dict | None = None, detections: dict | None = None,
               declared: str = "", deterministic_report: dict | None = None) -> tuple:
@@ -808,11 +915,16 @@ def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
         print("language check failed:", e)
     for check in checks:
         check.setdefault("source", "ai_support")
+    # Hybrid lane last: its checks already carry source="hybrid" (perceive-then-
+    # compute), so they stay distinct from the ai_support instruments above.
+    hybrid_checks, hybrid_units = run_hybrid_qc(src, meta, tmp)
+    checks.extend(hybrid_checks)
     return checks, {"frames": frames, "asr_seconds": round(asr_seconds, 1),
                     "escalation_frames": esc_frames,
                     "requested_frames": agentic_units["requested_frames"],
                     "requested_audio_seconds": agentic_units["requested_audio_seconds"],
-                    "model_passes": agentic_units["model_passes"]}, agentic
+                    "model_passes": agentic_units["model_passes"],
+                    **hybrid_units}, agentic
 
 
 # ─────────────────────── Synthetic QC lane (generative media) ───────────────────────
@@ -1143,6 +1255,13 @@ def run_pipeline(job: Job) -> None:
                         progress(job, {"type": "step_metered", "step": "qc_ai_evidence_audio",
                                        "billable": {"unit": "seconds",
                                                     "units": ai_units["requested_audio_seconds"]}})
+                    if ai_units.get("hybrid_frames"):
+                        progress(job, {"type": "step_metered", "step": "qc_hybrid",
+                                       "billable": {"unit": "frames", "units": ai_units["hybrid_frames"]}})
+                    if ai_units.get("hybrid_audio_seconds"):
+                        progress(job, {"type": "step_metered", "step": "qc_hybrid_audio",
+                                       "billable": {"unit": "seconds",
+                                                    "units": ai_units["hybrid_audio_seconds"]}})
                 except Exception as e:
                     ai_state = "error"
                     if qc_report is None:

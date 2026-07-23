@@ -5,6 +5,40 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-23 - Perceive-then-compute: a reusable hybrid QC framework
+
+- Context: The "no VLM lip-sync" decision below ruled out asking the model to
+  JUDGE a timing question. A follow-up probe drew the finer line: the same model
+  asked ONLY to PERCEIVE (per-frame mouth openness, no timing claim) and paired
+  with deterministic cross-correlation recovered a ground-truthed A/V offset
+  exactly (0 ms and +833 ms), where holistic judgment had confabulated. The win
+  generalizes — perception the model does reliably, math it cannot fake.
+- Decision / result: Build it as architecture, not a one-off. New pure module
+  `pipeline/qc/hybrid.py`: a `HybridCheck` spec (perception prompt + output kind
+  + reducer) and deterministic reducers — `align` (cross-correlation offset),
+  `compare_declared` (perceived vs declared), `persistence` (tag consistency).
+  The worker owns the GMI call and evidence; `qc/` stays pure (no worker import).
+  Two instances ship: perceptual **lip-sync** (mouth-openness vs audio envelope
+  → `lip_sync`) and audio **channel semantics** (per-channel dialogue/music/
+  effects/silence vs the declared layout → `channel_assignment`, e.g. flags
+  dialogue on the LFE). `align` was hardened after the probe: per-lag Pearson
+  over only the overlapping region + a peak-margin gate, so an ambiguous/aliased
+  window ABSTAINS (reliable=False) rather than reporting a confident-wrong
+  offset. Both risks are wired `model_unreliable`/`partial` in `build_coverage`,
+  which now treats `source in {deterministic,hybrid}` as instruments: a hybrid
+  WARN raises SUSPECTED, a hybrid PASS never CLEARs. Proven by
+  `scripts/hybrid-proof.sh` (ffmpeg + venv, no cloud) and metered live as
+  `qc_hybrid` in `ai-qc-proof`.
+- Why it matters: This is the honest way to use a generative model in a
+  trust-based QC reporter — for perception with a deterministic check on top,
+  never for the part that has a right answer. It is not in tension with the
+  decision below: that one forbids VLM *judgment* of sync; this one uses VLM
+  *perception* under deterministic control, and still cannot CLEAR the risk.
+- Follow-up: Logo/watermark persistence and shot-content continuity become
+  straightforward `HybridCheck` specs (see NEXT_STEPS). The cartoon stimulus
+  proved the mechanism; a real-face clip should validate mouth perception before
+  the lip-sync instance is leaned on for a certification-adjacent claim.
+
 ### 2026-07-23 - No VLM-based perceptual lip-sync check (empirically disproven)
 
 - Context: We considered a perceptual lip-sync check — show the multimodal
@@ -44,9 +78,11 @@ chat threads.
 - Why it matters: Lip-sync moves from a permanent REVIEW_REQUIRED to a real
   measurement when the tool is present, without ever letting an unreliable
   signal (VLM) or a missing tool masquerade as a clean result.
-- Follow-up: End-to-end torch run is pending (old upstream deps need pinning);
-  see NEXT_STEPS. Consider a maintained SyncNet reimplementation if the 8-year
-  -old repo proves too brittle to stand up.
+- Follow-up: End-to-end torch run is pending only on standing up the venv; the
+  upstream is current (a 2026-04-17 "modernize-code" commit: torch 2.5.1,
+  PySceneDetect 0.6.7.1, Python 3.10), so no dependency archaeology is expected —
+  earlier notes calling it "8-year-old / needs pinning" were wrong. See
+  NEXT_STEPS.
 
 ### 2026-07-23 - Widen detection coverage: sample the whole timeline, feed the reporter more
 

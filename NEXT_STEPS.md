@@ -44,13 +44,25 @@ history.
   integrated as an optional tool (Photon pattern) and wired into the
   `lip_sync` risk; the wrapper's output parser is verified against SyncNet's
   source. REMAINING: stand up the SyncNet stack end-to-end and capture a real
-  measured run. `scripts/fetch-syncnet.sh` clones the repo + downloads weights,
-  but the upstream is ~8 years old (torch + PySceneDetect 0.5 API + S3FD) and
-  its deps likely need pinning/patching on a modern machine — a bounded task,
-  not a blocker. Until then, Waystation emits an honest FYI (never a silent
-  pass) and the deterministic container/envelope proxy catches gross drift.
-  A general VLM is deliberately NOT used for lip sync (proven to confabulate,
-  see DECISIONS 2026-07-23).
+  measured run. `scripts/fetch-syncnet.sh` clones the repo + downloads weights;
+  the upstream is CURRENT (2026-04-17 "modernize-code": torch 2.5.1,
+  PySceneDetect 0.6.7.1, Python 3.10 + S3FD), so standing up the venv is a
+  bounded task, not dependency archaeology. Until then, Waystation emits an
+  honest FYI (never a silent pass) and the deterministic container/envelope
+  proxy plus the new perceptual hybrid catch gross drift. A general VLM is
+  deliberately NOT used to JUDGE lip sync (proven to confabulate); the hybrid
+  uses it for per-frame PERCEPTION only (see DECISIONS 2026-07-23).
+- SyncNet as a Docker remote worker: baking the torch stack + weights into the
+  worker image so measured lip-sync is available without a host install.
+  DEFERRED pending an explicit go-ahead (image size / GPU-vs-CPU trade-off to
+  confirm first).
+- Hybrid framework, next specs: `qc/hybrid.py` (perceive-then-compute) now
+  makes logo/watermark **persistence** (is the bug present in every window, or
+  intermittent → `persistence` reducer) and shot-content **continuity**
+  straightforward new `HybridCheck` instances. Also validate the lip-sync
+  instance on a REAL-face clip — the cartoon stimulus proved the mechanism but
+  real mouths are subtler — before leaning on it for any certification-adjacent
+  claim.
 
 ## Blockers
 

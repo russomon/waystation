@@ -35,6 +35,7 @@ asserts the results:
 ```bash
 bash scripts/agentic-qc-proof.sh   # charter, request allowlist, mandatory 18-risk accounting, no-repair contract
 bash scripts/coverage-proof.sh     # detection coverage: tiled full-timeline PSE, blind-pass audio, scene/anomaly frames, lip-sync proxy
+bash scripts/hybrid-proof.sh       # perceive-then-compute: AV-offset recovery + abstain, channel semantics, honest coverage (no cloud)
 bash scripts/netflix-qc-proof.sh   # Netflix profile: 4 BLOCKERs, reporter-only mode, PSE, VMAF/MOS
 bash scripts/ai-qc-proof.sh        # 3-pass agentic lane + adaptive evidence + ASR WER (mock GMI, zero spend)
 bash scripts/qc-proof.sh           # deterministic AV + caption QC with exact defect counts
@@ -329,6 +330,19 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   The coverage engine forbids the AI model from ever clearing the `lip_sync`
   risk (`model_unreliable`), and more broadly instruments now always win over
   model dispositions. Proven by `scripts/avsync-proof.sh`.
+- ✅ **Hybrid "perceive-then-compute" QC lane.** The same probe that ruled out
+  VLM *judgment* of sync established the honest way to use the model: for
+  *perception* only, with deterministic math on top. `qc/hybrid.py` (a pure
+  module) pairs an AI per-window perception step with a deterministic reducer
+  that owns the decision — `align` (cross-correlation offset), `compare_declared`
+  (perceived vs declared layout), `persistence` (tag consistency). Two checks
+  ship: **perceptual lip-sync** (per-frame mouth openness × audio envelope —
+  recovered a ground-truthed +833 ms offset exactly, and ABSTAINS on an
+  ambiguous window rather than guessing) and **audio channel semantics** (per-
+  channel dialogue/music/effects/silence vs the declared layout — flags e.g.
+  dialogue on the LFE). A hybrid WARN raises `SUSPECTED`; a hybrid PASS never
+  CLEARs (AI perception can flag, never certify). Proven by
+  `scripts/hybrid-proof.sh` (ffmpeg + venv, no cloud).
 - ✅ **Prompt-native human QC charter** — the independent sweep explicitly
   searches sampled evidence for pixel defects, isolated corruption, banding,
   moire, cadence/judder, color discontinuities, text/graphics mistakes,

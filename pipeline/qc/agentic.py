@@ -93,11 +93,13 @@ RISK_REGISTRY: tuple[dict[str, Any], ...] = (
      "scope": "partial", "limit": "Codec labels do not validate beds, objects, guard bands, or metadata internals."},
     {"id": "lip_sync", "label": "Audio-to-picture lip sync and drift",
      "category": "sync", "applies": "video_audio",
-     "checks": ["avsync_offset", "lip_sync_container_offset", "lip_sync_drift_proxy"],
+     "checks": ["avsync_offset", "lip_sync_container_offset", "lip_sync_drift_proxy", "hybrid_lip_sync"],
      "scope": "partial", "model_unreliable": True,
      "limit": "Measured by SyncNet when installed (offset in ms per face track); otherwise a "
-              "container/envelope proxy catches gross drift only. A general VLM cannot judge "
-              "lip sync reliably and is not used for it."},
+              "container/envelope proxy plus a perceptual hybrid (AI per-frame mouth openness "
+              "cross-correlated with audio energy) catch gross drift only. A general VLM cannot "
+              "judge lip sync directly and is not asked to — the hybrid uses it for perception "
+              "only, with deterministic math owning the offset."},
     {"id": "dead_stuck_pixels", "label": "Dead, stuck, or hot pixels",
      "category": "picture", "applies": "video", "checks": [], "scope": "human",
      "limit": "Sparse sampling can miss short or spatially subtle pixel defects."},
@@ -117,8 +119,12 @@ RISK_REGISTRY: tuple[dict[str, Any], ...] = (
      "category": "audio", "applies": "audio", "checks": ["audio_clipping", "audio_silence", "audio_hum"],
      "scope": "partial", "limit": "Short or masked transients can evade aggregate signal checks."},
     {"id": "channel_assignment", "label": "Semantic audio channel assignment",
-     "category": "audio", "applies": "audio", "checks": ["channel_map", "audio_phase"],
-     "scope": "partial", "limit": "Declared layout does not prove that dialogue, music, and effects occupy the intended channels."},
+     "category": "audio", "applies": "audio",
+     "checks": ["channel_map", "audio_phase", "hybrid_channel_semantics"],
+     "scope": "partial", "model_unreliable": True,
+     "limit": "The hybrid lane perceives per-channel content (dialogue/music/effects/silence) and "
+              "flags clear layout violations (e.g. dialogue on the LFE), but coarse perception "
+              "cannot certify that every channel carries exactly its intended stem."},
     {"id": "spoken_language", "label": "Spoken language versus delivery declaration",
      "category": "language", "applies": "audio", "checks": [], "support_checks": ["ai_language"],
      "scope": "human", "limit": "A short speech sample can miss multilingual or incorrectly tagged sections."},
@@ -464,8 +470,13 @@ def build_coverage(meta: dict, key: str, checks: list[dict], agentic: dict | Non
         status = None
         reason = ""
         evidence_ids: list[str] = []
+        # Deterministic AND hybrid (perceive-then-compute) checks are instruments:
+        # a hybrid WARN raises SUSPECTED, but a hybrid PASS never CLEARs — the
+        # CLEAR branch below requires scope=="full", and both hybrid-backed risks
+        # (lip_sync, channel_assignment) are "partial"/model_unreliable, so AI
+        # perception can flag but never certify.
         instrument = [c for name in definition.get("checks", []) for c in by_name.get(name, [])
-                      if c.get("source", "deterministic") == "deterministic"]
+                      if c.get("source", "deterministic") in {"deterministic", "hybrid"}]
         support = [c for name in definition.get("support_checks", []) for c in by_name.get(name, [])]
         bad = [c for c in instrument if c.get("status") in {"warn", "fail"}]
         if bad:
