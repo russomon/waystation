@@ -3,7 +3,8 @@
 # Fly.io / Fargate run the full loop — gateway + worker + MinIO all in
 # containers, a signed b2:ObjectCreated event drives the pipeline, and the
 # derivatives + SDK-verified Genblaze manifest land in the bucket.
-# Also asserts ffmpeg and Netflix Photon are baked into the worker image.
+# Also asserts ffmpeg, MediaInfo, and Netflix Photon are baked into the worker
+# image.
 set -u
 export PATH="/opt/homebrew/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,7 +28,7 @@ echo "✓ gateway + worker + minio containers up"
 
 echo "— toolchain baked into the worker image —"
 docker exec "$( "${COMPOSE[@]}" ps -q worker )" sh -c \
-  'ffmpeg -version 2>/dev/null | head -1; java -version 2>&1 | head -1; ls /opt/photon/*.jar | wc -l | xargs echo photon jars:'
+  'ffmpeg -version 2>/dev/null | head -1; mediainfo --Version | head -1; java -version 2>&1 | head -1; ls /opt/photon/*.jar | wc -l | xargs echo photon jars:'
 
 "$PY" - <<'PYEOF'
 import boto3; from botocore.config import Config

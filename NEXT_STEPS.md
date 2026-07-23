@@ -16,9 +16,9 @@ history.
 - **Devpost**: re-paste the updated "What it does" and "What's next" sections
   from `docs/devpost-about.md`; the repo URL is
   `https://github.com/russomon/waystation`.
-- **Optional demo environment polish**: install `mediainfo` if the recording
-  machine should show the new MXF OP1a / AS-11 / HDR metadata cross-checks.
-  Waystation still reports a clear FYI when the tool is absent.
+- **Optional host-run demo polish**: install `mediainfo` if the recording
+  machine runs the worker directly and should show the new MXF OP1a / AS-11 /
+  HDR metadata cross-checks. The Docker worker includes it.
 
 ## Soon
 

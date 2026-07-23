@@ -79,9 +79,10 @@ new MediaInfo proof added on 2026-07-23 is passing (see
   WORM-locked for 24h. Demo with `scripts/worm-demo.sh <transferId>`.
 - Photon jars live in `vendor/photon` (gitignored); recreate with
   `bash scripts/fetch-photon.sh`.
-- MediaInfo is optional. Install it on demo/review machines if you want the
-  extra MXF OP1a / AS-11 / HDR metadata cross-checks; otherwise the report
-  carries an explicit FYI that the analyzer was skipped.
+- MediaInfo is baked into the Docker worker. On host-run workers it remains
+  optional: install it on demo/review machines if you want the extra MXF OP1a
+  / AS-11 / HDR metadata cross-checks; otherwise the report carries an
+  explicit FYI that the analyzer was skipped.
 - The local checkout is at `/Users/Shared/Orbit/Code/waystation`, matching the
   repo name (renamed from `orbitxfer-web` on 2026-07-19). Gitignored assets
   that do NOT come from a clone and must be rebuilt on a fresh machine:
@@ -92,8 +93,9 @@ new MediaInfo proof added on 2026-07-23 is passing (see
 
 - Safe stopping point: yes. `main` has the MediaInfo integration locally
   validated with `scripts/mediainfo-proof.sh`, gateway type-check, client
-  build, and pipeline import. The previous 11 full-stack proofs were green on
-  the rebuilt venv; they were not all re-run in this MediaInfo-only pass.
+  build, pipeline import, and the Docker proof after baking MediaInfo into the
+  worker image. The previous 11 full-stack proofs were green on the rebuilt
+  venv; they were not all re-run in this MediaInfo-only pass.
 - Risks or open questions: none technical. Remaining work is presentational
   (demo video + Devpost copy). When recording, bring the stack up with
   `scripts/live-event-run.sh` then `scripts/b2-register-events.sh` — the

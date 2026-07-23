@@ -74,8 +74,8 @@ For real B2 webhooks in dev, expose the gateway: `cloudflared tunnel --url http:
 ## Deploy (anywhere)
 
 The waystation ships as two containers — gateway (control plane, tiny,
-always-on) and worker (the compute: python 3.13 + ffmpeg + a JRE +
-**Netflix Photon baked in**, stateless, scale horizontally):
+always-on) and worker (the compute: python 3.13 + ffmpeg + **MediaInfo** +
+a JRE + **Netflix Photon baked in**, stateless, scale horizontally):
 
 ```bash
 docker compose up --build     # .env supplies B2/GMI config at runtime
@@ -92,7 +92,7 @@ excludes `.env`; config is injected at runtime).
 Proven by `scripts/docker-proof.sh`: the built containers + MinIO run the
 full loop — signed event → containerized pipeline → derivatives + an
 SDK-verified Genblaze manifest — and the worker image answers for ffmpeg,
-Java, and 61 Photon jars.
+MediaInfo, Java, and 61 Photon jars.
 
 **Scaling the worker.** Two axes, with a plateau worth knowing:
 
