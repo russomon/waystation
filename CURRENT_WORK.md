@@ -1,9 +1,9 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-23 (agentic QC reporter handoff)
+Updated: 2026-07-23 (detection-coverage upgrades)
 Machine: Mac Studio
-Mode: paused — clean handoff; hackathon submission run (deadline 2026-08-03)
+Mode: active — hackathon submission run (deadline 2026-08-03)
 
 Use this file for the active handoff state that should survive machine
 switches and chat history gaps.
@@ -11,11 +11,37 @@ switches and chat history gaps.
 ## Focus
 
 - Current branch: `main`
-- Active task: Backblaze Generative Media Hackathon submission. Waystation is
-  now a read-only QC reporter: deterministic instruments feed a three-pass
-  agentic inspection, and an 18-risk registry prevents silent omissions.
-- Immediate next action: capture one report against real GMI, then record the
-  demo video (`docs/demo-script.md`) and re-paste the Devpost sections.
+- Active task: Backblaze Generative Media Hackathon submission. Waystation is a
+  read-only QC reporter: deterministic instruments feed a three-pass agentic
+  inspection, and an 18-risk registry prevents silent omissions. Detection
+  coverage was widened on 2026-07-23 (five upgrades, see below).
+- Immediate next action: capture one report against real GMI (now with the
+  wider evidence), then record the demo video (`docs/demo-script.md`) and
+  re-paste the Devpost sections.
+
+## Detection-coverage upgrades (2026-07-23)
+
+Five changes that widen what the lanes and the agentic reporter can see —
+each asserted by `scripts/coverage-proof.sh` (ffmpeg + venv only, no cloud):
+
+1. **Tiled signal analysis** — legal range, PSE flash risk, and chroma
+   legality now tile short windows across the WHOLE timeline instead of the
+   first 60 s; idet cadence samples several offsets too. A flash at minute 45
+   is no longer invisible (`SIGNAL_TILE_*` env vars bound total analyzed time).
+2. **Blind-pass audio** — the independent agentic sweep now receives audio
+   windows (start/mid/end + silence-flagged points), not only frames, so the
+   "inspect sound" charter has evidence to inspect.
+3. **Scene + anomaly frame selection** — blind frames land on scene-change
+   boundaries and deterministic anomaly timecodes (black/freeze/silence) plus
+   anchors, instead of blind even spacing; a shot list is emitted.
+4. **Duration-scaled, higher-res evidence** — initial frame budget scales with
+   runtime (floor `AI_QC_FRAMES=8`, ceiling `AI_QC_FRAMES_MAX=40`), and
+   evidence resolution rose to `AI_QC_FRAME_SCALE=1024` px (was 640).
+5. **Lip-sync proxy** — new deterministic instrument: container A/V start
+   offset + audio-energy vs visual-motion envelope cross-correlation. It moves
+   the `lip_sync` registry risk off a permanent REVIEW_REQUIRED to SUSPECTED
+   when a real offset is measured; a clean proxy still does not CLEAR it
+   (honest — a global proxy is not certified lip sync).
 
 ## What Exists And Is Proven
 

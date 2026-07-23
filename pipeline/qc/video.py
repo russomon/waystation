@@ -11,9 +11,14 @@ import os
 import re
 
 from .report import check, violation
-from .util import metadata_print, run, tag_values
+from .util import metadata_print, metadata_print_tiled, run, tag_values
 
-ANALYSIS_WINDOW_S = 60.0   # bounded window keeps runtime flat on long masters
+ANALYSIS_WINDOW_S = 60.0   # legacy single-window size (still used by matte sampling)
+# Signal analyses (legal range, PSE, chroma) tile short windows across the WHOLE
+# timeline so a defect at minute 45 is not invisible. Total analyzed seconds are
+# bounded to keep runtime flat on long masters.
+SIGNAL_TILE_WINDOW_S = float(os.environ.get("SIGNAL_TILE_WINDOW_S", "20"))
+SIGNAL_TILE_MAX_TOTAL_S = float(os.environ.get("SIGNAL_TILE_MAX_TOTAL_S", "240"))
 
 
 def decode_and_detections(src: str, has_video: bool, has_audio: bool,
@@ -78,8 +83,11 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
       high-luma-delta transitions per second window (>=5/s flags)."""
     checks = []
     scale = 1 << (bit_depth - 8)
-    off = min(duration * 0.1, 5.0) if duration else 0.0
-    lines = metadata_print(src, "signalstats", min(ANALYSIS_WINDOW_S, duration or ANALYSIS_WINDOW_S), off)
+    lines, windows, analyzed = metadata_print_tiled(
+        src, "signalstats", duration, SIGNAL_TILE_WINDOW_S, max_total=SIGNAL_TILE_MAX_TOTAL_S)
+    covers_all = duration <= SIGNAL_TILE_WINDOW_S or len(windows) <= 1
+    span_note = (f"; {len(windows)} windows across the timeline (~{analyzed:.0f}s sampled)"
+                 if not covers_all else "")
     if not lines:
         return [check("video_legal_range", "info", "signalstats produced no frames", )]
 
@@ -103,7 +111,8 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
     mask = (f"lutyuv=y='if(between(val,{ylo},{yhi}),0,{outv})'"
             f":u='if(between(val,{clo},{chi}),0,{outv})'"
             f":v='if(between(val,{clo},{chi}),0,{outv})',signalstats")
-    mlines = metadata_print(src, mask, min(ANALYSIS_WINDOW_S, duration or ANALYSIS_WINDOW_S), off)
+    mlines, _, _ = metadata_print_tiled(
+        src, mask, duration, SIGNAL_TILE_WINDOW_S, max_total=SIGNAL_TILE_MAX_TOTAL_S)
     full = 255.0 * scale
     def frac(key):
         vals = tag_values(mlines, key)
@@ -112,7 +121,7 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
     worst_frac = max(fy, fu, fv)
     detail = (f"Y [{ymin:.0f}..{ymax:.0f}] chroma [{cmin:.0f}..{cmax:.0f}]; "
               f"out-of-tolerance pixels Y {fy:.3%} / U {fu:.3%} / V {fv:.3%} "
-              f"(area threshold 0.1%)")
+              f"(area threshold 0.1%){span_note}")
     if worst_frac > 0.001:
         checks.append(violation("video_legal_range", profile["video_range"]["escalate"],
                                 "level overshoot: " + detail))
@@ -121,7 +130,8 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
 
     if profile["pse"]["enabled"]:
         ydif = tag_values(lines, "lavfi.signalstats.YDIF")
-        fps = max(round(len(ydif) / max(min(ANALYSIS_WINDOW_S, duration or 1), 0.1)), 1)
+        # fps from the true analyzed span (tiled), not an assumed single window
+        fps = max(round(len(ydif) / max(analyzed, 0.1)), 1)
         worst = 0
         for i in range(0, max(len(ydif) - fps, 1), max(fps // 2, 1)):
             window = ydif[i:i + fps]
@@ -129,10 +139,10 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
         if worst >= 5:
             checks.append(violation("pse_flash_risk", profile["pse"]["escalate"],
                                     f"up to {worst} high-luma flashes/second — photosensitivity risk "
-                                    f"(BT.1702-informed screen)", ))
+                                    f"(BT.1702-informed screen){span_note}", ))
         else:
             checks.append(check("pse_flash_risk", "pass",
-                                f"max {worst} luma flash(es)/second in the analysis window"))
+                                f"max {worst} luma flash(es)/second{span_note or ' (whole clip)'}"))
     return checks
 
 

@@ -87,7 +87,13 @@ GMI_MODEL = os.environ.get("GMI_MODEL") or "openai/gpt-4o-mini"
 # audio verbatim). Kept separate from GMI_MODEL so text summaries can use a
 # cheaper model.
 GMI_MULTIMODAL_MODEL = os.environ.get("GMI_MULTIMODAL_MODEL") or "google/gemini-3.5-flash"
-AI_QC_FRAMES = int(os.environ.get("AI_QC_FRAMES", "8"))
+AI_QC_FRAMES = int(os.environ.get("AI_QC_FRAMES", "8"))              # floor on initial frames
+AI_QC_FRAMES_MAX = int(os.environ.get("AI_QC_FRAMES_MAX", "40"))     # ceiling on initial frames
+AI_QC_SECONDS_PER_FRAME = float(os.environ.get("AI_QC_SECONDS_PER_FRAME", "45"))  # duration scaling
+AI_QC_FRAME_SCALE = int(os.environ.get("AI_QC_FRAME_SCALE", "1024"))  # evidence width px (was 640)
+AI_QC_AUDIO_WINDOWS = int(os.environ.get("AI_QC_AUDIO_WINDOWS", "3"))  # blind-pass audio samples
+AI_QC_AUDIO_WINDOW_S = float(os.environ.get("AI_QC_AUDIO_WINDOW_S", "6"))
+AI_QC_SCENE_THRESHOLD = float(os.environ.get("AI_QC_SCENE_THRESHOLD", "0.4"))
 AI_QC_ASR_SECONDS = float(os.environ.get("AI_QC_ASR_SECONDS", "45"))
 
 
@@ -197,6 +203,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             guarded(qaudio.phase_check, src, meta, group="audio_phase")
             guarded(qaudio.clipping_and_hum, src, group="audio_clipping")
             guarded(qaudio.channel_map_check, meta, group="channel_map")
+            if has_video:  # lip-sync proxy needs both streams
+                guarded(qaudio.lip_sync_proxy, src, meta, duration, group="lip_sync_drift_proxy")
 
     # ── Task 4: captions, subtitles & text ──
     if check_captions:
@@ -327,24 +335,134 @@ def _frame_evidence(src: str, tmp: str, evidence_id: str, at: float,
     return model, public
 
 
-def _initial_agentic_evidence(src: str, meta: dict, tmp: str) -> tuple[list, list]:
+def _scene_cuts(src: str, duration: float, threshold: float = AI_QC_SCENE_THRESHOLD,
+                cap: int = 60) -> list[float]:
+    """Shot-boundary timecodes via ffmpeg scene score, spatially downscaled so the
+    detection pass stays cheap. Best-effort: returns [] on any failure so the
+    caller falls back to even spacing."""
+    if duration < 2:
+        return []
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", src, "-map", "0:v:0",
+             "-vf", f"scale=160:-2,select='gt(scene,{threshold})',metadata=mode=print:file=-",
+             "-an", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=600).stdout
+    except (subprocess.SubprocessError, OSError):
+        return []
+    cuts = []
+    for m in re.finditer(r"pts_time:([\d.]+)", out):
+        try:
+            t = float(m.group(1))
+            if 0.0 <= t <= duration:
+                cuts.append(round(t, 3))
+        except ValueError:
+            pass
+    return sorted(set(cuts))[:cap]
+
+
+def _scaled_frame_count(duration: float) -> int:
+    """Initial frame budget scales with runtime: ~1 per AI_QC_SECONDS_PER_FRAME,
+    floored at AI_QC_FRAMES and capped at AI_QC_FRAMES_MAX."""
+    target = int(round(duration / max(AI_QC_SECONDS_PER_FRAME, 1))) + 1
+    return max(1, min(max(AI_QC_FRAMES, target), AI_QC_FRAMES_MAX))
+
+
+def _dedupe_times(times: list[float], duration: float, min_gap: float = 0.4) -> list[float]:
+    out: list[float] = []
+    for t in sorted(max(0.0, min(float(t), max(duration - 0.05, 0.0))) for t in times):
+        if not out or t - out[-1] >= min_gap:
+            out.append(round(t, 3))
+    return out
+
+
+def _initial_agentic_evidence(src: str, meta: dict, tmp: str,
+                              detections: dict | None = None) -> tuple[list, list, dict]:
+    """Blind-pass evidence, selected for COVERAGE rather than even spacing:
+    scene-change frames (one representative per shot) + deterministic anomaly
+    timecodes (black/freeze/silence) + evenly-spaced anchors, scaled with
+    duration; PLUS audio windows so the independent pass can inspect sound, not
+    only picture. Returns (parts, records, meta_out) where meta_out carries the
+    shot list and selection provenance."""
     duration = max(float(meta.get("format", {}).get("duration", 0) or 0), 0.5)
-    n = max(1, min(AI_QC_FRAMES, 12))
-    if n == 1:
-        times = [duration / 2]
-    else:
+    has_video = any(s.get("codec_type") == "video" for s in meta.get("streams", []))
+    has_audio = any(s.get("codec_type") == "audio" for s in meta.get("streams", []))
+    detections = detections or {}
+    parts: list = []
+    records: list = []
+    shot_boundaries: list[float] = []
+
+    frame_times: list[float] = []
+    if has_video:
+        budget = _scaled_frame_count(duration)
+        # 1) evenly-spaced anchors so no long stretch is unsampled
+        anchors = max(2, budget // 3)
         edge = min(0.25, duration / 4)
-        times = [edge + (duration - 2 * edge) * i / (n - 1) for i in range(n)]
-    parts, records = [], []
-    for i, at in enumerate(times, 1):
+        frame_times += [edge + (duration - 2 * edge) * i / (anchors - 1) for i in range(anchors)] \
+            if anchors > 1 else [duration / 2]
+        # 2) one representative frame just after each shot change
+        shot_boundaries = _scene_cuts(src, duration)
+        frame_times += [min(t + 0.15, duration - 0.05) for t in shot_boundaries]
+        # 3) deterministic anomaly midpoints — look where the instruments smelled smoke
+        for kind in ("black", "freeze", "silence"):
+            for seg in detections.get(kind, []):
+                try:
+                    s, e = float(seg[0]), float(seg[1])
+                    frame_times.append((s + e) / 2)
+                except (TypeError, ValueError, IndexError):
+                    pass
+        frame_times = _dedupe_times(frame_times, duration)
+        # keep the budget: always retain anchors + anomalies, sample shots to fit
+        if len(frame_times) > budget:
+            keep = set(_dedupe_times(
+                [edge + (duration - 2 * edge) * i / (anchors - 1) for i in range(anchors)]
+                + [(float(s) + float(e)) / 2 for k in ("black", "freeze", "silence")
+                   for s, e in detections.get(k, [])], duration))
+            extras = [t for t in frame_times if t not in keep]
+            step = max(1, len(extras) // max(budget - len(keep), 1))
+            frame_times = _dedupe_times(list(keep) + extras[::step], duration)[:budget]
+
+    for i, at in enumerate(frame_times, 1):
         evidence_id = f"timeline-frame-{i}"
-        item = _frame_evidence(src, tmp, evidence_id, at)
+        item = _frame_evidence(src, tmp, evidence_id, at, scale=AI_QC_FRAME_SCALE)
         if not item:
             continue
         model, public = item
+        if any(abs(at - b) < 0.5 for b in shot_boundaries):
+            public["at_shot_boundary"] = True
         parts.extend([{"type": "text", "text": f"Evidence {evidence_id} at {at:.3f}s:"}, model])
         records.append(public)
-    return parts, records
+
+    # 4) audio windows for the blind pass — start/mid/end plus silence-flagged points
+    if has_audio:
+        audio_starts = []
+        n_aud = max(1, AI_QC_AUDIO_WINDOWS)
+        win = min(AI_QC_AUDIO_WINDOW_S, duration)
+        if duration <= win:
+            audio_starts = [0.0]
+        else:
+            audio_starts = [round((duration - win) * i / max(n_aud - 1, 1), 3) for i in range(n_aud)]
+        for seg in detections.get("silence", [])[:2]:
+            try:
+                audio_starts.append(max(0.0, float(seg[0]) - 0.5))
+            except (TypeError, ValueError, IndexError):
+                pass
+        for j, start in enumerate(_dedupe_times(audio_starts, duration, min_gap=win / 2), 1):
+            evidence_id = f"timeline-audio-{j}"
+            item = _audio_evidence(src, tmp, evidence_id, start, min(win, max(duration - start, 0.5)))
+            if not item:
+                continue
+            model, public, _ = item
+            parts.extend([{"type": "text", "text": f"Evidence {evidence_id} (audio {start:.2f}s):"}, model])
+            records.append(public)
+
+    meta_out = {
+        "shot_boundaries": shot_boundaries,
+        "frame_samples": len([r for r in records if r["type"] == "frame"]),
+        "audio_samples": len([r for r in records if r["type"] == "audio_window"]),
+        "selection": "scene+anomaly+anchor" if shot_boundaries or detections else "anchor",
+    }
+    return parts, records, meta_out
 
 
 def _audio_evidence(src: str, tmp: str, evidence_id: str, start: float,
@@ -427,7 +545,8 @@ def run_agentic_inspection(src: str, meta: dict, tmp: str, key: str,
                             deterministic_report: dict) -> tuple[dict, list[dict], dict]:
     """Blind sweep -> bounded evidence round -> informed sweep -> critic."""
     duration = max(float(meta.get("format", {}).get("duration", 0) or 0), 0.5)
-    initial_parts, evidence = _initial_agentic_evidence(src, meta, tmp)
+    detections = deterministic_report.get("detections", {})
+    initial_parts, evidence, evidence_meta = _initial_agentic_evidence(src, meta, tmp, detections)
     independent_raw = _json_from(_gmi_chat(
         [{"type": "text", "text": qagentic.independent_prompt(meta, key, evidence)}] + initial_parts,
         max_tokens=7000))
@@ -459,10 +578,14 @@ def run_agentic_inspection(src: str, meta: dict, tmp: str, key: str,
         "passes": {"independent": independent, "informed": informed, "critic": critic},
         "evidence": evidence,
         "requests": executions,
-        "limits": {"initial_frame_samples": len([e for e in evidence if e["evidence_id"].startswith("timeline-")]),
+        "shot_boundaries": evidence_meta.get("shot_boundaries", []),
+        "limits": {"initial_frame_samples": evidence_meta.get("frame_samples", 0),
+                   "initial_audio_samples": evidence_meta.get("audio_samples", 0),
+                   "frame_selection": evidence_meta.get("selection", "anchor"),
                    "adaptive_rounds": 1, "sampled_evidence_is_not_full_timeline_clearance": True},
     }
     units = {"frames": len([e for e in evidence if e["type"] == "frame"]),
+             "audio_windows": len([e for e in evidence if e["type"] == "audio_window"]),
              "requested_frames": requested_frames, "requested_audio_seconds": requested_audio,
              "model_passes": 3}
     return agentic, qagentic.checks_from_findings(agentic), units

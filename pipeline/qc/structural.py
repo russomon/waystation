@@ -10,7 +10,7 @@ import statistics
 import xml.etree.ElementTree as ET
 
 from .report import check, violation
-from .util import fps_label, fps_value, run
+from .util import analysis_windows, fps_label, fps_value, run
 
 _MULTIPART_RE = re.compile(r"(?:^|[\s_\-.])(?:part|pt|reel|disc|disk|cd)[\s_\-.]?\d+", re.I)
 
@@ -75,13 +75,28 @@ def framerate_checks(src: str, meta: dict, profile: dict) -> list:
     v = vstreams[0]
     avg, real = v.get("avg_frame_rate", "0/1"), v.get("r_frame_rate", "0/1")
 
-    # idet: field order + repeated-field (telecine) cadence over ~300 frames
-    log = run(["ffmpeg", "-hide_banner", "-i", src, "-map", "0:v:0",
-               "-vf", "idet", "-frames:v", "300", "-an", "-f", "null", "-"]).stderr
-    m = re.search(r"Multi frame detection: TFF:\s*(\d+)\s*BFF:\s*(\d+)\s*Progressive:\s*(\d+)", log)
-    tff, bff, prog = (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else (0, 0, 1)
-    r = re.search(r"Repeated Fields: Neither:\s*(\d+)\s*Top:\s*(\d+)\s*Bottom:\s*(\d+)", log)
-    rep_n, rep_t, rep_b = (int(r.group(1)), int(r.group(2)), int(r.group(3))) if r else (1, 0, 0)
+    # idet: field order + repeated-field (telecine) cadence. Cadence breaks
+    # happen at edit points ANYWHERE, so sample ~200 frames at several offsets
+    # across the timeline and aggregate, rather than only the opening seconds.
+    duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    offsets = [s for s, _ in analysis_windows(duration, window=8.0, min_windows=1, max_total=40.0)]
+    tff = bff = prog = rep_n = rep_t = rep_b = 0
+    for off in offsets:
+        cmd = ["ffmpeg", "-hide_banner"]
+        if off > 0:
+            cmd += ["-ss", f"{off:.2f}"]
+        cmd += ["-i", src, "-map", "0:v:0", "-vf", "idet", "-frames:v", "200", "-an", "-f", "null", "-"]
+        log = run(cmd).stderr
+        m = re.search(r"Multi frame detection: TFF:\s*(\d+)\s*BFF:\s*(\d+)\s*Progressive:\s*(\d+)", log)
+        if m:
+            tff += int(m.group(1)); bff += int(m.group(2)); prog += int(m.group(3))
+        r = re.search(r"Repeated Fields: Neither:\s*(\d+)\s*Top:\s*(\d+)\s*Bottom:\s*(\d+)", log)
+        if r:
+            rep_n += int(r.group(1)); rep_t += int(r.group(2)); rep_b += int(r.group(3))
+    if tff + bff + prog == 0:
+        prog = 1
+    if rep_n + rep_t + rep_b == 0:
+        rep_n = 1
 
     interlaced = (tff + bff) > prog
     if interlaced and tff and bff:

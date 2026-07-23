@@ -55,6 +55,37 @@ def metadata_print(src: str, vf: str, seconds: float, offset: float = 0.0) -> li
     return [ln for ln in run(cmd).stdout.splitlines() if ln.startswith("lavfi.")]
 
 
+def analysis_windows(duration: float, window: float = 20.0,
+                     min_windows: int = 3, max_total: float = 240.0) -> list:
+    """Tile short analysis windows across the WHOLE timeline instead of only the
+    first N seconds. Short files are covered in one window; long masters get
+    windows spread start→end, bounded so total analyzed seconds stays flat
+    (~max_total). Returns [(start, length), …]."""
+    duration = max(float(duration or 0), 0.0)
+    if duration <= window or duration == 0:
+        return [(0.0, duration or window)]
+    max_windows = max(min_windows, int(max_total // window))
+    n = min(max_windows, max(min_windows, int(round(duration / 120.0)) + 1))
+    if n == 1:
+        return [(max(0.0, duration / 2 - window / 2), window)]
+    span = duration - window
+    return [(round(span * i / (n - 1), 3), window) for i in range(n)]
+
+
+def metadata_print_tiled(src: str, vf: str, duration: float, window: float = 20.0,
+                         min_windows: int = 3, max_total: float = 240.0) -> tuple:
+    """metadata_print run over analysis_windows and concatenated. Returns
+    (lines, windows, analyzed_seconds) so callers can compute per-second rates
+    over the true analyzed span rather than assuming one contiguous window."""
+    windows = analysis_windows(duration, window, min_windows, max_total)
+    lines: list = []
+    analyzed = 0.0
+    for start, length in windows:
+        lines.extend(metadata_print(src, vf, length, start))
+        analyzed += length
+    return lines, windows, analyzed
+
+
 def tag_values(lines: list, key: str) -> list:
     """Extract float values for one lavfi metadata key, in frame order."""
     vals = []

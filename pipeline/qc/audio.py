@@ -4,11 +4,118 @@ peak via ebur128 peak=true), inter-channel phase correlation, digital clipping,
 hum band-energy screening, and channel-mapping verification."""
 from __future__ import annotations
 
+import math
 import re
 import statistics
 
 from .report import check, violation
-from .util import run
+from .util import run, tag_values
+
+
+# Lip-sync PROXY (registry risk `lip_sync`). Two coarse, deterministic signals:
+#   1. container A/V start-time offset (catches gross mux misalignment)
+#   2. cross-correlation of the audio-energy envelope against the visual-motion
+#      envelope, both resampled to a common rate, to estimate global A/V drift.
+# This is NOT true lip sync — it compares whole-frame motion to whole-mix
+# energy, not mouth shapes to phonemes — so a pass never CLEARs the risk; it
+# only flags when a confident, sizeable offset is measured. Bounded to a window.
+LIPSYNC_RATE_HZ = 25
+LIPSYNC_MAX_LAG_S = 0.6
+LIPSYNC_MIN_CORR = 0.35
+LIPSYNC_FLAG_MS = 120.0
+
+
+def _audio_envelope(src: str, offset: float, window: float) -> list:
+    log = run(["ffmpeg", "-hide_banner", "-nostats", "-ss", f"{offset:.2f}", "-t", f"{window:.2f}",
+               "-i", src, "-map", "0:a:0",
+               "-af", f"aresample=8000,asetnsamples={8000 // LIPSYNC_RATE_HZ}:p=0,"
+                      "astats=metadata=1:reset=1,ametadata=mode=print:file=-",
+               "-f", "null", "-"]).stdout
+    out = []
+    for v in tag_values(log.splitlines(), "lavfi.astats.Overall.RMS_level"):
+        out.append(0.0 if math.isinf(v) or math.isnan(v) else 10 ** (v / 20.0))  # dB → linear
+    return out
+
+
+def _motion_envelope(src: str, offset: float, window: float) -> list:
+    log = run(["ffmpeg", "-hide_banner", "-nostats", "-ss", f"{offset:.2f}", "-t", f"{window:.2f}",
+               "-i", src, "-map", "0:v:0",
+               "-vf", f"fps={LIPSYNC_RATE_HZ},signalstats,metadata=mode=print:file=-",
+               "-an", "-f", "null", "-"]).stdout
+    return [v for v in tag_values(log.splitlines(), "lavfi.signalstats.YDIF")]
+
+
+def _normalize(series: list) -> list:
+    if len(series) < 4:
+        return []
+    mean = statistics.fmean(series)
+    centered = [x - mean for x in series]
+    norm = math.sqrt(sum(x * x for x in centered))
+    return [x / norm for x in centered] if norm > 1e-9 else []
+
+
+def _best_lag(a: list, b: list, max_lag: int) -> tuple:
+    """Return (lag_samples, correlation) maximizing correlation of a vs b, where
+    a positive lag means series a is delayed relative to b."""
+    n = min(len(a), len(b))
+    a, b = a[:n], b[:n]
+    best_lag, best_corr = 0, -2.0
+    for lag in range(-max_lag, max_lag + 1):
+        s = 0.0
+        for i in range(n):
+            j = i - lag
+            if 0 <= j < n:
+                s += a[i] * b[j]
+        if s > best_corr:
+            best_corr, best_lag = s, lag
+    return best_lag, best_corr
+
+
+def lip_sync_proxy(src: str, meta: dict, duration: float) -> list:
+    streams = meta.get("streams", [])
+    v = next((s for s in streams if s.get("codec_type") == "video"), None)
+    a = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    if not v or not a:
+        return []
+    checks = []
+
+    # 1) container A/V start-time offset
+    def start_of(s):
+        try:
+            return float(s.get("start_time"))
+        except (TypeError, ValueError):
+            return None
+    vs, as_ = start_of(v), start_of(a)
+    if vs is not None and as_ is not None:
+        off_ms = round((as_ - vs) * 1000.0, 1)
+        if abs(off_ms) > 100:
+            checks.append(check("lip_sync_container_offset", "warn",
+                                f"audio stream starts {off_ms:+.0f} ms vs video in the container — "
+                                f"A/V misalignment likely", "audio"))
+        else:
+            checks.append(check("lip_sync_container_offset", "pass",
+                                f"container A/V start offset {off_ms:+.0f} ms", "audio"))
+
+    # 2) envelope cross-correlation drift estimate over a bounded window
+    off = min(duration * 0.25, 10.0)
+    window = min(30.0, max(duration - off, 2.0))
+    audio_env = _normalize(_audio_envelope(src, off, window))
+    motion_env = _normalize(_motion_envelope(src, off, window))
+    if len(audio_env) >= LIPSYNC_RATE_HZ and len(motion_env) >= LIPSYNC_RATE_HZ:
+        max_lag = int(LIPSYNC_MAX_LAG_S * LIPSYNC_RATE_HZ)
+        lag, corr = _best_lag(audio_env, motion_env, max_lag)
+        drift_ms = round(lag * 1000.0 / LIPSYNC_RATE_HZ, 1)
+        if corr >= LIPSYNC_MIN_CORR and abs(drift_ms) >= LIPSYNC_FLAG_MS:
+            checks.append(check("lip_sync_drift_proxy", "warn",
+                                f"estimated A/V drift ~{drift_ms:+.0f} ms (audio vs motion envelope, "
+                                f"corr {corr:.2f}) — proxy, confirm with speech-bearing review", "audio"))
+        else:
+            basis = (f"drift ~{drift_ms:+.0f} ms, corr {corr:.2f}"
+                     if corr >= LIPSYNC_MIN_CORR else f"no reliable A/V correlation (corr {corr:.2f})")
+            checks.append(check("lip_sync_drift_proxy", "info",
+                                f"A/V envelope proxy: {basis} over a {window:.0f}s window "
+                                f"(coarse; not certified lip sync)", "audio"))
+    return checks
 
 
 def measure_loudness(src: str) -> dict:

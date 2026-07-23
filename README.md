@@ -34,6 +34,7 @@ asserts the results:
 
 ```bash
 bash scripts/agentic-qc-proof.sh   # charter, request allowlist, mandatory 18-risk accounting, no-repair contract
+bash scripts/coverage-proof.sh     # detection coverage: tiled full-timeline PSE, blind-pass audio, scene/anomaly frames, lip-sync proxy
 bash scripts/netflix-qc-proof.sh   # Netflix profile: 4 BLOCKERs, reporter-only mode, PSE, VMAF/MOS
 bash scripts/ai-qc-proof.sh        # 3-pass agentic lane + adaptive evidence + ASR WER (mock GMI, zero spend)
 bash scripts/qc-proof.sh           # deterministic AV + caption QC with exact defect counts

@@ -92,8 +92,10 @@ RISK_REGISTRY: tuple[dict[str, Any], ...] = (
      "category": "audio", "applies": "dolby_audio", "checks": ["dolby_audio_metadata"],
      "scope": "partial", "limit": "Codec labels do not validate beds, objects, guard bands, or metadata internals."},
     {"id": "lip_sync", "label": "Audio-to-picture lip sync and drift",
-     "category": "sync", "applies": "video_audio", "checks": [], "scope": "human",
-     "limit": "Requires speech-bearing picture evidence across the timeline."},
+     "category": "sync", "applies": "video_audio",
+     "checks": ["lip_sync_container_offset", "lip_sync_drift_proxy"], "scope": "human",
+     "limit": "Envelope/container proxy catches gross drift only; true lip sync needs "
+              "speech-bearing picture evidence across the timeline."},
     {"id": "dead_stuck_pixels", "label": "Dead, stuck, or hot pixels",
      "category": "picture", "applies": "video", "checks": [], "scope": "human",
      "limit": "Sparse sampling can miss short or spatially subtle pixel defects."},

@@ -37,8 +37,11 @@ history.
   media-minutes (the metering ledger is already the right signal).
 - Deeper ABR support: segment/ladder playback rather than manifest lint.
 - Full-timeline dead-pixel tracking and dedicated click/pop/test-tone
-  classifiers. The agentic reporter samples and requests evidence for these
-  risks now, but does not claim exhaustive timeline clearance.
+  classifiers. The agentic reporter now samples scene/anomaly frames and audio
+  windows and requests more evidence, but does not claim exhaustive timeline
+  clearance.
+- True lip-sync (mouth-shape vs phoneme) beyond the current envelope/container
+  proxy — needs a face/mouth-aware model. The proxy catches gross drift only.
 
 ## Blockers
 

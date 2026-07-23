@@ -5,6 +5,29 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-23 - Widen detection coverage: sample the whole timeline, feed the reporter more
+
+- Context: A model (and a windowed filter) can only flag what it is shown.
+  Several analyses looked at a small slice of a long master, and the agentic
+  blind pass saw only sparse, evenly-spaced, low-res frames and no audio.
+- Decision / result: Five upgrades, each proven by `scripts/coverage-proof.sh`.
+  (1) Signal analyses (legal range, PSE, chroma, idet cadence) tile short
+  windows across the whole timeline instead of the first 60 s, with total
+  analyzed seconds bounded. (2) The independent agentic pass now receives
+  audio windows, not only frames. (3) Blind frames are selected at scene-change
+  boundaries and deterministic anomaly timecodes plus anchors, not blind even
+  spacing. (4) Frame budget scales with duration and evidence resolution rose
+  to 1024 px. (5) A deterministic lip-sync proxy (container A/V offset +
+  envelope cross-correlation) turns the `lip_sync` risk from a permanent
+  REVIEW_REQUIRED into a measurable SUSPECTED when drift is real.
+- Why it matters: These directly raise recall — the odds of catching a real
+  incident — without touching the read-only reporter contract or letting a
+  passing proxy over-claim (a clean lip-sync proxy still does not CLEAR the
+  risk; certified PSE remains a separate, always-disclosed gap).
+- Follow-up: Tunable via `SIGNAL_TILE_*`, `AI_QC_FRAMES*`, `AI_QC_FRAME_SCALE`,
+  `AI_QC_AUDIO_WINDOWS`, `AI_QC_SCENE_THRESHOLD`. Capture a real-GMI report to
+  confirm the richer evidence reads well in the final UI.
+
 ### 2026-07-23 - Waystation reports QC issues and never repairs media
 
 - Context: Automated healing made the product responsible for creative and

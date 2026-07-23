@@ -58,6 +58,7 @@ handoff:
 
 | Script | Covers |
 |---|---|
+| `scripts/coverage-proof.sh` | detection-coverage upgrades: tiled signal analysis, blind-pass audio, scene/anomaly frame selection, duration scaling, lip-sync proxy |
 | `scripts/agentic-qc-proof.sh` | agentic charter, evidence allowlist, 18-risk accounting, no-repair contract |
 | `scripts/qc-proof.sh` | deterministic AV + caption QC |
 | `scripts/netflix-qc-proof.sh` | Netflix profile, tiers, reporter-only mode, PSE, VMAF |
