@@ -48,6 +48,9 @@
       .prov { margin-top: 1.1rem; border-top: 1px solid #eee; padding-top: .8rem; }
       .prov summary { cursor: pointer; font-weight: 500; }
       .mono { font: 12px/1.6 ui-monospace, monospace; color: #4b5563; word-break: break-all; }
+      .qc-section { margin: .9rem 0 0; }
+      .qc-section h3 { font-size: 13px; margin: 0 0 .25rem; }
+      .qc-lines { white-space: pre-wrap; word-break: break-word; margin: 0; }
       .verify { margin-top: .6rem; font: 13px/1.7 ui-monospace, monospace; }
       .verify .ok { color: #047857; }
       .verify .bad { color: #b91c1c; }
@@ -94,15 +97,13 @@
           <label class="svc"><input type="checkbox" id="opt_qc_captions" checked />
             Caption QC <span class="muted">timing &middot; readability &middot; coverage</span></label>
           <label class="svc"><input type="checkbox" id="opt_qc_ai" checked />
-            AI QC <span class="muted">vision review &middot; slate/text reading &middot; caption accuracy &middot; MOS</span></label>
+            AI QC <span class="muted">independent sweep &middot; adaptive evidence &middot; critic</span></label>
           <label class="svc"><input type="checkbox" id="opt_qc_synthetic" checked />
             Synthetic QC <span class="muted">AI-media defects &middot; temporal coherence &middot; prompt adherence</span></label>
           <label class="svc"><input type="checkbox" id="opt_thumbnail" checked />
             Preview thumbnail <span class="muted">poster frame</span></label>
           <label class="svc"><input type="checkbox" id="opt_summarize" checked />
             AI summary <span class="muted">GMI Cloud</span></label>
-          <label class="svc"><input type="checkbox" id="opt_self_heal" />
-            Self-heal <span class="muted">auto-fix loudness &middot; legalize video levels</span></label>
           <label class="svc"><input type="checkbox" id="opt_cloud" />
             Cloud compute <span class="muted">process at the Docker worker &middot; off = this machine</span></label>
         </div>

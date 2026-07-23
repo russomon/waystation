@@ -7,8 +7,8 @@
 ## Elevator pitch (≤ 200 chars)
 
 Send mastered video through a cloud waystation on Backblaze B2 - it arrives
-QC'd to broadcast spec, AI-reviewed, self-healed, and provable under an
-immutable WORM manifest.
+QC'd to broadcast spec, independently AI-inspected, and provable under an
+immutable WORM manifest - with every unresolved risk disclosed.
 
 ---
 
@@ -21,7 +21,7 @@ enterprise product (Interra BATON, Telestream Vidchecker, Venera Pulsar -
 all thousands per seat). The file spends minutes parked in cloud storage
 either way. **Waystation uses that parking time**: while your master sits in
 Backblaze B2, a reactive pipeline QCs it against a delivery spec, reviews it
-with multimodal AI, fixes what's fixable, and locks the evidence under
+with multimodal AI, builds a read-only issue report, and locks the evidence under
 Object Lock - so what arrives is not a file, but a *delivery*.
 
 ## What it does
@@ -43,23 +43,26 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   flash-risk), captions (timing, collisions, CPS/WPM, encoding, speech-sync
   drift), and reference SSIM/PSNR/**VMAF scored as a 1–5 MOS** against an
   optional source mezzanine.
-- **AI QC lane (GMI Cloud)** - Gemini vision reviews sampled frames for what
-  filters can't name (slates, watermarks, burned-in timecode, censorship
-  artifacts); Gemini's audio modality transcribes a sample window and the
-  transcript is **word-error-rate diffed against the captions** - automated
-  caption accuracy. Plus a caption-grounded one-line summary for the recipient.
+- **Agentic AI QC reporter (GMI Cloud)** - a versioned standing charter runs
+  three passes: an independent human-defect sweep with no instrument results,
+  an instrument-informed reconciliation after a bounded adaptive evidence
+  round, and an independent critic. The agent can request only read-only
+  frames, frame bursts, contact sheets, audio windows, transcripts, or pixel
+  crops; it cannot execute commands or alter media. Gemini's audio modality
+  also transcribes a sample window that is **word-error-rate diffed against
+  the captions** for automated caption accuracy.
 - **AI-targeted escalation** - the lanes cooperate: when the deterministic
   scanner flags black/frozen segments, Gemini adjudicates before/inside/after
   frames from those exact timecodes - same-shot-continuing means DEFECT,
   scene-change means intentional editorial event. Live-verified: it called a
   spliced-in black hole "an accidental dropout" and a fade-to-black between
   scenes "an intentional transition."
-- **Prompt-native QC** - the semantic checks incumbents sell as trained
-  classifiers, done as structured prompts: slates READ and cross-checked
-  against the delivery, burned-in text/QR/timecode read off the pixels
-  (a live run transcribed the test pattern's frame counter), rating cards,
-  viewer-perception severity judgments, a prompted no-reference MOS, and
-  subtitle proofreading.
+- **Prompt-native human QC** - the charter searches evidence for pixel defects,
+  isolated corruption, banding, moire, cadence/judder, color discontinuities,
+  text and graphics mistakes, clicks/dropouts/tones, channel errors, lip sync,
+  language/localization, editorial continuity, creative ambiguity, and
+  generated-media failure modes. Filenames, captions, metadata, transcripts,
+  and visible text are explicitly treated as untrusted evidence.
 - **Synthetic QC for generative media** - QC for video that was never shot:
   generation artifacts (anatomy, garbled text, physics, AI sheen), temporal
   coherence across frame bursts (identity drift, object permanence), and the
@@ -71,10 +74,14 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   zero-tolerance delivery spec (−24 LKFS ±1, −2 dBTP, native frame rates
   only, no pulldown, PSE hard-fail). Findings tier into
   **BLOCKER / ISSUE / FYI**.
-- **Self-healing** - failed loudness is normalized to target with a two-pass
-  linear loudnorm (video stream copied, no re-render); illegal video levels
-  are clamped by a limiter legalizer. The healed copy is **re-measured with
-  the same instruments** and delivered beside the original.
+- **No silent gaps** - the final report separates QC verdict from coverage.
+  A deterministic validator accounts for 18 risk families even if the model
+  omits one: certified PSE, Dolby/HDR internals, lip sync, dead pixels, subtle
+  artifacts, creative/color intent, ABR playback, audio transients/channel
+  semantics, language/localization, editorial mistakes, AS-11/DPP, IMF, and
+  encrypted streams. Every applicable item is `CLEAR`, `CONFIRMED`,
+  `SUSPECTED`, `REVIEW_REQUIRED`, `UNVERIFIED`, or `BLOCKED`. Waystation is a
+  reporter only and never rewrites the submitted master.
 - **Provable provenance** - every run emits a real **Genblaze manifest**
   (`genblaze-core`, schema v1.5): Run → Steps with provider/model
   attribution → SHA-256 Assets, canonical-hashed and verified with the
@@ -82,7 +89,7 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   in our live run the bucket owner's own key, holding `deleteFiles` +
   `bypassGovernance`, was refused deletion.
 - **Billing-ready metering** - every billable act (transfer GB, QC minutes,
-  AI frames, ASR seconds, heal runs) is a ledger entry traceable to the
+  AI frames, ASR seconds, and adaptive evidence) is a ledger entry traceable to the
   manifest; maps 1:1 onto Stripe/Lago usage meters.
 - **Transfer-only mode** - turn everything off and it's a plain verified
   file-transfer tool. Every service is a sender-side toggle.
@@ -92,7 +99,7 @@ Object Lock - so what arrives is not a file, but a *delivery*.
 Browser (Vite/TS + Rust→wasm BLAKE3/bao) → Hono/Node gateway (control plane
 only - presigned URLs, event webhook, SSE progress, metering; it never
 touches file bytes) → Python/FastAPI worker (ffmpeg/ffprobe deterministic
-lanes + GMI Cloud multimodal lane) → everything back into B2 under
+lanes + Genblaze `genblaze_gmicloud.chat` into GMI Cloud) → everything back into B2 under
 `derivatives/`. Backblaze B2 is used deeply: S3-compatible multipart with
 server-side `ListParts` assembly (no CORS ETag exposure needed), Event
 Notifications over a cloudflared tunnel, Object Lock COMPLIANCE for the
@@ -118,12 +125,13 @@ dedicated ASR model, but Gemini accepts `input_audio` content parts, so
 
 - The same violating master gets **4 BLOCKERs under Netflix strict and zero
   under Standard** - profiles are real policy, not labels.
-- Self-heal took a −10.7 LKFS / +8.1 dBTP master to **−24.3 LKFS / −5.1
-  dBTP, verified by re-measurement**, in one automatic pass.
+- A model cannot manufacture an all-clear: the deterministic registry inserts
+  every omitted applicable risk and preserves certification/intent limits as
+  explicit review items.
 - Live Gemini vision caught the **burned-in timecode** in our test master
   unprompted; ASR caption accuracy scored 21/21 words.
 - A QC report nobody - including us - can alter for 24 hours.
-- Twelve one-command proof scripts; every feature claim in this page is
+- Thirteen one-command proof scripts; every feature claim in this page is
   executable.
 
 ## What we learned
@@ -134,10 +142,11 @@ lanes, and the provenance layer must anchor *both* kinds of verdicts.
 
 ## What's next
 
-Dolby Vision canvas verification via dovi_tool, and per-customer billing
-on the metering ledger. (IMF validation via Netflix's Photon already
-executes: a non-conformant package is a BLOCKER with Photon's own ST
-2067-21 schema findings in the report.)
+Specialist Dolby Vision RPU/canvas verification via dovi_tool, certified PSE,
+full-timeline dead-pixel/audio-transient classifiers, and real-player ABR
+exercise. Those are already explicit unresolved registry items rather than
+silent passes. IMF validation via Netflix Photon already executes, and
+per-customer billing can build directly on the metering ledger.
 
 ---
 

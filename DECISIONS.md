@@ -5,6 +5,22 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-23 - Waystation reports QC issues and never repairs media
+
+- Context: Automated healing made the product responsible for creative and
+  technical transformations, while the hackathon value is stronger as a
+  trusted QC observer that can hand findings to a human or later system.
+- Decision / result: Retire the self-healing runtime, option, derivative, UI,
+  metering, and manifest step. Add a versioned read-only AI inspection charter
+  with an independent sweep, one bounded allowlisted evidence round, an
+  instrument-informed sweep, and a critic. A deterministic 18-risk registry
+  accounts for model omissions and separates verdict from coverage.
+- Why it matters: The worker cannot alter the submitted master, AI cannot
+  execute arbitrary tools, and unresolved human/certification/specialist risks
+  remain visible rather than being implied clean.
+- Follow-up: Keep the registry versioned, prove new risk claims, and capture a
+  real-GMI report before recording the demo.
+
 ### 2026-07-23 - Add optional MediaInfo structural QC
 
 - Context: Gemini's file-based QC suggestions called out MediaInfo as useful

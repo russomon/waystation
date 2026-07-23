@@ -33,8 +33,8 @@ api.post("/uploads/sidecar-url", async (c) => {
   const safe = String(filename).replace(/[^\w.\-]/g, "_");
   return c.json({ url: await g.presignPut(`transfers/${transferIdFromKey(key)}/${safe}`) });
 });
-// Transfer-only detection looks ONLY at the boolean service flags — options
-// also carries non-service keys (QC profile string, self_heal) that must not
+// Transfer-only detection looks ONLY at the boolean service flags. Options
+// also carries non-service keys (QC profile and compute target) that must not
 // count as "a service is on". undefined options = everything on.
 // Default-ON services: a missing key means "on" (matches the worker).
 // qc_synthetic is OPT-IN (worker defaults it off), so it only counts as
@@ -42,12 +42,18 @@ api.post("/uploads/sidecar-url", async (c) => {
 const SERVICE_KEYS = ["qc_av", "qc_captions", "qc_ai", "thumbnail", "summarize"];
 const anyServiceOn = (o?: Record<string, boolean | string>) =>
   !o || SERVICE_KEYS.some((k) => o[k] !== false) || o["qc_synthetic"] === true;
+const OPTION_KEYS = new Set([...SERVICE_KEYS, "qc_synthetic", "profile", "compute"]);
+const sanitizeOptions = (o?: Record<string, boolean | string>) => o
+  ? Object.fromEntries(Object.entries(o).filter(([key]) => OPTION_KEYS.has(key)))
+  : undefined;
 
 api.post("/uploads/complete", async (c) => {
   const b = await c.req.json(); // { key, uploadId, blake3Root, options? }
   const { bytes } = await g.complete(b.key, b.uploadId);
   const transferId = transferIdFromKey(b.key);
-  const options = b.options as Record<string, boolean | string> | undefined;
+  // Unknown and retired options (including legacy self_heal) never enter the
+  // transfer store or dispatch payload.
+  const options = sanitizeOptions(b.options as Record<string, boolean | string> | undefined);
   // Always record — the event path needs `options` even without a hash root.
   saveTransfer(transferId, { key: b.key, blake3Root: b.blake3Root, createdAt: Date.now(), options });
   // Billable event: the transfer itself, in GB delivered into the waystation.

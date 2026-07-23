@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Netflix-profile + comprehensive QC + self-healing proof. Four assets:
+# Netflix-profile + comprehensive read-only QC proof. Four assets:
 #   A  good24.mp4  — 24p, calibrated to -24 LUFS, + captions + identical .ref
 #                    mezzanine → netflix profile: ZERO blockers/issues,
 #                    reference SSIM/PSNR/VMAF pass, Photon/DoVi FYI notes
 #   B  bad30.mp4   — 30fps (not an allowed rate), superwhite (Y=250), hot
 #                    clipped audio → netflix: BLOCKERs (framerate, loudness,
-#                    true peak, legal range); self-heal ON → healed derivative
-#                    re-measured at -24 LUFS / TP <= -2 / legal luma
+#                    true peak, legal range); a legacy self_heal option is sent
+#                    and MUST NOT create or meter a repaired derivative
 #   C  bad30.mp4   — same file, STANDARD profile → zero blockers (review-level
 #                    ISSUEs only): the toggle IS the strictness
 #   D  strobe.mp4  — alternating black/white frames → netflix PSE scanner
@@ -93,7 +93,7 @@ TID_C=$(uuidgen | tr 'A-Z' 'a-z'); TID_D=$(uuidgen | tr 'A-Z' 'a-z')
 run_job "$TID_A" "$WORK/good24.mp4" '{"profile":"netflix","qc_ai":false}' "$WORK/good.srt,$WORK/good24.ref.mp4" || exit 1
 echo "✓ A processed (netflix, compliant + captions + reference)"
 run_job "$TID_B" "$WORK/bad30.mp4" '{"profile":"netflix","self_heal":true,"qc_ai":false,"qc_captions":false}' "" || exit 1
-echo "✓ B processed (netflix, violating, self-heal on)"
+echo "✓ B processed (netflix, violating, legacy repair option ignored)"
 run_job "$TID_C" "$WORK/bad30.mp4" '{"profile":"standard","qc_ai":false,"qc_captions":false}' "" || exit 1
 echo "✓ C processed (standard, same violating file)"
 run_job "$TID_D" "$WORK/strobe.mp4" '{"profile":"netflix","qc_ai":false,"qc_captions":false}' "" || exit 1
@@ -117,15 +117,13 @@ RUNS=$(grep -c pipeline_started "/tmp/sse-$TID_A.log")
 [ "$RUNS" = "1" ] && echo "✓ .ref event ignored (still exactly 1 pipeline run)" \
   || { echo "FAIL: ref event triggered a run ($RUNS)"; exit 1; }
 
-echo "=== tiered QC + self-heal assertions ==="
+echo "=== tiered read-only QC assertions ==="
 "$PY" - "$TID_A" "$TID_B" "$TID_C" "$TID_D" "$WEB" <<'PYEOF'
-import boto3, json, subprocess, sys, urllib.request; from botocore.config import Config
+import boto3, json, sys, urllib.request; from botocore.config import Config
 ta, tb, tc, td, web = sys.argv[1:6]
-sys.path.insert(0, f"{web}/pipeline")
-from qc.audio import measure_loudness
-from qc.util import metadata_print, tag_values
 s3=boto3.client("s3",endpoint_url="http://localhost:9000",region_name="us-east-1",aws_access_key_id="minioadmin",aws_secret_access_key="minioadmin",config=Config(s3={"addressing_style":"path"}))
 def qc(tid): return json.loads(s3.get_object(Bucket="waystation-test", Key=f"derivatives/{tid}/qc_report.json")["Body"].read())
+def manifest(tid): return json.loads(s3.get_object(Bucket="waystation-test", Key=f"derivatives/{tid}/manifest.json")["Body"].read())
 def usage(tid): return json.load(urllib.request.urlopen(f"http://localhost:8787/api/transfers/{tid}/usage"))
 def ck(r, n):
     h = [c for c in r["checks"] if c["name"] == n]
@@ -136,6 +134,10 @@ def need(cond, msg):
     if not cond: print(f"  FAIL: {msg}"); ok = False
 
 a, b, c, d = qc(ta), qc(tb), qc(tc), qc(td)
+for label, report in (("A", a), ("B", b), ("C", c), ("D", d)):
+    need(report.get("reporter_mode") == "read_only_no_repair", f"{label} reporter-only mode")
+    need(report.get("coverage", {}).get("accounting_complete") is True,
+         f"{label} risk coverage accounting")
 
 print(f"  A (netflix, compliant): status={a['status']} tiers={a['tiers']}")
 need(a["profile"] == "netflix" and a["profile_label"] == "Netflix_Delivery_Specification_Strict", "A profile label")
@@ -159,23 +161,14 @@ for name in ("framerate", "loudness", "true_peak", "video_legal_range"):
     print(f"    {name}: {chk['status']} [{chk.get('tier')}] — {chk['detail'][:90]}")
     need(chk and chk["status"] == "fail" and chk.get("tier") == "BLOCKER", f"B {name} must be a BLOCKER")
 need(b["tiers"]["BLOCKER"] >= 4, f"B expected >=4 blockers, got {b['tiers']}")
-heal = ck(b, "self_heal")
-need(heal and heal["status"] == "pass", f"B self_heal check ({heal})")
-if heal: print(f"    self_heal: {heal['detail'][:110]}")
-# healed derivative: download and re-measure with the same instruments
+need(not ck(b, "self_heal"), "B must not contain a self_heal check")
 healed = [o["Key"] for o in s3.list_objects_v2(Bucket="waystation-test", Prefix=f"derivatives/{tb}/").get("Contents", [])
           if "/healed_" in o["Key"]]
-need(healed, "B healed derivative missing")
-if healed:
-    s3.download_file("waystation-test", healed[0], "/tmp/healed-proof.mp4")
-    m = measure_loudness("/tmp/healed-proof.mp4")
-    lines = metadata_print("/tmp/healed-proof.mp4", "signalstats", 4.0)
-    ymax = max(tag_values(lines, "lavfi.signalstats.YMAX") or [999])
-    print(f"    healed re-measured: I={m['i']} LUFS, TP={m['tp']} dBTP, YMAX={ymax:.0f}")
-    need(m["i"] is not None and abs(m["i"] + 24.0) <= 1.5, f"healed loudness {m['i']} not within -24±1.5")
-    need(m["tp"] is not None and m["tp"] <= -1.7, f"healed true peak {m['tp']} above -2 (tol -1.7)")
-    need(ymax <= 237, f"healed luma still illegal (YMAX {ymax})")
-need("heal" in usage(tb)["totals"], "B heal run not metered")
+need(not healed, "B must not create a healed derivative")
+need("heal" not in usage(tb)["totals"], "B must not meter a heal run")
+steps = [s["step_id"] for s in manifest(tb)["run"]["steps"]]
+need("heal" not in steps, "B manifest must not contain a heal step")
+print("    legacy self_heal ignored: no check, derivative, meter, or manifest step")
 
 print(f"  C (standard, same file): status={c['status']} tiers={c['tiers']}")
 need(c["tiers"]["BLOCKER"] == 0, "C standard profile must not block")
@@ -187,6 +180,6 @@ pse = ck(d, "pse_flash_risk")
 print(f"    pse_flash_risk: {pse['status']} [{pse.get('tier')}] — {pse['detail']}")
 need(pse and pse["status"] == "fail" and pse.get("tier") == "BLOCKER", "D PSE scanner must hard-fail (Rule 7)")
 
-print("PASS ✓  Netflix profile + tiers + self-heal + reference lane + PSE" if ok else "FAIL")
+print("PASS ✓  Netflix profile + tiers + reporter-only mode + reference lane + PSE" if ok else "FAIL")
 sys.exit(0 if ok else 1)
 PYEOF

@@ -19,11 +19,16 @@ history.
 - **Optional host-run demo polish**: install `mediainfo` if the recording
   machine runs the worker directly and should show the new MXF OP1a / AS-11 /
   HDR metadata cross-checks. The Docker worker includes it.
+- **Live agentic-report capture**: run one representative master through real
+  GMI before recording and retain its `qc_report.json` for the demo. Confirm
+  the independent/informed/critic passes, prompt hash, and residual review
+  list render cleanly with real model output.
 
 ## Soon
 
 - Dolby Vision dynamic-metadata canvas verification via `dovi_tool` (currently
-  an honest FYI finding; Venera Pulsar ships this, so it is a real gap).
+  an explicit `REVIEW_REQUIRED` registry item; Venera Pulsar ships this, so it
+  remains a real specialist-tool gap).
 - Per-customer billing on the metering ledger (Stripe/Lago meters).
 
 ## Later
@@ -31,8 +36,9 @@ history.
 - Queue between gateway and workers, then autoscaling on backlogged
   media-minutes (the metering ledger is already the right signal).
 - Deeper ABR support: segment/ladder playback rather than manifest lint.
-- Dead-pixel tracking and audio click/pop/test-tone detection (incumbent
-  checks we do not yet cover).
+- Full-timeline dead-pixel tracking and dedicated click/pop/test-tone
+  classifiers. The agentic reporter samples and requests evidence for these
+  risks now, but does not claim exhaustive timeline clearance.
 
 ## Blockers
 

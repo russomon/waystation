@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-23 (MediaInfo QC handoff)
+Updated: 2026-07-23 (agentic QC reporter handoff)
 Machine: Mac Studio
 Mode: paused — clean handoff; hackathon submission run (deadline 2026-08-03)
 
@@ -11,17 +11,16 @@ switches and chat history gaps.
 ## Focus
 
 - Current branch: `main`
-- Active task: Backblaze Generative Media Hackathon submission. The product is
-  feature-complete and proven end to end, including — as of 2026-07-19 —
-  Backblaze firing the event notifications itself. What remains is purely
-  presentational: the demo video and Devpost copy.
-- Immediate next action: record the demo video (`docs/demo-script.md`) and
-  re-paste the updated Devpost sections. Nothing technical is blocked.
+- Active task: Backblaze Generative Media Hackathon submission. Waystation is
+  now a read-only QC reporter: deterministic instruments feed a three-pass
+  agentic inspection, and an 18-risk registry prevents silent omissions.
+- Immediate next action: capture one report against real GMI, then record the
+  demo video (`docs/demo-script.md`) and re-paste the Devpost sections.
 
 ## What Exists And Is Proven
 
-Eleven full-stack one-command proof scripts were previously passing, and the
-new MediaInfo proof added on 2026-07-23 is passing (see
+The suite now contains thirteen one-command proof scripts, including the new
+agentic contract proof and the MediaInfo proof (see
 `SHARED_CODING_WORKFLOW.md` for the table):
 
 - Verified resumable transfer to B2 (BLAKE3 + bao outboard range verification).
@@ -31,13 +30,17 @@ new MediaInfo proof added on 2026-07-23 is passing (see
   PSE flash risk, mattes, cadence/pulldown, timecode continuity, reference
   SSIM/PSNR/VMAF-as-MOS, Netflix Photon for IMF.
 - Netflix strict profile with BLOCKER / ISSUE / FYI tiers.
-- Self-healing: two-pass loudnorm + video legalizer, re-measured after the fix.
-- AI QC lane (GMI Cloud, `google/gemini-3.5-flash`): vision review, ASR-based
-  caption accuracy (WER), targeted escalation of flagged timecodes, language
-  and compliance checks.
-- Prompt-native "Category A" upgrades: slate reading + delivery cross-check,
-  burned-text/QR/rating-card reading, perceptual severity, no-reference MOS,
-  caption proofreading.
+- Read-only agentic QC (GMI Cloud, `google/gemini-3.5-flash`): independent
+  inspection, one bounded allowlisted evidence-request round,
+  instrument-informed reconciliation, and an independent critic. The charter
+  explicitly covers human-detectable picture, audio, sync, text, editorial,
+  localization, and generated-media risks; prompt/media text is untrusted.
+- Mandatory 18-risk coverage accounting with separate QC verdict and coverage
+  completeness. Every risk is assessed, marked not applicable, or disclosed
+  as review-required/unverified/blocked. The retired legacy `self_heal` option
+  creates no check, derivative, meter, or manifest step.
+- AI support checks remain: ASR caption accuracy (WER), targeted escalation of
+  flagged timecodes, language, compliance, and caption proofreading.
 - Synthetic QC lane for generative media: generation artifacts, temporal
   coherence, and **prompt adherence** scored against the recorded prompt in an
   uploaded `.genblaze.json` generation manifest.
@@ -51,12 +54,15 @@ new MediaInfo proof added on 2026-07-23 is passing (see
 
 ## Notes
 
-- Live verification against real B2 + real GMI is complete for the QC engine,
-  self-heal, AI lanes, WORM manifests, AND Backblaze firing the event
+- Live verification against real B2 + real GMI is complete for the prior QC
+  engine, AI lanes, WORM manifests, AND Backblaze firing the event
   notifications. On 2026-07-19 an object uploaded directly to B2 (gateway
   never contacted, dev trigger off) caused B2 to fire `b2:ObjectCreated`,
   which drove the full pipeline — proving the reactive loop with genuine B2
   events, not a manually-fired webhook. Every link is now proven live.
+- The new three-pass agentic reporter is fully integration-proven against a
+  mock OpenAI-compatible GMI endpoint. Run one representative master against
+  real GMI before recording to capture final model-output/UI evidence.
 - Event Notifications are registered per-tunnel: a cloudflared quick-tunnel
   URL is ephemeral, so after starting `scripts/live-event-run.sh`, run
   `scripts/b2-register-events.sh` to (re)point the B2 rule at the current
@@ -66,10 +72,9 @@ new MediaInfo proof added on 2026-07-23 is passing (see
   directory rename: venvs bake absolute-path shebangs into console scripts
   (e.g. uvicorn), so `.venv` must be recreated (not moved) when the checkout
   path changes. `.venv/bin/python` is a symlink and kept working, which
-  masked the break until a console script was run. **All 11 proof scripts
-  were re-run green on the rebuilt venv at session end** (including the
-  uvicorn-dependent `delivery-proof` and `phase2-loop-proof` that had hung
-  before the rebuild), so the environment is confirmed good.
+  masked the break until a console script was run. On this handoff, **all 13
+  proof scripts were run green** on the rebuilt venv, including Docker,
+  Photon, MediaInfo, Object Lock, and the new agentic integration.
 - `.env` holds real B2 + GMI credentials, is gitignored, and the full history
   has been scanned clean. The B2 application key was rotated on 2026-07-18
   after an accidental exposure in a terminal transcript; both prior keys were
@@ -91,13 +96,15 @@ new MediaInfo proof added on 2026-07-23 is passing (see
 
 ## Handoff
 
-- Safe stopping point: yes. `main` has the MediaInfo integration locally
-  validated with `scripts/mediainfo-proof.sh`, gateway type-check, client
-  build, pipeline import, and the Docker proof after baking MediaInfo into the
-  worker image. The previous 11 full-stack proofs were green on the rebuilt
-  venv; they were not all re-run in this MediaInfo-only pass.
-- Risks or open questions: none technical. Remaining work is presentational
-  (demo video + Devpost copy). When recording, bring the stack up with
-  `scripts/live-event-run.sh` then `scripts/b2-register-events.sh` — the
-  quick-tunnel URL is fresh each run, so the rule must be re-registered.
+- Safe stopping point: yes. The agentic reporter contract, adaptive evidence,
+  no-repair runtime/UI, expanded delivery report, and proof updates are in the
+  current handoff. Validation: all 13 `scripts/*-proof.sh` capability proofs
+  green; gateway `tsc --noEmit`, production client build, Python compile/import,
+  and `git diff --check` green. The Docker worker image also passed with
+  ffmpeg, MediaInfo, Java, and Photon present.
+- Risks or open questions: real-GMI output for the new charter should be
+  captured before the demo; no implementation blocker is known. When
+  recording, bring the stack up with `scripts/live-event-run.sh` then
+  `scripts/b2-register-events.sh` — the quick-tunnel URL is fresh each run, so
+  the rule must be re-registered.
 - Who should pick this up next: current Waystation maintainer, on any machine.

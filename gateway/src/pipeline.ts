@@ -8,7 +8,7 @@ export interface PipelineJob {
   bucket: string;
   key: string;
   transferId: string;
-  // Sender-selected services + QC profile + self-heal; undefined = everything on.
+  // Sender-selected services + QC profile/compute target; undefined = everything on.
   options?: Record<string, boolean | string>;
 }
 

@@ -43,7 +43,6 @@ PROFILES = {
         "pse": {"enabled": False, "escalate": False},
         "censorship": {"escalate": False},
         "photon_required": False,
-        "heal": {"target_i": -23.0, "target_tp": -1.5},
     },
     "netflix": {
         "name": "netflix",
@@ -60,7 +59,6 @@ PROFILES = {
         "pse": {"enabled": True, "escalate": True},   # Rule 7
         "censorship": {"escalate": True},             # Rule 3
         "photon_required": True,                      # Rule 4
-        "heal": {"target_i": -24.0, "target_tp": -2.0},
     },
 }
 

@@ -1,5 +1,5 @@
 # Waystation pipeline worker — the waystation's compute, in one image:
-#   python 3.13 + ffmpeg/ffprobe + MediaInfo (deterministic QC + self-heal)
+#   python 3.13 + ffmpeg/ffprobe + MediaInfo (deterministic QC reporting)
 #   + a JRE + Netflix Photon 5.0.1 with its full dependency tree (Rule 4)
 #   + the Genblaze SDK (provenance manifests)
 # Stateless by design: everything durable lands back in B2. Deploy anywhere.

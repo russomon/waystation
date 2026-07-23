@@ -31,10 +31,13 @@ from genblaze_core.models import Manifest as GbManifest
 from genblaze_core.models import Run as GbRun
 from genblaze_core.models import Step as GbStep
 from genblaze_core.models.enums import Modality, RunStatus, StepStatus, StepType
+from genblaze_core.exceptions import ProviderError
+from genblaze_core.models.enums import RETRYABLE_ERROR_CODES
+from genblaze_gmicloud import chat as gb_gmi_chat
 from pydantic import BaseModel
 
+from qc import agentic as qagentic
 from qc import audio as qaudio
-from qc import heal as qheal
 from qc import imf as qimf
 from qc import mediainfo as qmediainfo
 from qc import profiles as qprofiles
@@ -84,7 +87,7 @@ GMI_MODEL = os.environ.get("GMI_MODEL") or "openai/gpt-4o-mini"
 # audio verbatim). Kept separate from GMI_MODEL so text summaries can use a
 # cheaper model.
 GMI_MULTIMODAL_MODEL = os.environ.get("GMI_MULTIMODAL_MODEL") or "google/gemini-3.5-flash"
-AI_QC_FRAMES = int(os.environ.get("AI_QC_FRAMES", "4"))
+AI_QC_FRAMES = int(os.environ.get("AI_QC_FRAMES", "8"))
 AI_QC_ASR_SECONDS = float(os.environ.get("AI_QC_ASR_SECONDS", "45"))
 
 
@@ -235,9 +238,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
 
 # ───────────────────────── AI-assisted QC lane ─────────────────────────
 # Runs beside the deterministic lane, gated by the sender's `qc_ai` toggle:
-#   ai_visual           — GMI vision reviews sampled frames for delivery
-#                         defects a filter can't name (test patterns, slates,
-#                         watermarks, burned-in timecode, letterboxing).
+#   agentic reporter    — GMI performs a blind sweep, an instrument-informed
+#                         sweep with adaptive evidence, and a critic pass.
 #   ai_caption_accuracy — GMI transcribes a sampled audio window and the
 #                         transcript is diffed (word error rate) against the
 #                         caption text for that window. This is the QC
@@ -253,25 +255,26 @@ _gmi_last_call = 0.0
 
 def _gmi_chat(content: list, max_tokens: int = 2000) -> str:
     global _gmi_last_call
-    r = None
     for attempt in range(4):
         wait = AI_QC_MIN_INTERVAL - (time.monotonic() - _gmi_last_call)
         if wait > 0:
             time.sleep(wait)
         _gmi_last_call = time.monotonic()
-        r = httpx.post(
-            f"{GMI_BASE_URL}/v1/chat/completions",
-            headers={"authorization": f"Bearer {GMI_API_KEY}"},
-            json={"model": GMI_MULTIMODAL_MODEL, "max_tokens": max_tokens, "temperature": 0,
-                  "messages": [{"role": "user", "content": content}]},
-            timeout=120,
-        )
-        if r.status_code in (429, 500, 502, 503) and attempt < 3:
-            time.sleep(15 * (attempt + 1))   # 15s, 30s, 45s
-            continue
-        break
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+        try:
+            response = gb_gmi_chat(
+                GMI_MULTIMODAL_MODEL,
+                messages=[{"role": "user", "content": content}],
+                temperature=0, max_tokens=max_tokens,
+                api_key=GMI_API_KEY,
+                base_url=f"{GMI_BASE_URL.rstrip('/')}/v1",
+                timeout=120,
+            )
+            return response.text
+        except ProviderError as e:
+            if e.error_code not in RETRYABLE_ERROR_CODES or attempt == 3:
+                raise
+            time.sleep(float(e.retry_after or 15 * (attempt + 1)))
+    raise RuntimeError("unreachable GMI retry state")
 
 
 def _json_from(text: str) -> dict | None:
@@ -302,128 +305,167 @@ def word_error_rate(ref: list, hyp: list) -> float:
     return prev[-1] / len(ref)
 
 
-_VISUAL_PROMPT = (
-    "You are a broadcast QC operator reviewing frames sampled from a mastered "
-    "video delivery (declared filename: {declared}). Perform ALL of these "
-    "reviews and respond with ONE strict JSON object.\n"
-    "1. DEFECTS — report only genuine delivery defects you can actually see: "
-    "test patterns or color bars, slates or countdown leaders, all-black or "
-    "blank frames, macroblocking / heavy pixelation / compression breakdown, "
-    "tape-hit lines or digital dropouts, burned-in timecode, watermarks or "
-    "channel bugs, accidental letterboxing/pillarboxing, censorship artifacts "
-    "(blur patches, mosaic blocks), graphic violence, or nudity. Normal "
-    "program content is NOT a defect.\n"
-    "2. SLATE — if any frame is a slate/leader card, READ it (title, episode, "
-    "date, anything legible) and judge whether it matches the declared "
-    "filename.\n"
-    "3. BURNED TEXT — read any burned-in text: timecodes, URLs, QR codes "
-    "(describe what a QR encodes if legible), rating/warning cards (FBI, age "
-    "ratings), logos, subtitles burned into picture. Note misspellings.\n"
-    "4. PERCEPTUAL — judge visible compression/processing artifacts a viewer "
-    "would object to: banding, blockiness, moire, ghosting, aliasing. "
-    "severity: minor (visible if you look) or objectionable (a viewer would "
-    "complain).\n"
-    "5. MOS — a 1.0-5.0 mean-opinion score for perceived picture quality of "
-    "the program content (5 = pristine).\n"
-    "JSON shape:\n"
-    '{"findings": [{"issue": "<short>", "category": "<test_pattern|slate|black|'
-    "compression|dropout|timecode|watermark|burned_text|matte|censorship|"
-    'violence|nudity|other>", "frames": [<1-based>]}],'
-    ' "slate": {"present": <bool>, "text": "<what it says>", "matches_delivery": <bool or null>},'
-    ' "burned_text": {"items": ["<each text element read>"], "issues": ["<misspellings/concerns>"]},'
-    ' "rating_cards": ["<any rating/warning cards seen>"],'
-    ' "perceptual": [{"type": "<banding|blockiness|moire|ghosting|aliasing|other>", "severity": "<minor|objectionable>"}],'
-    ' "mos": <1.0-5.0>,'
-    ' "summary": "<one short sentence>"}\n'
-    "Use empty arrays / false / null when a section has nothing to report."
-)
+def _frame_evidence(src: str, tmp: str, evidence_id: str, at: float,
+                    scale: int = 640, crop: tuple | None = None) -> tuple[dict, dict] | None:
+    """Extract one frame from sanitized numeric inputs and return model/public forms."""
+    fp = os.path.join(tmp, f"{evidence_id}.jpg")
+    vf = f"scale={scale}:-2"
+    if crop:
+        x, y, width, height = crop
+        vf = (f"crop=iw*{width:.4f}:ih*{height:.4f}:iw*{x:.4f}:ih*{y:.4f},"
+              f"scale={scale}:-2")
+    subprocess.run(["ffmpeg", "-y", "-ss", f"{at:.3f}", "-i", src,
+                    "-frames:v", "1", "-vf", vf, fp], capture_output=True)
+    if not os.path.exists(fp) or os.path.getsize(fp) == 0:
+        return None
+    with open(fp, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    model = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+    public = {"evidence_id": evidence_id, "type": "frame", "time_seconds": round(at, 3)}
+    if crop:
+        public["crop"] = {"x": crop[0], "y": crop[1], "width": crop[2], "height": crop[3]}
+    return model, public
 
 
-def ai_visual_check(src: str, duration: float, tmp: str, declared: str = "") -> tuple:
-    """(checks, frames-analyzed). ONE vision call covers the whole Category-A
-    semantic review: defects, slate reading + delivery cross-check, burned
-    text/QR/rating cards, perceptual severity judgment, and a prompted
-    no-reference MOS."""
-    n = max(AI_QC_FRAMES, 1)
-    dur = max(duration, 0.5)
-    parts: list = [{"type": "text", "text": _VISUAL_PROMPT.replace("{declared}", declared or "unknown")}]
-    used = 0
-    for i in range(n):
-        t = dur * (i + 1) / (n + 1)  # evenly spaced, skips first/last stretch
-        fp = os.path.join(tmp, f"ai_frame_{i}.jpg")
-        subprocess.run(["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", src, "-frames:v", "1",
-                        "-vf", "scale=512:-2", fp], capture_output=True)
-        if os.path.exists(fp) and os.path.getsize(fp) > 0:
-            b64 = base64.b64encode(open(fp, "rb").read()).decode()
-            parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
-            used += 1
-    if used == 0:
-        return None, 0
-    data = _json_from(_gmi_chat(parts, max_tokens=5000))
-    if data is None:
-        return [{"name": "ai_visual", "status": "warn", "tier": "ISSUE",
-                 "detail": f"{used} frame(s) reviewed; model reply unparseable"}], used
-    findings = data.get("findings") or []
-    checks = []
-    if findings:
-        detail = "; ".join(str(f.get("issue", "?")) for f in findings[:5])
-        checks.append({"name": "ai_visual", "status": "warn", "tier": "ISSUE",
-                       "detail": f"{len(findings)} finding(s) in {used} frame(s): {detail}"})
+def _initial_agentic_evidence(src: str, meta: dict, tmp: str) -> tuple[list, list]:
+    duration = max(float(meta.get("format", {}).get("duration", 0) or 0), 0.5)
+    n = max(1, min(AI_QC_FRAMES, 12))
+    if n == 1:
+        times = [duration / 2]
     else:
-        summary = str(data.get("summary", "")).strip()
-        checks.append({"name": "ai_visual", "status": "pass",
-                       "detail": f"{used} frame(s) reviewed, no defects" + (f" — {summary}" if summary else "")})
-    # Rule 3 (censorship): blur/mosaic/bleep artifacts get their own check so
-    # the strict profile can hard-fail them.
-    cens = [f for f in findings
-            if f.get("category") == "censorship"
-            or re.search(r"blur|mosaic|pixelat.*censor|bleep", str(f.get("issue", "")), re.I)]
-    if cens:
-        checks.append({"name": "ai_censorship", "status": "fail", "tier": "BLOCKER",
-                       "detail": f"censorship element(s) detected: "
-                                 f"{'; '.join(str(f.get('issue')) for f in cens[:3])}"})
+        edge = min(0.25, duration / 4)
+        times = [edge + (duration - 2 * edge) * i / (n - 1) for i in range(n)]
+    parts, records = [], []
+    for i, at in enumerate(times, 1):
+        evidence_id = f"timeline-frame-{i}"
+        item = _frame_evidence(src, tmp, evidence_id, at)
+        if not item:
+            continue
+        model, public = item
+        parts.extend([{"type": "text", "text": f"Evidence {evidence_id} at {at:.3f}s:"}, model])
+        records.append(public)
+    return parts, records
 
-    # ── Category-A prompt-native upgrades (each tolerant of absent fields,
-    #    so older/mock replies degrade to the classic ai_visual behavior) ──
-    slate = data.get("slate") or {}
-    if slate.get("present"):
-        matches = slate.get("matches_delivery")
-        txt = str(slate.get("text", "")).strip()[:120]
-        if matches is False:
-            checks.append({"name": "ai_slate_read", "status": "warn", "tier": "ISSUE",
-                           "detail": f"slate read as {txt!r} — does NOT match the declared delivery"})
-        else:
-            checks.append({"name": "ai_slate_read", "status": "info", "tier": "FYI",
-                           "detail": f"slate read: {txt!r}"
-                                     + (" — matches delivery" if matches else "")})
-    bt = data.get("burned_text") or {}
-    items = [str(x) for x in (bt.get("items") or [])][:6]
-    issues = [str(x) for x in (bt.get("issues") or [])][:4]
-    if issues:
-        checks.append({"name": "ai_burned_text", "status": "warn", "tier": "ISSUE",
-                       "detail": f"burned-in text concerns: {'; '.join(issues)}"})
-    elif items:
-        checks.append({"name": "ai_burned_text", "status": "info", "tier": "FYI",
-                       "detail": f"burned-in text read: {'; '.join(items)}"})
-    cards = [str(x) for x in (data.get("rating_cards") or [])][:4]
-    if cards:
-        checks.append({"name": "ai_rating_cards", "status": "info", "tier": "FYI",
-                       "detail": f"rating/warning card(s): {'; '.join(cards)}"})
-    perc = data.get("perceptual") or []
-    objectionable = [p for p in perc if str(p.get("severity")) == "objectionable"]
-    if objectionable:
-        checks.append({"name": "ai_perceptual_quality", "status": "warn", "tier": "ISSUE",
-                       "detail": "viewer-objectionable artifacts: "
-                                 + ", ".join(str(p.get("type", "?")) for p in objectionable[:4])})
-    elif perc:
-        checks.append({"name": "ai_perceptual_quality", "status": "pass",
-                       "detail": "minor artifacts only: "
-                                 + ", ".join(str(p.get("type", "?")) for p in perc[:4])})
-    mos = data.get("mos")
-    if isinstance(mos, (int, float)) and 1.0 <= float(mos) <= 5.0:
-        checks.append({"name": "ai_mos", "status": "info", "tier": "FYI",
-                       "detail": f"prompted no-reference MOS {float(mos):.1f}/5.0"})
-    return checks, used
+
+def _audio_evidence(src: str, tmp: str, evidence_id: str, start: float,
+                    duration: float) -> tuple[dict, dict, str] | None:
+    wav = os.path.join(tmp, f"{evidence_id}.wav")
+    subprocess.run(["ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
+                    "-i", src, "-vn", "-ac", "1", "-ar", "16000", wav], capture_output=True)
+    if not os.path.exists(wav) or os.path.getsize(wav) < 1000:
+        return None
+    with open(wav, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    model = {"type": "input_audio", "input_audio": {"data": b64, "format": "wav"}}
+    public = {"evidence_id": evidence_id, "type": "audio_window",
+              "start_seconds": round(start, 3), "duration_seconds": round(duration, 3)}
+    return model, public, wav
+
+
+def _execute_evidence_requests(src: str, meta: dict, tmp: str,
+                               requests: list[dict]) -> tuple[list, list, list, int, float]:
+    """Execute one bounded round of allowlisted, read-only evidence requests."""
+    parts, records, executions = [], [], []
+    frames, audio_seconds = 0, 0.0
+    has_video = any(s.get("codec_type") == "video" for s in meta.get("streams", []))
+    has_audio = any(s.get("codec_type") == "audio" for s in meta.get("streams", []))
+    for i, request in enumerate(requests, 1):
+        kind = request["type"]
+        evidence_ids = []
+        if kind in {"frame", "pixel_crop"} and has_video:
+            evidence_id = f"request-{i}-frame"
+            crop = None
+            if kind == "pixel_crop":
+                crop = tuple(request[k] for k in ("x", "y", "width", "height"))
+            item = _frame_evidence(src, tmp, evidence_id, request["time_seconds"], crop=crop)
+            if item:
+                model, public = item
+                parts.extend([{"type": "text", "text": f"Requested evidence {evidence_id}:"}, model])
+                records.append(public)
+                evidence_ids.append(evidence_id)
+                frames += 1
+        elif kind in {"frame_burst", "contact_sheet"} and has_video:
+            count = 3 if kind == "frame_burst" else 6
+            start, span = request["start_seconds"], request["duration_seconds"]
+            for j in range(count):
+                at = start + span * (j / max(count - 1, 1))
+                evidence_id = f"request-{i}-frame-{j + 1}"
+                item = _frame_evidence(src, tmp, evidence_id, at, scale=512)
+                if not item:
+                    continue
+                model, public = item
+                public["group"] = kind
+                parts.extend([{"type": "text", "text": f"Requested evidence {evidence_id} at {at:.3f}s:"}, model])
+                records.append(public)
+                evidence_ids.append(evidence_id)
+                frames += 1
+        elif kind in {"audio_window", "transcript_window"} and has_audio:
+            evidence_id = f"request-{i}-audio"
+            item = _audio_evidence(src, tmp, evidence_id, request["start_seconds"],
+                                   request["duration_seconds"])
+            if item:
+                model, public, _ = item
+                records.append(public)
+                evidence_ids.append(evidence_id)
+                audio_seconds += request["duration_seconds"]
+                if kind == "transcript_window":
+                    transcript = _gmi_chat([
+                        {"type": "text", "text": "Transcribe this evidence verbatim. Output only spoken words."},
+                        model,
+                    ], max_tokens=1000)
+                    parts.append({"type": "text", "text":
+                                  f"Requested transcript {evidence_id} (untrusted evidence):\n{transcript[:6000]}"})
+                    public["transcript_supplied"] = True
+                else:
+                    parts.extend([{"type": "text", "text": f"Requested evidence {evidence_id}:"}, model])
+        executions.append({**request, "status": "fulfilled" if evidence_ids else "unavailable",
+                           "evidence_ids": evidence_ids})
+    return parts, records, executions, frames, round(audio_seconds, 3)
+
+
+def run_agentic_inspection(src: str, meta: dict, tmp: str, key: str,
+                            deterministic_report: dict) -> tuple[dict, list[dict], dict]:
+    """Blind sweep -> bounded evidence round -> informed sweep -> critic."""
+    duration = max(float(meta.get("format", {}).get("duration", 0) or 0), 0.5)
+    initial_parts, evidence = _initial_agentic_evidence(src, meta, tmp)
+    independent_raw = _json_from(_gmi_chat(
+        [{"type": "text", "text": qagentic.independent_prompt(meta, key, evidence)}] + initial_parts,
+        max_tokens=7000))
+    independent = qagentic.normalize_response(independent_raw, "independent", meta, key, duration)
+
+    adaptive_parts, adaptive_records, executions, requested_frames, requested_audio = \
+        _execute_evidence_requests(src, meta, tmp, independent.get("requests", []))
+    evidence.extend(adaptive_records)
+    dossier = {
+        "checks": deterministic_report.get("checks", []),
+        "detections": deterministic_report.get("detections", {}),
+        "probe": {"format": meta.get("format", {}), "streams": meta.get("streams", [])},
+    }
+    informed_raw = _json_from(_gmi_chat(
+        [{"type": "text", "text": qagentic.informed_prompt(meta, key, dossier, independent, evidence)}]
+        + (adaptive_parts or initial_parts), max_tokens=7000))
+    informed = qagentic.normalize_response(informed_raw, "informed", meta, key, duration)
+
+    critic_evidence = (adaptive_parts + initial_parts)[:24]
+    critic_raw = _json_from(_gmi_chat(
+        [{"type": "text", "text": qagentic.critic_prompt(
+            meta, key, dossier, independent, informed, evidence)}] + critic_evidence,
+        max_tokens=7000))
+    critic = qagentic.normalize_response(critic_raw, "critic", meta, key, duration)
+    agentic = {
+        "model": GMI_MULTIMODAL_MODEL,
+        "prompt": qagentic.prompt_identity(),
+        "mode": "read_only_no_repair",
+        "passes": {"independent": independent, "informed": informed, "critic": critic},
+        "evidence": evidence,
+        "requests": executions,
+        "limits": {"initial_frame_samples": len([e for e in evidence if e["evidence_id"].startswith("timeline-")]),
+                   "adaptive_rounds": 1, "sampled_evidence_is_not_full_timeline_clearance": True},
+    }
+    units = {"frames": len([e for e in evidence if e["type"] == "frame"]),
+             "requested_frames": requested_frames, "requested_audio_seconds": requested_audio,
+             "model_passes": 3}
+    return agentic, qagentic.checks_from_findings(agentic), units
 
 
 AI_QC_ESCALATION_MAX = int(os.environ.get("AI_QC_ESCALATION_MAX", "4"))
@@ -599,22 +641,21 @@ def ai_text_compliance_check(cap_text: str) -> list:
 
 def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
               profile: dict | None = None, detections: dict | None = None,
-              declared: str = "") -> tuple:
-    """Semantic AI layer → (checks, {"frames", "asr_seconds", "escalation_frames"}).
-    Vision review with the Category-A upgrades (slate reading, burned text/QR,
-    rating cards, perceptual severity, prompted MOS), censorship screen
-    (Rule 3), AI-targeted escalation, caption accuracy vs ASR, caption
-    proofread, spoken-language verification, and timed-text compliance."""
+              declared: str = "", deterministic_report: dict | None = None) -> tuple:
+    """Read-only agentic reporter plus focused AI support instruments."""
     profile = profile or qprofiles.get("standard")
     checks: list = []
     frames, asr_seconds, esc_frames = 0, 0.0, 0
     duration = float(meta.get("format", {}).get("duration", 0) or 0)
+    agentic, agentic_checks, agentic_units = run_agentic_inspection(
+        src, meta, tmp, declared, deterministic_report or {"checks": []})
+    for check in agentic_checks:
+        if re.search(r"censor|mosaic|blur patch|bleep", str(check.get("detail", "")), re.I):
+            check["name"] = "ai_censorship"
+            check["status"] = "fail" if profile["censorship"]["escalate"] else "warn"
+    checks.extend(agentic_checks)
+    frames = int(agentic_units["frames"])
     if any(s.get("codec_type") == "video" for s in meta.get("streams", [])):
-        vis_checks, frames = ai_visual_check(src, duration, tmp, declared)
-        for c in vis_checks or []:
-            if c["name"] == "ai_censorship" and not profile["censorship"]["escalate"]:
-                c["status"], c["tier"] = "warn", "ISSUE"   # standard: review, don't block
-            checks.append(c)
         if detections:
             try:
                 c, esc_frames = ai_escalation_check(src, detections, duration, tmp)
@@ -639,8 +680,13 @@ def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
             checks.append(c)
     except Exception as e:
         print("language check failed:", e)
+    for check in checks:
+        check.setdefault("source", "ai_support")
     return checks, {"frames": frames, "asr_seconds": round(asr_seconds, 1),
-                    "escalation_frames": esc_frames}
+                    "escalation_frames": esc_frames,
+                    "requested_frames": agentic_units["requested_frames"],
+                    "requested_audio_seconds": agentic_units["requested_audio_seconds"],
+                    "model_passes": agentic_units["model_passes"]}, agentic
 
 
 # ─────────────────────── Synthetic QC lane (generative media) ───────────────────────
@@ -840,7 +886,7 @@ def run_pipeline(job: Job) -> None:
     progress(job, {"type": "pipeline_started", "key": job.key, "compute": WORKER_LABEL})
     tid = job.transferId
     # Sender-selected services (missing = everything on). Non-boolean keys in
-    # options carry the QC profile and self-heal switch — don't coerce those.
+    # options carry the QC profile and compute target; do not coerce those.
     SERVICE_FLAGS = ("thumbnail", "qc_av", "qc_captions", "qc_ai", "qc_synthetic", "summarize")
     opts = {k: True for k in SERVICE_FLAGS}
     opts["qc_synthetic"] = False   # specialized for generative media — opt-in
@@ -849,7 +895,6 @@ def run_pipeline(job: Job) -> None:
             if k in job.options:
                 opts[k] = bool(job.options[k])
     profile = qprofiles.get((job.options or {}).get("profile", "standard"))
-    self_heal = bool((job.options or {}).get("self_heal"))
     derivatives: list[dict] = []
     with tempfile.TemporaryDirectory() as tmp:
         src = os.path.join(tmp, "src")
@@ -914,6 +959,8 @@ def run_pipeline(job: Job) -> None:
             print("sidecar lookup failed:", e)
 
         qc_report = None
+        agentic_report = None
+        ai_state = "disabled"
         if opts["qc_av"] or opts["qc_captions"]:
             progress(job, {"type": "step_started", "step": "qc", "profile": profile["name"]})
             try:
@@ -936,17 +983,25 @@ def run_pipeline(job: Job) -> None:
         #     its own service. Verdicts merge into the same qc_report.json.
         if opts["qc_ai"]:
             if not GMI_API_KEY:
+                ai_state = "unavailable"
+                if qc_report is None:
+                    qc_report = {"status": "warn", "checks": [{
+                        "name": "agentic_qc", "status": "warn",
+                        "detail": "agentic inspection unavailable: no GMI_API_KEY",
+                        "category": "engine", "source": "ai_support"}]}
                 progress(job, {"type": "step_skipped", "step": "qc_ai", "reason": "no GMI_API_KEY"})
             else:
                 progress(job, {"type": "step_started", "step": "qc_ai"})
                 try:
-                    ai_checks, ai_units = run_ai_qc(src, meta, captions_path, tmp, profile,
-                                                    detections=(qc_report or {}).get("detections"),
-                                                    declared=os.path.basename(job.key))
+                    ai_checks, ai_units, agentic_report = run_ai_qc(
+                        src, meta, captions_path, tmp, profile,
+                        detections=(qc_report or {}).get("detections"),
+                        declared=job.key, deterministic_report=qc_report)
                     if qc_report is None:
                         qc_report = {"status": "pass", "checks": []}
                     qc_report["checks"].extend(ai_checks)
                     qc_report["ai"] = {"model": GMI_MULTIMODAL_MODEL, **ai_units}
+                    ai_state = "complete"
                     progress(job, {"type": "step_done", "step": "qc_ai",
                                    "checks": [c["name"] for c in ai_checks],
                                    "billable": {"unit": "frames", "units": ai_units["frames"]}})
@@ -958,7 +1013,17 @@ def run_pipeline(job: Job) -> None:
                         # third billable line: targeted escalation, in frames
                         progress(job, {"type": "step_metered", "step": "qc_ai_escalation",
                                        "billable": {"unit": "frames", "units": ai_units["escalation_frames"]}})
+                    if ai_units.get("requested_audio_seconds"):
+                        progress(job, {"type": "step_metered", "step": "qc_ai_evidence_audio",
+                                       "billable": {"unit": "seconds",
+                                                    "units": ai_units["requested_audio_seconds"]}})
                 except Exception as e:
+                    ai_state = "error"
+                    if qc_report is None:
+                        qc_report = {"status": "warn", "checks": [{
+                            "name": "agentic_qc", "status": "warn",
+                            "detail": f"agentic inspection failed: {str(e)[:180]}",
+                            "category": "engine", "source": "ai_support"}]}
                     progress(job, {"type": "step_error", "step": "qc_ai", "error": str(e)})
         else:
             progress(job, {"type": "step_skipped", "step": "qc_ai", "reason": "disabled by sender"})
@@ -976,6 +1041,8 @@ def run_pipeline(job: Job) -> None:
                     syn_checks, syn_frames = run_synthetic_qc(src, meta, tmp, gen_manifest_path)
                     if qc_report is None:
                         qc_report = {"status": "pass", "checks": []}
+                    for check in syn_checks:
+                        check.setdefault("source", "synthetic_ai")
                     qc_report["checks"].extend(syn_checks)
                     qc_report["synthetic"] = {"model": GMI_MULTIMODAL_MODEL, "frames": syn_frames,
                                               "prompt_reference": bool(gen_manifest_path)}
@@ -987,53 +1054,14 @@ def run_pipeline(job: Job) -> None:
         else:
             progress(job, {"type": "step_skipped", "step": "qc_synthetic", "reason": "disabled by sender"})
 
-        # 3c. self-healing (Task 6) — when enabled and the report shows healable
-        #     defects, produce a corrected copy, re-measure it with the same
-        #     instruments, and record the fix as its own provenance-covered step.
+        # 3c. Finalize a read-only report. Legacy self_heal options are ignored:
+        #     Waystation observes and reports; it never changes the master.
         if qc_report is not None:
             qc_report = qreport.finalize(qc_report, profile)
-            if self_heal:
-                bad = {c["name"] for c in qc_report["checks"] if c["status"] in ("warn", "fail")}
-                fix_audio = bool(bad & {"loudness", "true_peak", "audio_clipping"})
-                fix_video = "video_legal_range" in bad
-                if fix_audio or fix_video:
-                    progress(job, {"type": "step_started", "step": "heal"})
-                    try:
-                        t = profile["heal"]
-                        healed = qheal.heal(src, tmp, fix_audio, fix_video,
-                                            t["target_i"], t["target_tp"])
-                        if healed:
-                            hname = "healed_" + os.path.basename(job.key)
-                            hkey = f"derivatives/{tid}/{hname}"
-                            s3.upload_file(healed["path"], BUCKET, hkey,
-                                           ExtraArgs={"ContentType": "video/mp4"})
-                            derivatives.append({"step": "heal", "key": hkey,
-                                                "sha256": sha256_file(healed["path"]),
-                                                "mime": "video/mp4"})
-                            after = healed.get("after") or {}
-                            verified = (after.get("i") is not None
-                                        and abs(after["i"] - t["target_i"]) <= 1.2
-                                        and (after.get("tp") is None or after["tp"] <= t["target_tp"] + 0.3))
-                            detail = healed["detail"]
-                            if after.get("i") is not None:
-                                detail += (f" — re-measured: {after['i']} LUFS, "
-                                           f"TP {after.get('tp')} dBTP")
-                            qc_report["checks"].append(
-                                {"name": "self_heal", "status": "pass" if verified or not fix_audio else "warn",
-                                 "detail": detail, "category": "heal"})
-                            qc_report = qreport.finalize(qc_report, profile)
-                            progress(job, {"type": "step_done", "step": "heal", "key": hkey,
-                                           "billable": {"unit": "run", "units": 1}})
-                        else:
-                            progress(job, {"type": "step_error", "step": "heal",
-                                           "error": "healer produced no output"})
-                    except Exception as e:
-                        progress(job, {"type": "step_error", "step": "heal", "error": str(e)})
-                else:
-                    progress(job, {"type": "step_skipped", "step": "heal",
-                                   "reason": "nothing healable in the report"})
+            qc_report = qagentic.finalize_report(
+                qc_report, meta, job.key, agentic_report, ai_state)
 
-        # 3d. one provenance-covered report for all lanes (deterministic + AI + heal)
+        # 3d. one provenance-covered report for deterministic and AI lanes.
         if qc_report is not None:
             qc_key = f"derivatives/{tid}/qc_report.json"
             qc_body = json.dumps(qc_report, indent=2).encode()
@@ -1073,18 +1101,42 @@ def run_pipeline(job: Job) -> None:
             duration=float(meta.get("format", {}).get("duration", 0) or 0) or None)
         STEP_INFO = {   # provider/model/type/modality per pipeline step
             "thumbnail": ("ffmpeg", "ffmpeg/poster-frame", StepType.TRANSCODE, Modality.IMAGE),
-            "qc": ("waystation", "qc-engine/deterministic+ai", StepType.CUSTOM, Modality.TEXT),
-            "heal": ("ffmpeg", "loudnorm+limiter", StepType.TRANSCODE, Modality.VIDEO),
+            "qc": ("waystation", "qc-reporter/deterministic+agentic", StepType.CUSTOM, Modality.TEXT),
         }
         gb_steps = []
         for i, d in enumerate(derivatives):
             prov, model, stype, mod = STEP_INFO.get(d["step"], ("waystation", d["step"], StepType.CUSTOM, Modality.TEXT))
+            step_metadata = None
+            if d["step"] == "qc" and qc_report:
+                step_metadata = {
+                    "report_schema": qc_report.get("schema_version"),
+                    "reporter_mode": qc_report.get("reporter_mode"),
+                    "coverage_registry": qc_report.get("coverage", {}).get("registry_version"),
+                    "coverage_accounting_complete": qc_report.get("coverage", {}).get("accounting_complete"),
+                }
             gb_steps.append(GbStep(
                 step_id=d["step"], run_id=tid, provider=prov, model=model,
                 step_type=stype, modality=mod, status=StepStatus.SUCCEEDED,
                 step_index=i, inputs=[src_asset],
                 assets=[GbAsset(asset_id=d["step"] + "-out", url=f"s3://{BUCKET}/{d['key']}",
-                                media_type=d["mime"], sha256=d["sha256"])]))
+                                media_type=d["mime"], sha256=d["sha256"])],
+                metadata=step_metadata or {}))
+        if agentic_report:
+            prompt_meta = agentic_report["prompt"]
+            for pass_name in ("independent", "informed", "critic"):
+                gb_steps.append(GbStep(
+                    step_id=f"qc-agent-{pass_name}", run_id=tid,
+                    provider="gmicloud", model=GMI_MULTIMODAL_MODEL,
+                    step_type=StepType.GENERATE, modality=Modality.TEXT,
+                    status=StepStatus.SUCCEEDED, step_index=len(gb_steps),
+                    inputs=[src_asset], metadata={
+                        "purpose": "read-only media QC reporting",
+                        "pass": pass_name,
+                        "prompt_version": prompt_meta["version"],
+                        "prompt_sha256": prompt_meta["sha256"],
+                        "risk_registry_version": prompt_meta["risk_registry_version"],
+                        "repairs_allowed": False,
+                    }))
         if summary:
             gb_steps.append(GbStep(
                 step_id="summarize", run_id=tid, provider="gmicloud", model=GMI_MODEL,
@@ -1096,6 +1148,11 @@ def run_pipeline(job: Job) -> None:
             steps=gb_steps, completed_at=datetime.now(timezone.utc),
             metadata={"transferId": tid, "profile": profile["name"], "services": opts,
                       "compute": WORKER_LABEL,
+                      "reporter_mode": "read_only_no_repair",
+                      **({"qc_prompt_version": agentic_report["prompt"]["version"],
+                          "qc_prompt_sha256": agentic_report["prompt"]["sha256"],
+                          "qc_risk_registry": agentic_report["prompt"]["risk_registry_version"]}
+                         if agentic_report else {}),
                       **({"qc_status": qc_report["status"], "qc_tiers": qc_report["tiers"]}
                          if qc_report else {})}))
         mkey = f"derivatives/{tid}/manifest.json"

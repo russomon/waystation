@@ -9,7 +9,8 @@ _TIER_OF = {"fail": BLOCKER, "warn": ISSUE, "info": FYI}
 
 
 def check(name: str, status: str, detail: str = "", category: str = "signal") -> dict:
-    c = {"name": name, "status": status, "detail": detail, "category": category}
+    c = {"name": name, "status": status, "detail": detail, "category": category,
+         "source": "deterministic"}
     tier = _TIER_OF.get(status)
     if tier:
         c["tier"] = tier
@@ -23,7 +24,7 @@ def violation(name: str, escalate: bool, detail: str, category: str = "signal") 
 
 def finalize(report: dict, profile: dict) -> dict:
     """Recompute overall status + tier counts (idempotent; call after any append).
-    Checks appended by other lanes (AI, heal) get tiers backfilled from status."""
+    Checks appended by other lanes get tiers backfilled from status."""
     statuses = [c["status"] for c in report["checks"]]
     report["status"] = ("fail" if "fail" in statuses
                         else "warn" if "warn" in statuses else "pass")

@@ -62,25 +62,58 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     const badge = el(`<details class="prov"><summary><span class="${cls}">${label}</span><span class="meta">${profileTag}</span></summary></details>`);
     const tiers = qc.tiers ?? {};
     if (tiers.BLOCKER || tiers.ISSUE || tiers.FYI) {
-      badge.append(el(`<p>` +
-        (tiers.BLOCKER ? `<span class="chip bad">${tiers.BLOCKER} BLOCKER</span>` : "") +
-        (tiers.ISSUE ? `<span class="chip warnc">${tiers.ISSUE} ISSUE</span>` : "") +
-        (tiers.FYI ? `<span class="chip mutedc">${tiers.FYI} FYI</span>` : "") + `</p>`));
+      const chips = el(`<p></p>`);
+      for (const [tier, chipClass] of [["BLOCKER", "bad"], ["ISSUE", "warnc"], ["FYI", "mutedc"]]) {
+        const count = Number(tiers[tier] ?? 0);
+        if (!count) continue;
+        const chip = el(`<span class="chip ${chipClass}"></span>`);
+        chip.textContent = `${count} ${tier}`;
+        chips.append(chip);
+      }
+      badge.append(chips);
     }
     const glyph = (s: string) => s === "pass" ? "✓" : s === "warn" ? "⚠" : s === "info" ? "ⓘ" : "✗";
-    badge.append(el(`<p class="mono">${(qc.checks ?? []).map((c: any) =>
-      `${glyph(c.status)} ${c.tier ? `[${c.tier}] ` : ""}${c.name}${c.detail ? " — " + c.detail : ""}`).join("<br>")}</p>`));
+    const addSection = (title: string, lines: string[]) => {
+      if (!lines.length) return;
+      const section = el(`<section class="qc-section"><h3></h3><p class="mono qc-lines"></p></section>`);
+      (section.querySelector("h3") as HTMLElement).textContent = title;
+      (section.querySelector("p") as HTMLElement).textContent = lines.join("\n");
+      badge.append(section);
+    };
+
+    const coverage = qc.coverage;
+    if (coverage) {
+      addSection("Coverage accounting", [
+        `${coverage.accounting_complete ? "COMPLETE" : "INCOMPLETE"}: ${coverage.assessed_risks}/${coverage.applicable_risks} applicable risks assessed; ${coverage.unresolved_risks} disclosed for review`,
+        `Model dispositions: ${coverage.model_disposition_complete ? "complete" : "validator filled omitted risks"}`,
+      ]);
+    }
+    const deterministic = (qc.deterministic?.checks ?? (qc.checks ?? []).filter((c: any) => c.source === "deterministic"));
+    addSection("Deterministic instruments", deterministic.map((c: any) =>
+      `${glyph(c.status)} ${c.tier ? `[${c.tier}] ` : ""}${c.name}${c.detail ? " - " + c.detail : ""}`));
+
+    const passes = qc.agentic?.passes ?? {};
+    const finalPass = passes.critic?.status === "complete" ? passes.critic
+      : passes.informed?.status === "complete" ? passes.informed : passes.independent;
+    const findings = finalPass?.findings ?? [];
+    const agentLines = findings.map((f: any) => {
+      const times = (f.timecodes ?? []).map((t: number) => `${Number(t).toFixed(2)}s`).join(", ");
+      return `${f.severity.toUpperCase()} [${f.confidence}] ${f.title}${times ? ` @ ${times}` : ""} - ${f.description}`;
+    });
+    if (!agentLines.length && qc.agentic)
+      agentLines.push(`No reportable finding in sampled evidence. ${passes.critic?.summary ?? ""}`.trim());
+    addSection("Agentic observations", agentLines);
+
+    addSection("Residual human review", (qc.residual_human_review ?? []).map((r: any) =>
+      `${r.status} ${r.label} - ${r.reason}`));
+
+    const support = (qc.checks ?? []).filter((c: any) => c.source !== "deterministic" && c.source !== "agentic_ai");
+    addSection("AI support checks", support.map((c: any) =>
+      `${glyph(c.status)} ${c.tier ? `[${c.tier}] ` : ""}${c.name}${c.detail ? " - " + c.detail : ""}`));
     card.append(badge);
   }
 
   card.append(el(`<a class="btn" href="${t.original.url}" download="${t.original.filename}">Download original</a>`));
-
-  // Self-healed master — the corrected copy the waystation produced (Task 6).
-  const healed = t.derivatives.find((d) => d.key.includes("/healed_"));
-  if (healed) {
-    const hname = healed.key.split("/").pop()!;
-    card.append(el(`<a class="btn ghost" href="${healed.url}" download="${hname}">Download healed master</a>`));
-  }
 
   // Verified download — pulls the object in ranges and checks each against the
   // bao outboard before accepting it. Only offered when the outboard exists.

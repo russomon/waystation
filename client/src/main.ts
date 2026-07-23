@@ -50,7 +50,7 @@ if (tid) {
     const compute = val("opt_cloud") ? "cloud" : "local";
     if (transferOnly.checked)
       return { qc_av: false, qc_captions: false, qc_ai: false, qc_synthetic: false,
-               thumbnail: false, summarize: false, profile, self_heal: false, compute };
+               thumbnail: false, summarize: false, profile, compute };
     return {
       qc_av: val("opt_qc_av"),
       qc_captions: val("opt_qc_captions"),
@@ -59,7 +59,6 @@ if (tid) {
       thumbnail: val("opt_thumbnail"),
       summarize: val("opt_summarize"),
       profile,
-      self_heal: val("opt_self_heal"),
       compute,
     };
   };

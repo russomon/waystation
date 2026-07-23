@@ -6,7 +6,7 @@ export interface TransferMeta {
   key: string;
   blake3Root?: string; // absent if the client skipped hashing
   createdAt: number;
-  // Sender-selected services + QC profile + self-heal; undefined = everything on.
+  // Sender-selected services + QC profile/compute target; undefined = everything on.
   options?: Record<string, boolean | string>;
 }
 

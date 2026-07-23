@@ -4,7 +4,7 @@
 
 Waystation is a cloud-waystation media delivery system: verified transfer to
 Backblaze B2 with a broadcast-grade QC engine, an AI/prompt-native QC lane on
-GMI Cloud, self-healing, and WORM-locked Genblaze provenance. Built for the
+GMI Cloud, read-only agentic reporting, and WORM-locked Genblaze provenance. Built for the
 Backblaze Generative Media Hackathon (submission deadline 2026-08-03).
 
 GitHub: `git@github.com:russomon/waystation.git` (public)
@@ -24,7 +24,7 @@ GitHub: `git@github.com:russomon/waystation.git` (public)
 |---|---|
 | `gateway/` | Hono/Node control plane: presigned URLs, B2 event webhook, SSE, metering. Never touches file bytes. |
 | `client/` | Vite/TS sender + recipient delivery page; Rust→wasm BLAKE3/bao. |
-| `pipeline/` | Python 3.13 FastAPI worker: the QC engine (`pipeline/qc/`), AI lanes, self-heal, Genblaze manifests. |
+| `pipeline/` | Python 3.13 FastAPI worker: deterministic QC, agentic AI reporting, Genblaze manifests. |
 | `crates/blake3-outboard/` | Rust→wasm BLAKE3 + bao outboard. |
 | `cdn-worker/` | Cloudflare Worker for token-gated B2 streaming. |
 | `scripts/` | One-command proof scripts + live/dev drivers. |
@@ -46,6 +46,9 @@ GitHub: `git@github.com:russomon/waystation.git` (public)
 - Deterministic checks (ffmpeg/ffprobe measurements, Photon, hashes) and AI
   checks (GMI vision/ASR/prompt engines) are **separate lanes**. AI verdicts
   annotate; they never overwrite an instrument reading.
+- Waystation is a **read-only QC reporter**. Do not add media repair or
+  transformation actions to the QC path. Every applicable registered risk
+  must receive an explicit disposition, including unresolved gaps.
 - The pipeline worker is **stateless** — everything durable lands in B2. Keep
   it that way so it deploys anywhere and scales horizontally.
 - Python **3.13+** is required (`genblaze-core` floor).

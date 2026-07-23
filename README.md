@@ -3,8 +3,8 @@
 Send mastered video — it arrives **QC'd, summarized, and provable**.
 High-speed verified delivery over **Backblaze B2** (the cloud waystation) with
 a broadcast-grade QC engine + AI lane (**GMI Cloud**) that runs while the file
-is parked, a single-toggle **Netflix strict profile**, **self-healing** for
-out-of-spec audio/video, and a WORM-locked provenance trail.
+is parked, a single-toggle **Netflix strict profile**, an **agentic read-only
+QC report** for human-detectable risks, and a WORM-locked provenance trail.
 
 Built for the [Backblaze Generative Media Hackathon](https://backblaze-generative-media.devpost.com/).
 
@@ -18,8 +18,8 @@ browser ──parallel multipart (BLAKE3 + bao outboard)──▶ B2 (originals)
                                           │ dispatch (sender-selected services)
                                           ▼
                           QC + AI pipeline (ffmpeg/ffprobe + GMI Cloud)
-        structural → signal (AV/caption QC, BS.1770-4, R103, PSE) → AI lane
-        (vision review · ASR caption accuracy · compliance) → self-heal
+        structural → signal (AV/caption QC, BS.1770-4, R103, PSE)
+        → blind AI inspection → adaptive evidence → informed pass → critic
                                           │ derivatives + WORM provenance manifest
                                           ▼
                                   B2 (derivatives/)   ──CDN──▶ delivery page
@@ -33,8 +33,9 @@ no cloud creds needed) that builds violating media, runs the pipeline, and
 asserts the results:
 
 ```bash
-bash scripts/netflix-qc-proof.sh   # Netflix profile: 4 BLOCKERs, self-heal re-measured to -24 LUFS, PSE, VMAF/MOS
-bash scripts/ai-qc-proof.sh        # AI lane: vision findings + ASR caption-accuracy WER (mock GMI, zero spend)
+bash scripts/agentic-qc-proof.sh   # charter, request allowlist, mandatory 18-risk accounting, no-repair contract
+bash scripts/netflix-qc-proof.sh   # Netflix profile: 4 BLOCKERs, reporter-only mode, PSE, VMAF/MOS
+bash scripts/ai-qc-proof.sh        # 3-pass agentic lane + adaptive evidence + ASR WER (mock GMI, zero spend)
 bash scripts/qc-proof.sh           # deterministic AV + caption QC with exact defect counts
 bash scripts/toggle-proof.sh       # sender toggles gate the pipeline; transfer-only = zero derivatives
 bash scripts/object-lock-proof.sh  # WORM manifest: locked version cannot be deleted
@@ -103,8 +104,7 @@ docker compose up --scale worker=3       # horizontal: N stateless workers, DNS 
 
 A standard QC run costs ~0.1–0.3× content duration on 8 cores (full-decode
 passes dominate; the AI lane is ~zero local CPU — inference is GMI's).
-The heavy hitters are opt-in: video legalization (full x264 re-encode)
-and reference VMAF (~content duration). Per-job speedup plateaus around
+The heavy hitter is opt-in reference VMAF (~content duration). Per-job speedup plateaus around
 8–16 cores — ffmpeg decode threads saturate — so past one beefy worker,
 scale horizontally: jobs are independent and workers stateless.
 Roadmap: the metering ledger already bills QC in media-minutes, which IS
@@ -183,25 +183,28 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   `scripts/toggle-proof.sh` (transfer-only produces zero derivatives;
   caption-QC-only report contains no AV checks; no-options default runs
   everything; non-caption sidecar names rejected).
-- ✅ **AI-assisted QC lane** (`qc_ai` toggle, on by default). Two checks via
-  GMI's multimodal gemini (`GMI_MULTIMODAL_MODEL`, default
+- ✅ **Agentic AI QC reporter** (`qc_ai` toggle, on by default) via
+  Genblaze's `genblaze_gmicloud.chat` SDK wrapper and GMI's multimodal gemini
+  (`GMI_MULTIMODAL_MODEL`, default
   `google/gemini-3.5-flash` — accepts both `image_url` AND `input_audio`
-  through the OpenAI-compatible API; GMI serves no whisper models, gemini
-  IS the ASR):
-  - **`ai_visual`** — vision review of `AI_QC_FRAMES` (4) sampled frames for
-    defects filters can't name: test patterns, slates, watermarks, burned-in
-    timecode, letterboxing, corruption. Live run correctly flagged a
-    `testsrc` clip as "Test pattern".
+  through the OpenAI-compatible API). A versioned standing charter performs
+  three separate passes: an independent sweep with no instrument findings,
+  an instrument-informed reconciliation after one bounded adaptive evidence
+  round, and an independent critic. The model can request only allowlisted,
+  read-only evidence: frame, frame burst, contact sheet, audio window,
+  transcript window, or pixel crop. Numeric inputs are clamped before ffmpeg.
+  No pass can execute commands or alter media.
   - **`ai_caption_accuracy`** — the caption-QC instrument: transcribe an
     `AI_QC_ASR_SECONDS` (45s) audio window, word-error-rate the transcript
     against the caption cues covering that window; ≥80% word match passes.
     Live run: TTS speech + matching SRT → 100% (21/21 words); mismatched
     captions → 0%, flagged.
-  Verdicts merge into the same provenance-covered `qc_report.json`
-  (`report.ai` records model + units); metered as `qc_ai` (frames) +
+  Findings merge into the same provenance-covered `qc_report.json`
+  (`report.agentic` records prompt version/hash, passes, evidence, and model;
+  `report.ai` records units); metered as `qc_ai` (frames) +
   `qc_ai_asr` (seconds). Proven without cloud spend by
-  `scripts/ai-qc-proof.sh` (mock GMI server; matching vs mismatched
-  captions, gating, metering) and live against real GMI.
+  `scripts/ai-qc-proof.sh` (mock GMI server; all three passes, adaptive
+  evidence, matching vs mismatched captions, gating, metering).
 - ✅ **Comprehensive QC engine** (`pipeline/qc/` — structural → signal → AI
   execution order, per-analyzer crash isolation, findings tiered
   **BLOCKER / ISSUE / FYI**). Beyond the original lane:
@@ -236,25 +239,33 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   blocked, PSE hard-fail, R103 escalation. Report carries
   `profile_label: Netflix_Delivery_Specification_Strict` + tier counts,
   rendered as chips on the delivery page.
-- ✅ **Self-Healing Engine** (sender toggle): two-pass linear loudnorm to
-  the profile target (video stream copied — no re-render) and a luma/chroma
-  limiter legalizer when levels are illegal. The healed copy is
-  **re-measured with the same instruments** and shipped as a provenance-
-  covered derivative with its own download button.
-  All proven by `scripts/netflix-qc-proof.sh`: compliant 24p/−24 LUFS
+- ✅ **Read-only reporting contract and mandatory risk coverage.** Waystation
+  never repairs or rewrites the master. `qc_report.json` separates the QC
+  verdict from coverage completeness and includes all 18 registered risk
+  families, each with `CLEAR`, `CONFIRMED`, `SUSPECTED`, `REVIEW_REQUIRED`,
+  `UNVERIFIED`, `BLOCKED`, or `NOT_APPLICABLE`. The deterministic validator
+  fills any model omission, so a clean sample cannot silently erase certified
+  PSE, Dolby/HDR internals, lip sync, dead pixels, subtle artifacts, creative
+  intent, color intent, ABR playback, audio transients/channel semantics,
+  language/localization, editorial continuity, AS-11/DPP, IMF, or encrypted
+  stream risk. `accounting_complete` means no category was omitted;
+  `assessment_complete` remains false while any review/gap is unresolved.
+  Proven by `scripts/agentic-qc-proof.sh` and `scripts/ai-qc-proof.sh`.
+  `scripts/netflix-qc-proof.sh` also sends the retired legacy `self_heal`
+  option and proves it creates no check, derivative, meter, or manifest step.
+  The same proof shows a compliant 24p/−24 LUFS
   master passes with ZERO blockers (incl. VMAF 97.9 / MOS 4.9 vs its
   mezzanine); a 30fps/superwhite/hot-audio master draws exactly 4 BLOCKERs
-  under Netflix but zero under Standard; its healed copy re-measures at
-  −24.0 LUFS / TP ≤ −2 / legal luma; a strobe clip hard-fails the PSE
-  scanner; `.ref` sidecars upload but never trigger pipeline runs.
+  under Netflix but zero under Standard; a strobe clip hard-fails the PSE
+  screening scanner; `.ref` sidecars upload but never trigger pipeline runs.
 - ✅ **Real-cloud run with the full engine** (`scripts/live-event-run.sh`):
   cloudflared tunnel → public webhook → gateway with the dev trigger OFF —
   a production-shaped, HMAC-signed `b2:ObjectCreated` event delivered over
   the public internet drove the pipeline against real B2 + real GMI.
   Live results: 3 BLOCKERs as mastered (30p framerate, −10.7 LKFS,
   +8.1 dBTP); Gemini vision caught the **burned-in timecode** in the test
-  pattern; caption accuracy 100% (21/21 words vs real ASR); self-heal
-  re-measured at **−24.3 LUFS / TP −5.1**; summary grounded in captions.
+  pattern; caption accuracy 100% (21/21 words vs real ASR); summary grounded
+  in captions. The current product intentionally reports rather than repairs.
 - ✅ **WORM provenance on real Backblaze B2** (`MANIFEST_LOCK_DAYS=1`):
   the manifest wrote with COMPLIANCE retention (24 h). Versioned delete →
   **AccessDenied**, retention shortening → refused — with a key that holds
@@ -276,7 +287,8 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
 - ✅ **Real Genblaze manifests** (`genblaze-core` 0.3.6, schema v1.5): the
   provenance manifest is a genuine `genblaze_core.models.Manifest` — Run →
   Steps (with provider/model attribution: `ffmpeg/poster-frame`,
-  `waystation/qc-engine`, `gmicloud/<model>`) → Assets with SHA-256 —
+  `waystation/qc-reporter`, plus separate `gmicloud/<model>` independent,
+  informed, and critic steps) → Assets with SHA-256 —
   canonical-hashed and **self-verified with the SDK's own verifier** before
   upload, then WORM-locked. The delivery page shows the schema + canonical
   hash and its Verify button re-hashes every asset against the manifest.
@@ -305,14 +317,14 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   "no analysis output" rather than false-passing. Proven by
   `scripts/photon-proof.sh` (self-skips with instructions when Photon
   isn't fetched).
-- ✅ **Category-A prompt-native QC** — the semantic checks the incumbents
-  attack with decades of trained classifiers, reimplemented as structured
-  prompts in ONE batched vision call: slate detection **with reading + a
-  delivery cross-check**, burned-text/QR/timecode **reading** (live run
-  read testsrc2's frame counter values off the pixels), rating/warning
-  cards, perceptual severity judgment ("would a viewer object?"), a
-  prompted no-reference **MOS 1–5** (our TekMOS answer), and caption
-  **proofreading** (spelling/grammar) beside the compliance screen.
+- ✅ **Prompt-native human QC charter** — the independent sweep explicitly
+  searches sampled evidence for pixel defects, isolated corruption, banding,
+  moire, cadence/judder, color discontinuities, text/graphics mistakes,
+  audio clicks/dropouts/tones/channel errors, lip sync, language/localization,
+  editorial continuity, creative ambiguity, and generated-media failure
+  modes. Captions and metadata are treated as untrusted evidence to prevent
+  prompt injection. The report identifies evidence IDs, timecodes, confidence,
+  and known sampling limits instead of claiming full-timeline clearance.
 - ✅ **Synthetic QC lane** (`qc_synthetic` toggle) — QC for media that was
   never shot. Three prompt engines: **generation artifacts** (anatomy,
   garbled glyphs, physics, seams, AI sheen + an origin assessment),
@@ -326,10 +338,9 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   not-scorable. Proven by `scripts/synthetic-qc-proof.sh` (mock GMI:
   defects surfaced, gating, sidecar event-filtering, metering) and live
   against real GMI. GMI calls now pace themselves and back off on 429s.
-- **Declared, honestly gated** (explicit FYI findings, not silent gaps):
-  Dolby Vision dynamic-canvas verification (needs dovi_tool RPU parsing),
-  lip-sync ms offsets (no video-input modality on GMI's API), dead-pixel
-  tracking (needs long-window frame accumulation).
+- **Declared, honestly gated**: unsupported certification and specialist
+  bitstream/playback checks remain explicit `REVIEW_REQUIRED` or `UNVERIFIED`
+  registry entries rather than silent gaps or false passes.
 
 Reproduce locally (no cloud creds), each self-contained on MinIO + ffmpeg:
 `bash scripts/phase2-loop-proof.sh` · `bash scripts/delivery-proof.sh` ·

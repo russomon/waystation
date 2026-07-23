@@ -12,8 +12,7 @@ from .util import run
 
 
 def measure_loudness(src: str) -> dict:
-    """One ebur128 pass → {i, lra, tp, s_max}. Reused by QC and by self-heal
-    verification so the healer is judged by the same instrument."""
+    """One ebur128 pass -> {i, lra, tp, s_max}."""
     log = run(["ffmpeg", "-hide_banner", "-i", src, "-map", "0:a:0",
                "-af", "ebur128=peak=true", "-f", "null", "-"]).stderr
     def grab(pattern):

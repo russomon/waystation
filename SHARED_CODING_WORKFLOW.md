@@ -58,9 +58,10 @@ handoff:
 
 | Script | Covers |
 |---|---|
+| `scripts/agentic-qc-proof.sh` | agentic charter, evidence allowlist, 18-risk accounting, no-repair contract |
 | `scripts/qc-proof.sh` | deterministic AV + caption QC |
-| `scripts/netflix-qc-proof.sh` | Netflix profile, tiers, self-heal, PSE, VMAF |
-| `scripts/ai-qc-proof.sh` | AI lane: vision, ASR caption accuracy, escalation |
+| `scripts/netflix-qc-proof.sh` | Netflix profile, tiers, reporter-only mode, PSE, VMAF |
+| `scripts/ai-qc-proof.sh` | blind/informed/critic passes, adaptive evidence, ASR, escalation |
 | `scripts/synthetic-qc-proof.sh` | synthetic/generative lane + prompt adherence |
 | `scripts/toggle-proof.sh` | sender service toggles / transfer-only |
 | `scripts/delivery-proof.sh` | delivery endpoint + Genblaze manifest verify |
