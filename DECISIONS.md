@@ -5,6 +5,49 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-23 - No VLM-based perceptual lip-sync check (empirically disproven)
+
+- Context: We considered a perceptual lip-sync check — show the multimodal
+  model a talking-face frame burst + the audio and ask whether the mouth
+  movements match the speech — to strengthen the `lip_sync` risk beyond the
+  deterministic container/envelope proxy.
+- Decision / result: DO NOT build it on a general VLM. A controlled probe
+  (rendered talking face whose mouth tracks a speech envelope; an in-sync clip
+  and offset twins sharing the same audio) showed gemini-3.5-flash on GMI
+  confabulates: verdicts were unstable across identical inputs and confidently
+  wrong, including calling a gross 1.7s offset "in_sync / high" on both trials.
+  It fabricates specific word-timing rationales it cannot actually derive.
+- Why it matters: A trust-based QC reporter must not emit confident-false
+  findings. The failure is architectural — sampled still frames + an audio
+  blob give no time-locked audio/visual correspondence, so the model cannot
+  align them; a real face would fail identically. True lip-sync needs a
+  purpose-built AV-sync model (SyncNet / AV-HuBERT class), not a chat VLM.
+- Follow-up: Keep the deterministic lip-sync proxy (container offset + envelope
+  cross-correlation) which honestly reports gross drift only. Do not re-attempt
+  with a general VLM. Measured lip-sync now goes through SyncNet — see next.
+
+### 2026-07-23 - Measured lip-sync via SyncNet as an optional analyzer
+
+- Context: With the VLM ruled out, true lip-sync needs a purpose-built AV-sync
+  model. joonson/syncnet_python reports a real AV offset (in 25 fps frames) +
+  confidence per face track.
+- Decision / result: Integrate SyncNet as an OPTIONAL external analyzer, the
+  same pattern as Photon and MediaInfo — heavy (torch + weights), so it lives
+  outside the base worker (`qc/avsync.py`, env `SYNCNET_DIR` / `SYNCNET_PYTHON`,
+  setup via `scripts/fetch-syncnet.sh`). When absent it emits an explicit FYI
+  and never silently passes. Wired into the `lip_sync` risk. Also hardened
+  coverage: instruments now always win over model dispositions (the model only
+  fills genuine gaps), and `lip_sync` is flagged `model_unreliable` so the VLM
+  can never CLEAR or CONFIRM it. Parser verified against SyncNet's source
+  output strings; honest-absence + no-model-clear proven by
+  `scripts/avsync-proof.sh`.
+- Why it matters: Lip-sync moves from a permanent REVIEW_REQUIRED to a real
+  measurement when the tool is present, without ever letting an unreliable
+  signal (VLM) or a missing tool masquerade as a clean result.
+- Follow-up: End-to-end torch run is pending (old upstream deps need pinning);
+  see NEXT_STEPS. Consider a maintained SyncNet reimplementation if the 8-year
+  -old repo proves too brittle to stand up.
+
 ### 2026-07-23 - Widen detection coverage: sample the whole timeline, feed the reporter more
 
 - Context: A model (and a windowed filter) can only flag what it is shown.

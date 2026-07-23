@@ -318,6 +318,17 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   "no analysis output" rather than false-passing. Proven by
   `scripts/photon-proof.sh` (self-skips with instructions when Photon
   isn't fetched).
+- ✅ **Measured lip-sync via SyncNet (not a VLM).** A general vision model
+  was empirically shown to confabulate lip-sync verdicts — it called a gross
+  1.7 s A/V offset "in sync" with high confidence — so Waystation does NOT
+  use the AI lane for sync. Instead `qc/avsync.py` wraps the purpose-built
+  **SyncNet** AV-sync model (`scripts/fetch-syncnet.sh`, `SYNCNET_DIR`) as an
+  optional analyzer (Photon pattern): it reports a real per-face-track offset
+  in ms. When SyncNet is absent it emits an explicit FYI — never a silent
+  pass — and the deterministic container/envelope proxy catches gross drift.
+  The coverage engine forbids the AI model from ever clearing the `lip_sync`
+  risk (`model_unreliable`), and more broadly instruments now always win over
+  model dispositions. Proven by `scripts/avsync-proof.sh`.
 - ✅ **Prompt-native human QC charter** — the independent sweep explicitly
   searches sampled evidence for pixel defects, isolated corruption, banding,
   moire, cadence/judder, color discontinuities, text/graphics mistakes,

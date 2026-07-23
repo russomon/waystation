@@ -43,6 +43,28 @@ each asserted by `scripts/coverage-proof.sh` (ffmpeg + venv only, no cloud):
    when a real offset is measured; a clean proxy still does not CLEAR it
    (honest — a global proxy is not certified lip sync).
 
+## Measured lip-sync via SyncNet (2026-07-23)
+
+- We probed whether the multimodal model could perceptually judge lip sync.
+  It CANNOT: on a controlled talking-face stimulus it gave unstable,
+  confidently-wrong verdicts (a gross 1.7 s offset called "in_sync / high").
+  So the AI lane is deliberately NOT used for sync (DECISIONS.md).
+- Instead SyncNet (joonson/syncnet_python) is integrated as an optional
+  analyzer (`qc/avsync.py`, `scripts/fetch-syncnet.sh`, env `SYNCNET_DIR` /
+  `SYNCNET_PYTHON`) — Photon pattern: real measured offset when installed,
+  honest FYI when absent, wired into the `lip_sync` risk. Parser verified
+  against SyncNet's source output strings; `scripts/avsync-proof.sh` proves
+  the honest-absence contract and that the model can no longer clear lip_sync.
+- Coverage hardening (`qc/agentic.py build_coverage`): instruments now always
+  win over model dispositions (the model only fills a genuine gap, never
+  softens a deterministic finding or overrides a full-scope clear), and
+  `lip_sync` is flagged `model_unreliable` so the VLM can never CLEAR/CONFIRM
+  it. Verified green by agentic-qc / ai-qc proofs.
+- PENDING: the end-to-end SyncNet torch run. `fetch-syncnet.sh` clones the
+  repo + downloads weights, but the ~8-year-old upstream (torch + PySceneDetect
+  0.5 + S3FD) will likely need dep pinning on a modern machine. Not a blocker —
+  until then the analyzer reports an honest FYI.
+
 ## What Exists And Is Proven
 
 The suite now contains thirteen one-command proof scripts, including the new

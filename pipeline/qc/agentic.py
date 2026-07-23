@@ -93,9 +93,11 @@ RISK_REGISTRY: tuple[dict[str, Any], ...] = (
      "scope": "partial", "limit": "Codec labels do not validate beds, objects, guard bands, or metadata internals."},
     {"id": "lip_sync", "label": "Audio-to-picture lip sync and drift",
      "category": "sync", "applies": "video_audio",
-     "checks": ["lip_sync_container_offset", "lip_sync_drift_proxy"], "scope": "human",
-     "limit": "Envelope/container proxy catches gross drift only; true lip sync needs "
-              "speech-bearing picture evidence across the timeline."},
+     "checks": ["avsync_offset", "lip_sync_container_offset", "lip_sync_drift_proxy"],
+     "scope": "partial", "model_unreliable": True,
+     "limit": "Measured by SyncNet when installed (offset in ms per face track); otherwise a "
+              "container/envelope proxy catches gross drift only. A general VLM cannot judge "
+              "lip sync reliably and is not used for it."},
     {"id": "dead_stuck_pixels", "label": "Dead, stuck, or hot pixels",
      "category": "picture", "applies": "video", "checks": [], "scope": "human",
      "limit": "Sparse sampling can miss short or spatially subtle pixel defects."},
@@ -474,9 +476,15 @@ def build_coverage(meta: dict, key: str, checks: list[dict], agentic: dict | Non
             status = "CLEAR"
             reason = "Applicable deterministic validator passed: " + ", ".join(c["name"] for c in instrument)
         disposition = model.get(definition["id"])
-        if disposition and status not in {"CONFIRMED"}:
+        # Instruments win: the model may only fill a genuine gap (no instrument
+        # determination), never override or soften a deterministic finding or a
+        # deterministic full-scope clear.
+        if disposition and status is None:
             proposed = disposition["status"]
-            if definition["scope"] in {"certification", "intent"}:
+            # The model may not CLEAR/CONFIRM a risk it cannot reliably judge —
+            # certification/intent scopes, and risks flagged model_unreliable
+            # (e.g. lip_sync: a VLM was empirically shown to confabulate sync).
+            if definition["scope"] in {"certification", "intent"} or definition.get("model_unreliable"):
                 if proposed == "CLEAR":
                     proposed = "REVIEW_REQUIRED"
                     disposition = {**disposition, "reason": definition["limit"]}

@@ -38,6 +38,7 @@ from pydantic import BaseModel
 
 from qc import agentic as qagentic
 from qc import audio as qaudio
+from qc import avsync as qavsync
 from qc import imf as qimf
 from qc import mediainfo as qmediainfo
 from qc import profiles as qprofiles
@@ -205,6 +206,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             guarded(qaudio.channel_map_check, meta, group="channel_map")
             if has_video:  # lip-sync proxy needs both streams
                 guarded(qaudio.lip_sync_proxy, src, meta, duration, group="lip_sync_drift_proxy")
+                # measured lip-sync via SyncNet when installed; honest FYI when not
+                guarded(qavsync.checks, src, meta, group="avsync_offset")
 
     # ── Task 4: captions, subtitles & text ──
     if check_captions:

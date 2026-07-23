@@ -40,8 +40,17 @@ history.
   classifiers. The agentic reporter now samples scene/anomaly frames and audio
   windows and requests more evidence, but does not claim exhaustive timeline
   clearance.
-- True lip-sync (mouth-shape vs phoneme) beyond the current envelope/container
-  proxy — needs a face/mouth-aware model. The proxy catches gross drift only.
+- Measured lip-sync: the SyncNet AV-sync analyzer (`qc/avsync.py`) is
+  integrated as an optional tool (Photon pattern) and wired into the
+  `lip_sync` risk; the wrapper's output parser is verified against SyncNet's
+  source. REMAINING: stand up the SyncNet stack end-to-end and capture a real
+  measured run. `scripts/fetch-syncnet.sh` clones the repo + downloads weights,
+  but the upstream is ~8 years old (torch + PySceneDetect 0.5 API + S3FD) and
+  its deps likely need pinning/patching on a modern machine — a bounded task,
+  not a blocker. Until then, Waystation emits an honest FYI (never a silent
+  pass) and the deterministic container/envelope proxy catches gross drift.
+  A general VLM is deliberately NOT used for lip sync (proven to confabulate,
+  see DECISIONS 2026-07-23).
 
 ## Blockers
 
