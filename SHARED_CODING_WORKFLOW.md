@@ -38,7 +38,7 @@ cp .env.example .env                            # then fill in per SETUP.md — 
 ```
 
 Host tools: `ffmpeg`/`ffprobe`, `minio` (for the proof scripts), optionally
-`docker`/`colima`, `cloudflared`, `openjdk` + `maven`.
+`mediainfo`, `docker`/`colima`, `cloudflared`, `openjdk` + `maven`.
 
 ## Checks Before Handoff
 
@@ -69,6 +69,7 @@ handoff:
 | `scripts/compute-proof.sh` | local vs Docker worker routing (needs docker) |
 | `scripts/docker-proof.sh` | the shipped containers run the full loop (needs docker) |
 | `scripts/photon-proof.sh` | Netflix Photon executes on an IMF package |
+| `scripts/mediainfo-proof.sh` | optional MediaInfo wrapper/profile checks |
 
 Each prints `PASS ✓` or `FAIL`. Scripts that need docker/Photon self-skip with
 instructions when the dependency is absent.

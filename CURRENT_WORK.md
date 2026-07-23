@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-19 (session-end handoff)
+Updated: 2026-07-23 (MediaInfo QC handoff)
 Machine: Mac Studio
 Mode: paused — clean handoff; hackathon submission run (deadline 2026-08-03)
 
@@ -20,7 +20,8 @@ switches and chat history gaps.
 
 ## What Exists And Is Proven
 
-Eleven one-command proof scripts, all passing (see
+Eleven full-stack one-command proof scripts were previously passing, and the
+new MediaInfo proof added on 2026-07-23 is passing (see
 `SHARED_CODING_WORKFLOW.md` for the table):
 
 - Verified resumable transfer to B2 (BLAKE3 + bao outboard range verification).
@@ -44,6 +45,9 @@ Eleven one-command proof scripts, all passing (see
   written under B2 Object Lock COMPLIANCE (proven immutable on real B2).
 - Metering ledger; hybrid local/Docker compute routing recorded in provenance.
 - Containerized deployment (`docker compose up`) with Photon baked in.
+- Optional MediaInfo structural cross-check: missing tool is reported as an
+  explicit FYI; when present, MXF OP1a, AS-11/UK DPP visibility, HDR metadata,
+  and Dolby audio metadata caveats feed the same BLOCKER / ISSUE / FYI report.
 
 ## Notes
 
@@ -75,6 +79,9 @@ Eleven one-command proof scripts, all passing (see
   WORM-locked for 24h. Demo with `scripts/worm-demo.sh <transferId>`.
 - Photon jars live in `vendor/photon` (gitignored); recreate with
   `bash scripts/fetch-photon.sh`.
+- MediaInfo is optional. Install it on demo/review machines if you want the
+  extra MXF OP1a / AS-11 / HDR metadata cross-checks; otherwise the report
+  carries an explicit FYI that the analyzer was skipped.
 - The local checkout is at `/Users/Shared/Orbit/Code/waystation`, matching the
   repo name (renamed from `orbitxfer-web` on 2026-07-19). Gitignored assets
   that do NOT come from a clone and must be rebuilt on a fresh machine:
@@ -83,9 +90,10 @@ Eleven one-command proof scripts, all passing (see
 
 ## Handoff
 
-- Safe stopping point: yes. `main` is green, all 11 proofs pass on the
-  rebuilt venv, no stack processes or tunnels are running, and the B2
-  notification rule was cleared (so nothing points at a dead tunnel).
+- Safe stopping point: yes. `main` has the MediaInfo integration locally
+  validated with `scripts/mediainfo-proof.sh`, gateway type-check, client
+  build, and pipeline import. The previous 11 full-stack proofs were green on
+  the rebuilt venv; they were not all re-run in this MediaInfo-only pass.
 - Risks or open questions: none technical. Remaining work is presentational
   (demo video + Devpost copy). When recording, bring the stack up with
   `scripts/live-event-run.sh` then `scripts/b2-register-events.sh` — the

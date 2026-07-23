@@ -5,6 +5,21 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-23 - Add optional MediaInfo structural QC
+
+- Context: Gemini's file-based QC suggestions called out MediaInfo as useful
+  for wrapper/profile metadata that ffprobe can miss, especially MXF OP1a,
+  AS-11/UK DPP metadata, HDR labels, and Dolby audio stream identifiers.
+- Decision / result: Add MediaInfo as an optional structural analyzer in the
+  deterministic QC lane. If `mediainfo` is unavailable, Waystation emits an
+  explicit FYI finding instead of silently passing. If present, MediaInfo
+  findings join the same tiered report; non-OP1a MXF is a BLOCKER under the
+  Netflix profile.
+- Why it matters: This improves broadcast-delivery credibility without making
+  a fresh clone or demo machine depend on another host binary just to run.
+- Follow-up: Install `mediainfo` on recording/review machines when you want
+  those extra wrapper checks to appear in the demo report.
+
 ### 2026-07-19 - Reactive loop proven with genuine Backblaze events; rename requires venv rebuild
 
 - Context: Backblaze enabled Event Notifications on the account. The last

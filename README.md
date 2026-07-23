@@ -206,8 +206,10 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   execution order, per-analyzer crash isolation, findings tiered
   **BLOCKER / ISSUE / FYI**). Beyond the original lane:
   - *Structural (Task 1)*: DTS monotonicity + timeline-gap scan,
-    header-vs-payload comparison, multipart-delivery detection, HLS/DASH
-    manifest lint, IMF detection with **Photon** wrapped as a subprocess
+    header-vs-payload comparison, multipart-delivery detection, optional
+    **MediaInfo** wrapper/profile cross-checks (MXF OP1a, AS-11/UK DPP
+    visibility, HDR/Dolby metadata FYIs), HLS/DASH manifest lint, IMF
+    detection with **Photon** wrapped as a subprocess
     (graceful, explicit finding when JVM/jar absent).
   - *Video (Task 2)*: EBU-R103-style legal range with a proper
     **amplitude + picture-area** policy (lut violation-mask → exact

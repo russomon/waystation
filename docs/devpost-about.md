@@ -36,7 +36,8 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   (the gateway never touched) had B2 itself fire the event and drive the whole
   pipeline within seconds.
 - **Broadcast-grade QC** - structural (timecode continuity, container
-  integrity, multipart detection), signal (full-decode pass, black/freeze/
+  integrity, multipart detection, optional MediaInfo MXF OP1a / AS-11 / HDR
+  metadata cross-checks), signal (full-decode pass, black/freeze/
   silence, EBU R103 legal range with a real amplitude+area policy, ITU-R
   BS.1770-4 loudness/true-peak/LRA, phase, clipping, hum, mattes, PSE
   flash-risk), captions (timing, collisions, CPS/WPM, encoding, speech-sync
@@ -122,7 +123,7 @@ dedicated ASR model, but Gemini accepts `input_audio` content parts, so
 - Live Gemini vision caught the **burned-in timecode** in our test master
   unprompted; ASR caption accuracy scored 21/21 words.
 - A QC report nobody - including us - can alter for 24 hours.
-- Six one-command proof scripts; every feature claim in this page is
+- Twelve one-command proof scripts; every feature claim in this page is
   executable.
 
 ## What we learned

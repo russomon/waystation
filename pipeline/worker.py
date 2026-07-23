@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from qc import audio as qaudio
 from qc import heal as qheal
 from qc import imf as qimf
+from qc import mediainfo as qmediainfo
 from qc import profiles as qprofiles
 from qc import report as qreport
 from qc import structural as qstructural
@@ -165,6 +166,7 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
         # ── Task 1: structural parsing first ──
         guarded(qstructural.timecode_checks, src, group="timecode_continuity")
         guarded(qstructural.container_checks, meta, key, profile, group="container_metadata")
+        guarded(qmediainfo.checks, src, profile, group="mediainfo_wrapper")
         if key.lower().endswith((".m3u8", ".mpd")):
             guarded(qstructural.abr_lint, src, group="abr_manifest")
         guarded(qimf.photon_checks, src, tmp, profile, group="imf_photon")
