@@ -413,14 +413,28 @@ def checks_from_findings(agentic: dict | None) -> list[dict]:
     for finding in findings:
         severity = finding["severity"]
         status = {"blocker": "fail", "issue": "warn", "fyi": "info"}[severity]
-        # Instruments decide; the model annotates (DECISIONS 2026-07-18). An
-        # `unregistered_observation` sits OUTSIDE the risk registry and is
-        # measured by no instrument, so sampled model perception must not
-        # auto-reject a delivery — it is capped at ISSUE (human review).
-        # Observed live: the informed pass restated three measured instrument
-        # failures (framerate/loudness/true-peak) as "novel" blockers, which
-        # double-counted them and reported 6 BLOCKERs for 3 real defects.
-        if finding["risk_id"] == "unregistered_observation" and status == "fail":
+        # ONLY INSTRUMENTS REJECT. The model annotates and escalates to human
+        # review; it never auto-rejects a delivery (DECISIONS 2026-07-18: "AI
+        # verdicts annotate the report; they never overwrite an instrument
+        # reading"). So a model finding is capped at ISSUE, never BLOCKER.
+        #
+        # Learned the hard way across two live runs. Run 1: the informed pass
+        # restated three MEASURED instrument failures (framerate/loudness/
+        # true-peak) as `unregistered_observation` blockers → 6 BLOCKERs for 3
+        # real defects. Capping only `unregistered_observation` then taught it
+        # to launder the same restatements through ill-fitting REGISTERED ids
+        # (30p framerate as `creative_vs_defect`, -10.9 LKFS as
+        # `audio_transients`) → still 5 BLOCKERs for 3 defects. Severity chosen
+        # by a model on sampled evidence is not a rejection-grade signal at all,
+        # whatever risk_id it claims; the cap therefore applies to every finding.
+        #
+        # Genuine model-only defects are NOT lost: they stay prominent as ISSUE,
+        # coverage still marks the risk SUSPECTED/CONFIRMED, and they appear in
+        # residual human review. Profile-governed escalation is unaffected —
+        # worker.run_ai_qc re-escalates censorship to `fail` after this point
+        # when the profile says so, which is an explicit policy decision rather
+        # than the model grading its own severity.
+        if status == "fail":
             status = "warn"
         where = ", ".join(f"{t:.2f}s" for t in finding.get("timecodes", [])[:4])
         detail = finding.get("description") or finding.get("title")

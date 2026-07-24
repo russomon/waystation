@@ -90,21 +90,24 @@ pixel = next(r for r in qc["coverage"]["risks"] if r["risk_id"] == "dead_stuck_p
 assert pixel["status"] in {"CONFIRMED", "SUSPECTED", "REVIEW_REQUIRED"}, pixel
 assert not any(r["status"] == "NOT_APPLICABLE" and r["applicable"] for r in qc["coverage"]["risks"])
 
-# Instruments decide, the model annotates: an `unregistered_observation` sits
-# outside the registry and is measured by no instrument, so it may never carry
-# BLOCKER. Observed live 2026-07-23: the informed pass restated three MEASURED
-# instrument failures as "novel" blockers, reporting 6 BLOCKERs for 3 defects.
+# ONLY INSTRUMENTS REJECT: a model finding never carries BLOCKER, whatever
+# risk_id it claims. Proven necessary by two live runs — capping only
+# `unregistered_observation` (run 1: 3 restated instrument failures as "novel"
+# blockers) simply moved the restatements onto ill-fitting REGISTERED ids
+# (run 2: 30p framerate as creative_vs_defect, -10.9 LKFS as audio_transients).
 capped = agentic.checks_from_findings({"passes": {"critic": {"status": "complete", "findings": [
     {"title": "restated", "description": "The integrated loudness is -10.9 LKFS.",
      "risk_id": "unregistered_observation", "severity": "blocker", "confidence": "high"},
-    {"title": "real", "description": "Burned-in slate visible.",
-     "risk_id": "subtle_visual_artifacts", "severity": "blocker", "confidence": "high"}]}}})
-unreg = next(c for c in capped if c["risk_id"] == "unregistered_observation")
-registered = next(c for c in capped if c["risk_id"] == "subtle_visual_artifacts")
-assert unreg["status"] == "warn", unreg          # capped: never auto-rejects
-assert registered["status"] == "fail", registered  # registry-mapped keeps blocker
-print(f"  unregistered_observation blocker -> {unreg['status']} (capped); "
-      f"registered risk blocker -> {registered['status']}")
+    {"title": "laundered", "description": "The file is encoded at 30p, not an allowed rate.",
+     "risk_id": "creative_vs_defect", "severity": "blocker", "confidence": "high"},
+    {"title": "genuine", "description": "Burned-in slate visible.",
+     "risk_id": "subtle_visual_artifacts", "severity": "blocker", "confidence": "high"},
+    {"title": "issue", "description": "Minor banding.",
+     "risk_id": "subtle_visual_artifacts", "severity": "issue", "confidence": "low"}]}}})
+assert all(c["status"] != "fail" for c in capped), capped
+assert {c["status"] for c in capped} == {"warn"}, capped   # blocker+issue both -> warn
+print(f"  model findings capped at ISSUE: {[c['status'] for c in capped]} "
+      f"(no BLOCKER from any risk_id — only instruments reject)")
 
 print("PASS: agentic charter + allowlisted evidence + 18-risk accounting + no-repair report")
 print(f"  prompt {qc['agentic']['prompt']['version']} {qc['agentic']['prompt']['sha256'][:16]}...")

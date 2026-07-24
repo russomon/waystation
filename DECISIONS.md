@@ -5,7 +5,40 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
-### 2026-07-24 - An `unregistered_observation` may never be a BLOCKER
+### 2026-07-24 - Only instruments reject: no model finding may be a BLOCKER
+
+- Context: A SECOND live capture tested the first fix below (capping only
+  `unregistered_observation`) plus the prompt tightening. The prompt worked on
+  its own terms — zero `unregistered_observation` findings, down from three —
+  but the model simply LAUNDERED the same restatements through ill-fitting
+  REGISTERED risk ids: "encoded at 30p, not an allowed delivery rate" filed as
+  `creative_vs_defect`, "-10.9 LKFS, extremely loud" filed as `audio_transients`
+  (neither id fits: one is creative-intent, the other is clicks/pops). Those ids
+  were not capped, so the report still showed 5 BLOCKERs for 3 real defects.
+- Decision / result: Widen the rule to its honest form — `checks_from_findings`
+  caps EVERY agentic finding at ISSUE; no model finding, under any risk_id, can
+  carry BLOCKER. Severity chosen by a model over sampled evidence is not a
+  rejection-grade signal, and which registry slot it claims does not change
+  that. Only instruments reject; the model annotates and escalates to a human.
+- Why it matters: this is finally the 2026-07-18 rule ("AI verdicts annotate the
+  report; they never overwrite an instrument reading") enforced where it was
+  missing — the checks/tier list. Replaying BOTH real captures through the fix
+  converges on exactly the three true instrument BLOCKERs (framerate, loudness,
+  true_peak): run 1 `{6,1,13}` → `{3,4,13}`, run 2 `{5,1,13}` → `{3,3,13}`,
+  overall status `fail` in both, driven by the instruments as it should be.
+- Nothing is lost: model-only defects stay prominent as ISSUE, coverage still
+  marks the risk SUSPECTED/CONFIRMED, and they appear in residual human review.
+  Profile-governed escalation is untouched — `worker.run_ai_qc` re-escalates
+  censorship to `fail` AFTER this point when the profile says so, which is an
+  explicit policy decision rather than the model grading its own severity.
+- Method note worth keeping: the first fix was verified only by replaying run 1
+  and looked correct; it took a fresh live run to expose that it had merely
+  moved the behaviour. When a guard constrains a model, re-run the model against
+  the guard — replaying old output cannot show it routing around the new rule.
+- Asserted in `scripts/agentic-qc-proof.sh` (blocker+issue findings across
+  unregistered, laundered-registered, and genuine ids all resolve to `warn`).
+
+### 2026-07-24 - (superseded, kept for history) unregistered_observation cap
 
 - Context: The first LIVE agentic capture against real GMI (demo-master.mp4,
   Netflix strict) exposed something every mock-based proof had missed: the
