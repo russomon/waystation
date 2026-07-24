@@ -31,6 +31,20 @@ chat threads.
   Profile-governed escalation is untouched — `worker.run_ai_qc` re-escalates
   censorship to `fail` AFTER this point when the profile says so, which is an
   explicit policy decision rather than the model grading its own severity.
+- Confirmed by a THIRD live run against the widened cap: `{BLOCKER 3, ISSUE 5,
+  FYI 12}`, BLOCKERs exactly `framerate`/`loudness`/`true_peak`, and ZERO
+  agentic findings at `fail`. Across the three runs the agentic-fail count went
+  3 → 2 → 0 while the true defect count stayed 3.
+- Note what run 3 also showed: the model restated all three instrument findings
+  AGAIN (30p as `creative_vs_defect`, -10.9 LKFS and +8.1 dBTP as
+  `audio_transients`) despite the tightened prompt. The prompt layer is
+  therefore not load-bearing — it reduces restatement in some runs but does not
+  stop it; the deterministic cap is what makes restatement harmless. Keep the
+  prompt wording, but never rely on it.
+- Residual, cosmetic and accepted: restatements still appear as agentic ISSUEs
+  alongside the instrument BLOCKERs they echo. Harmless to the verdict, but do
+  not narrate them as the AI "independently corroborating" the instruments —
+  the informed pass was handed the dossier, so that would be an over-claim.
 - Method note worth keeping: the first fix was verified only by replaying run 1
   and looked correct; it took a fresh live run to expose that it had merely
   moved the behaviour. When a guard constrains a model, re-run the model against
