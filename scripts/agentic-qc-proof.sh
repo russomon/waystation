@@ -90,6 +90,22 @@ pixel = next(r for r in qc["coverage"]["risks"] if r["risk_id"] == "dead_stuck_p
 assert pixel["status"] in {"CONFIRMED", "SUSPECTED", "REVIEW_REQUIRED"}, pixel
 assert not any(r["status"] == "NOT_APPLICABLE" and r["applicable"] for r in qc["coverage"]["risks"])
 
+# Instruments decide, the model annotates: an `unregistered_observation` sits
+# outside the registry and is measured by no instrument, so it may never carry
+# BLOCKER. Observed live 2026-07-23: the informed pass restated three MEASURED
+# instrument failures as "novel" blockers, reporting 6 BLOCKERs for 3 defects.
+capped = agentic.checks_from_findings({"passes": {"critic": {"status": "complete", "findings": [
+    {"title": "restated", "description": "The integrated loudness is -10.9 LKFS.",
+     "risk_id": "unregistered_observation", "severity": "blocker", "confidence": "high"},
+    {"title": "real", "description": "Burned-in slate visible.",
+     "risk_id": "subtle_visual_artifacts", "severity": "blocker", "confidence": "high"}]}}})
+unreg = next(c for c in capped if c["risk_id"] == "unregistered_observation")
+registered = next(c for c in capped if c["risk_id"] == "subtle_visual_artifacts")
+assert unreg["status"] == "warn", unreg          # capped: never auto-rejects
+assert registered["status"] == "fail", registered  # registry-mapped keeps blocker
+print(f"  unregistered_observation blocker -> {unreg['status']} (capped); "
+      f"registered risk blocker -> {registered['status']}")
+
 print("PASS: agentic charter + allowlisted evidence + 18-risk accounting + no-repair report")
 print(f"  prompt {qc['agentic']['prompt']['version']} {qc['agentic']['prompt']['sha256'][:16]}...")
 print(f"  coverage {qc['coverage']['assessed_risks']}/{qc['coverage']['applicable_risks']} assessed; "

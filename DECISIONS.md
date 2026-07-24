@@ -5,6 +5,40 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-24 - An `unregistered_observation` may never be a BLOCKER
+
+- Context: The first LIVE agentic capture against real GMI (demo-master.mp4,
+  Netflix strict) exposed something every mock-based proof had missed: the
+  instrument-informed pass RESTATED three already-measured deterministic
+  failures (30p framerate, -10.9 LKFS, 8.1 dBTP) as its own findings tagged
+  `unregistered_observation` at `severity: blocker`. Nothing downstream stopped
+  it, so the report showed **6 BLOCKERs for 3 real defects**, with the duplicates
+  labelled "unregistered" — i.e. presented as newly discovered when they were
+  the opposite. The mock could never produce this: its canned findings never
+  collided with the deterministic ones.
+- Decision / result: Enforce the invariant deterministically in
+  `checks_from_findings` — a finding whose `risk_id` is
+  `unregistered_observation` is capped at ISSUE and can never be BLOCKER. It
+  sits outside the risk registry and is measured by no instrument, so sampled
+  model perception must not auto-reject a delivery; it demands human review
+  instead. Findings the model maps to a REGISTERED risk are unaffected and still
+  carry BLOCKER. Second layer: the informed prompt now explicitly forbids
+  restating a defect the dossier already measured, and narrows
+  `unregistered_observation` to things absent from both registry and dossier.
+- Why it matters: this is the existing "instruments win, the model annotates"
+  rule (2026-07-18) finally applied to the CHECKS/tier list — it was previously
+  enforced only for coverage dispositions, which is exactly how the model could
+  inflate the blocker count. Verified by replaying the REAL captured model
+  output through the fix: `{BLOCKER 6, ISSUE 1, FYI 13}` → `{BLOCKER 3, ISSUE 4,
+  FYI 13}`, overall status still `fail` (driven by the instruments, as it should
+  be). Asserted in `scripts/agentic-qc-proof.sh`, which also proves a
+  registry-mapped blocker is NOT capped.
+- Follow-up: the cap is deterministically proven; the prompt tightening can only
+  be validated by another live run — do that before recording. Note the policy
+  consequence: a master with no deterministic failures where the model finds a
+  novel blocker-severity defect now lands `warn` (human review) rather than
+  `fail` (auto-reject).
+
 ### 2026-07-23 - SyncNet baked into the Docker worker as an opt-in CPU build
 
 - Context: SyncNet was integrated as an optional host analyzer (`qc/avsync.py`),
