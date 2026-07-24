@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-23 (detection-coverage upgrades)
+Updated: 2026-07-24 (measured lip-sync in Docker; hybrid QC lane; instruments-only-reject cap)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03)
 
@@ -13,11 +13,42 @@ switches and chat history gaps.
 - Current branch: `main`
 - Active task: Backblaze Generative Media Hackathon submission. Waystation is a
   read-only QC reporter: deterministic instruments feed a three-pass agentic
-  inspection, and an 18-risk registry prevents silent omissions. Detection
-  coverage was widened on 2026-07-23 (five upgrades, see below).
-- Immediate next action: capture one report against real GMI (now with the
-  wider evidence), then record the demo video (`docs/demo-script.md`) and
-  re-paste the Devpost sections.
+  inspection, and an 18-risk registry prevents silent omissions.
+- Immediate next action: **record the demo video** (`docs/demo-script.md`, now
+  current) and re-paste the Devpost sections. The engineering is done and the
+  real-GMI capture is complete (see below) — the remaining work is the
+  submission artifacts, not code.
+
+## This session (2026-07-24)
+
+Four landed changes, all committed + pushed, all proofs green:
+
+1. **Perceive-then-compute hybrid QC lane** (`pipeline/qc/hybrid.py`, commit
+   b39f86c). Pure module: the model PERCEIVES per-window (mouth openness,
+   per-channel content); deterministic reducers OWN the decision (`align`,
+   `compare_declared`, `persistence`). Two live instances feed `lip_sync` and
+   `channel_assignment`; a hybrid WARN raises SUSPECTED, a hybrid PASS never
+   CLEARs. Proven by `scripts/hybrid-proof.sh`.
+2. **Measured lip-sync in the worker image** (`pipeline/Dockerfile`, commit
+   102d7ee). Opt-in `INSTALL_SYNCNET=1 docker compose build worker` — micromamba
+   Python 3.10 + pip CPU torch 2.5.1 + weights. Proven end-to-end on SyncNet's
+   `data/example.avi`: **+120 ms, confidence 8.3** → `lip_sync: SUSPECTED`. Also
+   fixed a latent cwd bug in `qc/avsync.py` (see DECISIONS 2026-07-23). Sizes:
+   base 1.31 GB, SyncNet 2.95 GB. SyncNet is CPU-only; it never calls GMI.
+3. **Demo shot list brought current** (`docs/demo-script.md`, commit b5fff53) —
+   the master is faceless + stereo, so measured lip-sync, hybrid lip-sync, and
+   hybrid channel-semantics are silent on it BY DESIGN; an opt-in real-face beat
+   was added rather than claiming them over that master.
+4. **Only instruments reject** (`pipeline/qc/agentic.py`, commits 17e85aa →
+   2557d3f → d518873). Three LIVE real-GMI captures of `demo-master.mp4` exposed
+   the model restating measured instrument failures as its OWN blockers (6
+   BLOCKERs for 3 defects). Fix: `checks_from_findings` caps EVERY agentic
+   finding at ISSUE — only instruments reject. Verdict stays `fail` on the real
+   instrument findings; final tiers a stable {BLOCKER 3}. See DECISIONS
+   2026-07-24.
+
+Validated at handoff: `gateway tsc --noEmit`, `client build`, `worker` import,
+and ALL 8 `scripts/*-proof.sh` — green.
 
 ## Detection-coverage upgrades (2026-07-23)
 
@@ -161,9 +192,13 @@ agentic contract proof and the MediaInfo proof (see
   never contacted, dev trigger off) caused B2 to fire `b2:ObjectCreated`,
   which drove the full pipeline — proving the reactive loop with genuine B2
   events, not a manually-fired webhook. Every link is now proven live.
-- The new three-pass agentic reporter is fully integration-proven against a
-  mock OpenAI-compatible GMI endpoint. Run one representative master against
-  real GMI before recording to capture final model-output/UI evidence.
+- The three-pass agentic reporter is integration-proven against a mock GMI
+  endpoint AND captured live against real GMI three times on 2026-07-24
+  (`demo-master.mp4`, Netflix strict): all three passes, prompt hash, coverage
+  accounting, and residual review render cleanly. Coverage counts vary per run
+  (5/13 → 7/13 assessed) — normal model variance; read them off the screen on
+  the take, do not memorize a rehearsal number. Retained reports live in the
+  session scratchpad only (not in the repo).
 - Event Notifications are registered per-tunnel: a cloudflared quick-tunnel
   URL is ephemeral, so after starting `scripts/live-event-run.sh`, run
   `scripts/b2-register-events.sh` to (re)point the B2 rule at the current
@@ -197,15 +232,22 @@ agentic contract proof and the MediaInfo proof (see
 
 ## Handoff
 
-- Safe stopping point: yes. The agentic reporter contract, adaptive evidence,
-  no-repair runtime/UI, expanded delivery report, and proof updates are in the
-  current handoff. Validation: all 13 `scripts/*-proof.sh` capability proofs
-  green; gateway `tsc --noEmit`, production client build, Python compile/import,
-  and `git diff --check` green. The Docker worker image also passed with
-  ffmpeg, MediaInfo, Java, and Photon present.
-- Risks or open questions: real-GMI output for the new charter should be
-  captured before the demo; no implementation blocker is known. When
-  recording, bring the stack up with `scripts/live-event-run.sh` then
-  `scripts/b2-register-events.sh` — the quick-tunnel URL is fresh each run, so
-  the rule must be re-registered.
+- Safe stopping point: yes. Working tree clean, everything committed + pushed to
+  `origin/main`. Validation at this handoff: gateway `tsc --noEmit`, production
+  client build, `worker` import, and ALL 8 `scripts/*-proof.sh` green.
+- Exact next step: **record the demo video** per `docs/demo-script.md` (it is
+  current as of this session). Bring the stack up with `scripts/live-event-run.sh`
+  then `scripts/b2-register-events.sh` — the cloudflared quick-tunnel URL is
+  fresh each run, so the B2 event rule must be re-registered. Then re-paste the
+  Devpost sections from `docs/devpost-about.md`. No code work is required first.
+- Two things to carry into the recording: (1) the demo master is faceless +
+  stereo, so measured lip-sync / hybrid lip-sync / hybrid channel-semantics are
+  silent on it by design — either run the optional real-face beat or narrate the
+  honest disclosure (see the demo script + recording notes); (2) do NOT narrate
+  the agentic ISSUE-level restatements as the AI "independently corroborating"
+  the instruments — the informed pass was handed the dossier (DECISIONS
+  2026-07-24).
+- Next engineering item when code resumes (not a blocker): export SyncNet's full
+  measurement (per-window offset trajectory → drift characterization) into the
+  agentic dossier — specified in `NEXT_STEPS.md` under "Soon".
 - Who should pick this up next: current Waystation maintainer, on any machine.
