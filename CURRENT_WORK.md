@@ -60,12 +60,31 @@ each asserted by `scripts/coverage-proof.sh` (ffmpeg + venv only, no cloud):
   softens a deterministic finding or overrides a full-scope clear), and
   `lip_sync` is flagged `model_unreliable` so the VLM can never CLEAR/CONFIRM
   it. Verified green by agentic-qc / ai-qc proofs.
-- PENDING: the end-to-end SyncNet torch run. `fetch-syncnet.sh` clones the
-  repo + downloads weights; the upstream is CURRENT (2026-04-17 "modernize-code"
-  commit: torch 2.5.1, PySceneDetect 0.6.7.1, Python 3.10 + S3FD), so standing
-  up the venv is bounded, not dependency archaeology (earlier "~8-year-old"
-  notes were wrong). Not a blocker — until then the analyzer reports an honest
-  FYI.
+- MEASURED LIP-SYNC IS NOW PROVEN END-TO-END (2026-07-23). Running the built
+  image against SyncNet's own `data/example.avi` (a real talking face):
+  `AV offset: 3` frames @25fps (**+120 ms**), `Min dist: 6.589`,
+  `Confidence: 8.323`. `qc/avsync.py` parsed that into
+  `avsync_offset — warn / ISSUE: "measured A/V offset +120 ms (+3 @25fps,
+  confidence 8.3) — lip sync out of tolerance"`, and `build_coverage` escalated
+  `lip_sync` to **SUSPECTED / ASSESSED**. Image sizes: base worker 1.31 GB,
+  SyncNet worker 2.95 GB. The base image still returns the honest FYI, verified
+  by running the same wrapper in it.
+- SyncNet now ships in the WORKER IMAGE (2026-07-23): `pipeline/Dockerfile`
+  takes an opt-in `INSTALL_SYNCNET=1` build arg — micromamba supplies a
+  self-contained Python 3.10 (independent of the image's 3.13) and pip supplies
+  CPU torch 2.5.1, plus the cloned repo and weights. Run it with
+  `INSTALL_SYNCNET=1 docker compose build worker`. CPU-only, no GPU. The default
+  image is unchanged and still reports the honest FYI. Notes: the pytorch CONDA
+  channel is x86_64-only (upstream's `environment-cpu.yml` will not solve on
+  arm64), so the env is pip-built and works on both arches; and SyncNet never
+  imports torchaudio/torchvision, so neither is installed.
+- Also fixed a latent bug this exposed: `qc/avsync.py` invoked SyncNet by
+  relative script name with relative model/S3FD-weight paths while
+  `qc/util.py:run` never set a cwd — so the invocation could only ever have
+  worked in its absent-tool branch. `run` gained `cwd=`; avsync passes
+  `cwd=SYNCNET_DIR`. The upstream is CURRENT (2026-04-17 "modernize-code":
+  torch 2.5.1, PySceneDetect 0.6.7.1, Python 3.10 + S3FD) — earlier
+  "~8-year-old" notes were wrong.
 
 ## Hybrid QC lane — perceive-then-compute (2026-07-23)
 

@@ -28,6 +28,47 @@ COPY qc ./qc
 COPY --from=photon /opt/photon /opt/photon
 ENV PHOTON_JAR=/opt/photon
 
+# ── optional: SyncNet AV-sync (measured lip-sync), CPU ──
+# Heavy (torch + weights), so it's opt-in: `--build-arg INSTALL_SYNCNET=1`.
+# micromamba supplies ONLY a self-contained Python 3.10 (SyncNet's version),
+# independent of this image's 3.13 — no cross-interpreter venv juggling — and
+# pip supplies CPU torch, whose wheels exist for x86_64 AND aarch64 (the pytorch
+# CONDA channel is x86_64-only, which is why the env is not built from upstream's
+# environment-cpu.yml). Deps are the ones SyncNet actually imports: torch, cv2,
+# numpy, scipy, python_speech_features, scenedetect, tqdm — it never imports
+# torchaudio or torchvision, so both are omitted. opencv is the -headless build
+# so no libGL is needed in a slim image.
+# The base build (arg unset) is byte-for-byte unchanged. qc/avsync.py finds this
+# via SYNCNET_DIR/SYNCNET_PYTHON and, when absent, emits an honest FYI instead
+# of a silent pass.
+ARG INSTALL_SYNCNET=0
+RUN if [ "$INSTALL_SYNCNET" = "1" ]; then set -eux; \
+      apt-get update && apt-get install -y --no-install-recommends git wget bzip2 ca-certificates; \
+      arch="$(uname -m)"; case "$arch" in x86_64) mm=linux-64;; aarch64) mm=linux-aarch64;; *) mm=linux-64;; esac; \
+      wget -qO /tmp/mm.tar.bz2 "https://micro.mamba.pm/api/micromamba/${mm}/latest"; \
+      tar -xj -C /usr/local/bin --strip-components=1 -f /tmp/mm.tar.bz2 bin/micromamba; \
+      export MAMBA_ROOT_PREFIX=/opt/syncnet/mamba; \
+      micromamba create -y -p /opt/syncnet/env -c conda-forge python=3.10 pip; \
+      git clone --depth 1 https://github.com/joonson/syncnet_python.git /opt/syncnet/repo; \
+      (cd /opt/syncnet/repo && bash download_model.sh); \
+      PY=/opt/syncnet/env/bin/python; \
+      if [ "$arch" = "x86_64" ]; then \
+        "$PY" -m pip install --no-cache-dir torch==2.5.1+cpu \
+          --index-url https://download.pytorch.org/whl/cpu; \
+      else \
+        "$PY" -m pip install --no-cache-dir torch==2.5.1; \
+      fi; \
+      "$PY" -m pip install --no-cache-dir \
+        numpy scipy opencv-contrib-python-headless \
+        python_speech_features==0.6 scenedetect==0.6.7.1 tqdm; \
+      micromamba clean -y --all; \
+      apt-get purge -y git wget bzip2 && apt-get autoremove -y; \
+      rm -rf /var/lib/apt/lists/* /tmp/mm.tar.bz2 /opt/syncnet/mamba/pkgs; \
+    fi
+# Harmless when SyncNet is not installed: avsync._resolve() checks the dir exists.
+ENV SYNCNET_DIR=/opt/syncnet/repo \
+    SYNCNET_PYTHON=/opt/syncnet/env/bin/python
+
 # big masters need real scratch space — mount a volume over /tmp in production
 VOLUME /tmp
 

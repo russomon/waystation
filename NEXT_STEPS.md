@@ -40,22 +40,23 @@ history.
   classifiers. The agentic reporter now samples scene/anomaly frames and audio
   windows and requests more evidence, but does not claim exhaustive timeline
   clearance.
-- Measured lip-sync: the SyncNet AV-sync analyzer (`qc/avsync.py`) is
-  integrated as an optional tool (Photon pattern) and wired into the
-  `lip_sync` risk; the wrapper's output parser is verified against SyncNet's
-  source. REMAINING: stand up the SyncNet stack end-to-end and capture a real
-  measured run. `scripts/fetch-syncnet.sh` clones the repo + downloads weights;
-  the upstream is CURRENT (2026-04-17 "modernize-code": torch 2.5.1,
-  PySceneDetect 0.6.7.1, Python 3.10 + S3FD), so standing up the venv is a
-  bounded task, not dependency archaeology. Until then, Waystation emits an
-  honest FYI (never a silent pass) and the deterministic container/envelope
-  proxy plus the new perceptual hybrid catch gross drift. A general VLM is
-  deliberately NOT used to JUDGE lip sync (proven to confabulate); the hybrid
-  uses it for per-frame PERCEPTION only (see DECISIONS 2026-07-23).
-- SyncNet as a Docker remote worker: baking the torch stack + weights into the
-  worker image so measured lip-sync is available without a host install.
-  DEFERRED pending an explicit go-ahead (image size / GPU-vs-CPU trade-off to
-  confirm first).
+- Measured lip-sync: DONE and proven end-to-end. The SyncNet AV-sync analyzer
+  (`qc/avsync.py`) is wired into the `lip_sync` risk and now runs for real in
+  the worker image: on SyncNet's own `data/example.avi` it measured
+  **AV offset 3 frames @25fps = +120 ms, confidence 8.3**, which the wrapper
+  turned into an `avsync_offset` ISSUE and coverage escalated to
+  `lip_sync: SUSPECTED / ASSESSED` — off its former permanent REVIEW_REQUIRED.
+  Enable with `INSTALL_SYNCNET=1 docker compose build worker`, or on a host with
+  `scripts/fetch-syncnet.sh`. Without it, Waystation still emits an honest FYI
+  (never a silent pass) and the container/envelope proxy plus the perceptual
+  hybrid catch gross drift. A general VLM is deliberately NOT used to JUDGE lip
+  sync (proven to confabulate); the hybrid uses it for per-frame PERCEPTION only
+  (see DECISIONS 2026-07-23).
+- SyncNet as a Docker remote worker: DONE — `pipeline/Dockerfile` takes an
+  opt-in `INSTALL_SYNCNET=1` build arg (micromamba-supplied Python 3.10 + pip
+  CPU torch 2.5.1 + weights), exposed as
+  `INSTALL_SYNCNET=1 docker compose build worker`. CPU-only; no GPU needed.
+  The default image stays lean and still reports an honest FYI without it.
 - Hybrid framework, next specs: `qc/hybrid.py` (perceive-then-compute) now
   makes logo/watermark **persistence** (is the bug present in every window, or
   intermittent → `persistence` reducer) and shot-content **continuity**

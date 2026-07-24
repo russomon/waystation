@@ -5,6 +5,49 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-23 - SyncNet baked into the Docker worker as an opt-in CPU build
+
+- Context: SyncNet was integrated as an optional host analyzer (`qc/avsync.py`),
+  but a containerized "remote worker" had no measured lip-sync unless the tool
+  was installed on the host. The user asked to make it available in the image.
+- Decision / result: Add an opt-in `INSTALL_SYNCNET` build arg to
+  `pipeline/Dockerfile`. When set, **micromamba** supplies only a self-contained
+  **Python 3.10** (SyncNet's version, independent of the image's 3.13 — so no
+  cross-interpreter venv copying), and **pip** supplies **CPU torch 2.5.1**; it
+  then clones `syncnet_python` and downloads the weights (+ `example.avi`).
+  The base build (arg unset) is unchanged; `SYNCNET_DIR`/`SYNCNET_PYTHON` are
+  set unconditionally and are harmless when absent (avsync `_resolve()` checks
+  the dir exists → honest FYI). `docker-compose.yml` exposes it as
+  `INSTALL_SYNCNET=1 docker compose build worker`.
+- Two findings drove the final shape, after a first attempt built the env from
+  upstream's `environment-cpu.yml` and FAILED to solve on arm64:
+  (1) the **pytorch conda channel is x86_64-only** (`pytorch ==2.5.1 does not
+  exist` for linux-aarch64), whereas pip's CPU wheels cover both arches — so the
+  env is built with pip, not the upstream yml, and works on ARM hosts and
+  Graviton-class cloud workers as well as x86_64;
+  (2) SyncNet **never imports torchaudio or torchvision** despite the yml
+  pinning both, so both are omitted — the install is only what the code actually
+  imports (torch, cv2, numpy, scipy, python_speech_features, scenedetect, tqdm),
+  with opencv as the `-headless` build so no libGL is needed in a slim image.
+- Why it matters: measured lip-sync now ships with the remote worker, CPU-only
+  (no GPU needed — SyncNet inference is light), without bloating the default
+  image or making every worker carry torch.
+- Also fixed a latent bug this required: `qc/avsync.py` invoked SyncNet's
+  scripts by relative name with a relative model/S3FD-weight path, but
+  `qc/util.py:run` never set a working directory — so the invocation only ever
+  worked in its absent-tool branch. `run` gained a `cwd=` arg and avsync now
+  runs both SyncNet steps with `cwd=SYNCNET_DIR`.
+- Verified end-to-end in the built image (the run that had been pending since
+  the analyzer was written): on SyncNet's own `data/example.avi`, `AV offset: 3`
+  frames @25fps (**+120 ms**), `Min dist: 6.589`, `Confidence: 8.323` → the
+  wrapper emitted `avsync_offset` warn/ISSUE and coverage escalated `lip_sync`
+  to SUSPECTED/ASSESSED. The default image (arg unset) was rebuilt and still
+  returns the honest FYI. Sizes: base 1.31 GB, SyncNet 2.95 GB.
+- Follow-up: GPU is unnecessary for SyncNet (CPU inference is light — face
+  detection ran ~48 fps on CPU), but a CUDA variant is a trivial swap (drop the
+  `+cpu` pin / use upstream `environment.yml` on an x86_64 GPU host) if a large
+  backlog ever justifies it.
+
 ### 2026-07-23 - Perceive-then-compute: a reusable hybrid QC framework
 
 - Context: The "no VLM lip-sync" decision below ruled out asking the model to

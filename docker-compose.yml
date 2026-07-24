@@ -38,6 +38,14 @@ services:
   worker:
     build:
       context: ./pipeline
+      args:
+        # Measured lip-sync (SyncNet, CPU) is opt-in — heavy (torch + weights).
+        #   INSTALL_SYNCNET=1 docker compose build worker
+        # then bring the stack up as usual. The pytorch conda channel is x86_64,
+        # so on an ARM host add: DOCKER_DEFAULT_PLATFORM=linux/amd64.
+        # Default (0) keeps the base worker lean; avsync.py reports an honest
+        # FYI when SyncNet is absent, never a silent pass.
+        INSTALL_SYNCNET: ${INSTALL_SYNCNET:-0}
     env_file:
       - path: .env
         required: false

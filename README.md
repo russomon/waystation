@@ -323,9 +323,13 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   was empirically shown to confabulate lip-sync verdicts — it called a gross
   1.7 s A/V offset "in sync" with high confidence — so Waystation does NOT
   use the AI lane for sync. Instead `qc/avsync.py` wraps the purpose-built
-  **SyncNet** AV-sync model (`scripts/fetch-syncnet.sh`, `SYNCNET_DIR`) as an
-  optional analyzer (Photon pattern): it reports a real per-face-track offset
-  in ms. When SyncNet is absent it emits an explicit FYI — never a silent
+  **SyncNet** AV-sync model as an optional analyzer (Photon pattern): it
+  reports a real per-face-track offset in ms. Install it on a host with
+  `scripts/fetch-syncnet.sh` (sets `SYNCNET_DIR`/`SYNCNET_PYTHON`), or bake it
+  into the Docker worker as a self-contained CPU build with
+  `INSTALL_SYNCNET=1 docker compose build worker` (a micromamba-supplied Python
+  3.10 + pip CPU torch 2.5.1, x86_64 and arm64, so no host install is needed for
+  a remote worker). When SyncNet is absent it emits an explicit FYI — never a silent
   pass — and the deterministic container/envelope proxy catches gross drift.
   The coverage engine forbids the AI model from ever clearing the `lip_sync`
   risk (`model_unreliable`), and more broadly instruments now always win over

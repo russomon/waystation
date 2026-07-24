@@ -76,12 +76,15 @@ def checks(src: str, meta: dict) -> list:
 
     with tempfile.TemporaryDirectory() as work:
         ref = "waystation"
+        # SyncNet's scripts, model weights (data/syncnet_v2.model), and S3FD
+        # weights (./detectors/s3fd/weights/sfd_face.pth) are all referenced
+        # RELATIVE to the repo, so both steps must run with cwd=syncnet_dir.
         # 1) face detection + tracking
         p1 = run([py, "run_pipeline.py", "--videofile", os.path.abspath(src),
-                  "--reference", ref, "--data_dir", work], timeout=1800)
-        # 2) SyncNet on the tracked faces → offset + confidence on stdout
+                  "--reference", ref, "--data_dir", work], timeout=1800, cwd=syncnet_dir)
+        # 2) SyncNet on the tracked faces → offset + confidence on stderr
         p2 = run([py, "run_syncnet.py", "--videofile", os.path.abspath(src),
-                  "--reference", ref, "--data_dir", work], timeout=1800)
+                  "--reference", ref, "--data_dir", work], timeout=1800, cwd=syncnet_dir)
     out = (p1.stdout or "") + (p2.stdout or "") + (p2.stderr or "")
 
     tracks = _parse_tracks(out)

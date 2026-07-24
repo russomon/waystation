@@ -7,8 +7,8 @@ import re
 import subprocess
 
 
-def run(cmd: list, timeout: int = 600) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def run(cmd: list, timeout: int = 600, cwd: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
 
 
 def ffprobe_json(path: str, *extra: str) -> dict:
