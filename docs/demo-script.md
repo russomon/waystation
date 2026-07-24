@@ -37,6 +37,22 @@ Object Lock.
    (This master is deliberately illegal: 30 fps, ≈ −10.7 LKFS, +8.1 dBTP.)
 3. Browser at `http://localhost:5173`, ~125 % zoom. Terminal with a big font.
 4. Have one finished transfer id handy for the WORM shot (from a rehearsal run).
+5. **Only if you want the measured-lip-sync beat** (see the optional beat below):
+   build the SyncNet-enabled worker and prepare a REAL-FACE clip with a known
+   injected offset — the demo master above is a test pattern with no face, so
+   SyncNet correctly finds nothing to measure on it.
+   ```bash
+   INSTALL_SYNCNET=1 docker compose build worker      # ~2.95 GB image, CPU-only
+   # a real face: record ~12 s of yourself speaking (macOS webcam + mic)
+   ffmpeg -y -f avfoundation -framerate 30 -i "0:0" -t 12 \
+     -c:v libx264 -pix_fmt yuv420p -c:a aac ~/Desktop/face-insync.mp4
+   # then inject a KNOWN 200 ms A/V offset — this is what SyncNet should measure
+   ffmpeg -y -i ~/Desktop/face-insync.mp4 -itsoffset 0.2 -i ~/Desktop/face-insync.mp4 \
+     -map 0:v:0 -map 1:a:0 -c copy ~/Desktop/face-offset200.mp4
+   ```
+   Ground truth: 200 ms ≈ 5 frames @ 25 fps. (Fallback with no webcam: SyncNet's
+   own bundled `data/example.avi` inside the image measures +120 ms — but say on
+   camera that it's the tool's sample clip, not your master.)
 
 ## Beats
 
@@ -75,6 +91,12 @@ Scroll slowly through the delivery page:
   > "A sampled AI review cannot honestly clear every frame. Waystation names
   > every applicable risk and exposes what remains unverified instead of
   > manufacturing an all-clear. It reports; it never changes the master."
+  If `lip_sync` is visible in the list, it is a good one to point at — on this
+  master (no face on screen) it stays disclosed rather than cleared:
+  > "Lip sync is a good example. There's no face in this master, so the AV-sync
+  > model has nothing to measure — and Waystation says exactly that instead of
+  > passing it. A general vision model *will* confidently guess here; we tested
+  > that and it was wrong, so it is not allowed to clear this risk."
 - Click **Verify provenance** → green checks.
 
 **2:00 – 2:25 · The WORM shot (terminal)**
@@ -84,6 +106,17 @@ bash scripts/worm-demo.sh <transferId>
 > "The QC report is anchored by a manifest under B2 Object Lock in
 > COMPLIANCE mode. This is the bucket owner's own key trying to delete
 > it — Backblaze says no. The evidence outlives everyone's permissions."
+
+**OPTIONAL · +0:20 · Measured lip sync (only with the prep-5 clip)**
+This does not fit inside 3:00 as-is — buy the time by trimming the send beat
+(0:15–0:45) to ~20 s, or cut it and keep lip-sync as the coverage line above.
+Send `face-offset200.mp4` (pre-recorded, fast cut) through the SyncNet worker:
+> "I shifted this audio by exactly 200 milliseconds. Waystation doesn't ask a
+> chat model whether it looks off — it runs SyncNet, a purpose-built audio-visual
+> model, over the tracked face."
+Land on the `avsync_offset` finding — a real number in ms with a confidence, and
+`lip_sync` moving to SUSPECTED in the coverage table.
+> "Five frames out at 25 fps. Measured, not guessed."
 
 **2:25 – 2:45 · The contrast (pre-recorded second send, fast cut)**
 Same file, profile **Standard**: zero blockers, review-level issues only.
@@ -103,3 +136,12 @@ Same file, profile **Standard**: zero blockers, review-level issues only.
   in real time once, and cut the wait in the edit rather than faking it.
 - If Gemini's vision findings differ between takes (it's a model, not a
   filter), just read what's on screen — it's always been right so far.
+- **The demo master has no face and is stereo**, so three recently-added checks
+  stay quiet on it by design: measured lip-sync (SyncNet — no face track), the
+  hybrid perceptual lip-sync (no mouth to perceive), and hybrid channel
+  semantics (skipped for stereo; it needs a 5.1-style layout with a centre/LFE
+  role to violate). Do not claim them over this master — either run the optional
+  beat above on a real face, or point at the honest disclosure in coverage.
+- The default worker image does NOT contain SyncNet (1.31 GB, reports an honest
+  FYI). Only the `INSTALL_SYNCNET=1` build measures (2.95 GB). If the optional
+  beat is in, make sure the running worker is the SyncNet one.
