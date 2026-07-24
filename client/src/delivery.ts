@@ -107,6 +107,46 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     addSection("Residual human review", (qc.residual_human_review ?? []).map((r: any) =>
       `${r.status} ${r.label} - ${r.reason}`));
 
+    const synthetic = qc.synthetic;
+    if (synthetic) {
+      const plan = synthetic.plan;
+      const assertions = (plan?.assertions ?? []) as any[];
+      const planLines = assertions.slice(0, 18).map((a: any) =>
+        `${a.assertion_id} [${a.risk_id}] ${a.requirement} · ${a.evidence_strategy}`);
+      if (assertions.length > 18) planLines.push(`… ${assertions.length - 18} additional assertion(s)`);
+      if (planLines.length) {
+        planLines.unshift(`${plan.version} · ${assertions.length} atomic assertion(s) · prompt ${plan.generation_prompt_available ? "available" : "redacted/unavailable"}`);
+      }
+      addSection("Generated-media QC blueprint", planLines);
+
+      const generatedCoverage = synthetic.coverage;
+      if (generatedCoverage) {
+        const riskLines = (generatedCoverage.risks ?? []).map((r: any) =>
+          `${r.status} ${r.label}`);
+        riskLines.unshift(
+          `${generatedCoverage.accounting_complete ? "COMPLETE" : "INCOMPLETE"}: ${generatedCoverage.assessed_risks}/${generatedCoverage.total_risks} dimensions assessed; ${generatedCoverage.suspected_risks} suspected`,
+        );
+        addSection("Generated-media coverage", riskLines);
+      }
+
+      const generatedFindings = (synthetic.findings ?? []).map((f: any) => {
+        const evidence = (f.evidence_ids ?? []).join(", ");
+        return `ISSUE [${f.confidence ?? "medium"}] ${f.risk_id}${evidence ? ` · ${evidence}` : ""} - ${f.detail}`;
+      });
+      if (!generatedFindings.length && synthetic.sampling)
+        generatedFindings.push("No issue observed in sampled evidence; this is not full-timeline clearance.");
+      addSection("Generated-media findings", generatedFindings);
+
+      const sampling = synthetic.sampling;
+      if (sampling) {
+        addSection("Generated-media sampling audit", [
+          `${sampling.coarse_frames ?? 0} coarse frame(s) · ${sampling.fine_frames ?? 0} jittered verification frame(s) · ${sampling.native_text_crops ?? 0} native text crop(s)`,
+          `Candidate timecodes: ${(sampling.candidate_timecodes ?? []).map((t: number) => `${Number(t).toFixed(2)}s`).join(", ") || "none"}`,
+          `Stable concerns: ${(sampling.stable_risks ?? []).join(", ") || "none"} · full-timeline clearance: no`,
+        ]);
+      }
+    }
+
     const support = (qc.checks ?? []).filter((c: any) => c.source !== "deterministic" && c.source !== "agentic_ai");
     addSection("AI support checks", support.map((c: any) =>
       `${glyph(c.status)} ${c.tier ? `[${c.tier}] ` : ""}${c.name}${c.detail ? " - " + c.detail : ""}`));

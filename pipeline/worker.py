@@ -39,6 +39,7 @@ from pydantic import BaseModel
 from qc import agentic as qagentic
 from qc import audio as qaudio
 from qc import avsync as qavsync
+from qc import generated as qgenerated
 from qc import hybrid as qhybrid
 from qc import imf as qimf
 from qc import mediainfo as qmediainfo
@@ -318,16 +319,19 @@ def word_error_rate(ref: list, hyp: list) -> float:
 
 
 def _frame_evidence(src: str, tmp: str, evidence_id: str, at: float,
-                    scale: int = 640, crop: tuple | None = None) -> tuple[dict, dict] | None:
+                    scale: int | None = 640, crop: tuple | None = None) -> tuple[dict, dict] | None:
     """Extract one frame from sanitized numeric inputs and return model/public forms."""
     fp = os.path.join(tmp, f"{evidence_id}.jpg")
-    vf = f"scale={scale}:-2"
+    filters = []
     if crop:
         x, y, width, height = crop
-        vf = (f"crop=iw*{width:.4f}:ih*{height:.4f}:iw*{x:.4f}:ih*{y:.4f},"
-              f"scale={scale}:-2")
-    subprocess.run(["ffmpeg", "-y", "-ss", f"{at:.3f}", "-i", src,
-                    "-frames:v", "1", "-vf", vf, fp], capture_output=True)
+        filters.append(f"crop=iw*{width:.4f}:ih*{height:.4f}:iw*{x:.4f}:ih*{y:.4f}")
+    if scale:
+        filters.append(f"scale={scale}:-2")
+    args = ["ffmpeg", "-y", "-ss", f"{at:.3f}", "-i", src, "-frames:v", "1"]
+    if filters:
+        args.extend(["-vf", ",".join(filters)])
+    subprocess.run(args + [fp], capture_output=True)
     if not os.path.exists(fp) or os.path.getsize(fp) == 0:
         return None
     with open(fp, "rb") as f:
@@ -934,6 +938,9 @@ def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
 # Genblaze manifest, so the prompt itself becomes the QC reference.
 
 AI_QC_SYNTH_FRAMES = int(os.environ.get("AI_QC_SYNTH_FRAMES", "6"))
+AI_QC_SYNTH_COARSE_FRAMES = int(os.environ.get("AI_QC_SYNTH_COARSE_FRAMES", "12"))
+AI_QC_SYNTH_FINE_MAX = int(os.environ.get("AI_QC_SYNTH_FINE_MAX", "12"))
+AI_QC_SYNTH_TEXT_MAX = int(os.environ.get("AI_QC_SYNTH_TEXT_MAX", "16"))
 
 _SYNTH_PROMPT = (
     "You are a QC operator specializing in AI-GENERATED video. These frames are "
@@ -949,17 +956,6 @@ _SYNTH_PROMPT = (
     '"appears_generated": <bool>, "confidence": "<low|medium|high>", '
     '"summary": "<one short sentence>"}\n'
     "Empty findings array if the frames are clean."
-)
-
-_TEMPORAL_PROMPT = (
-    "You are a QC operator checking TEMPORAL COHERENCE in possibly AI-generated "
-    "video. You see bursts of frames sampled close together in time (labeled). "
-    "Within and across bursts, check: do characters keep the same identity "
-    "(face, clothing, build)? Do objects persist (nothing appears/vanishes "
-    "impossibly)? Is the background stable (no melting/morphing)? Is motion "
-    "natural? Respond with STRICT JSON only:\n"
-    '{"issues": [{"issue": "<short>", "kind": "<identity|permanence|background|'
-    'motion>"}], "verdict": "<coherent|incoherent>", "summary": "<one sentence>"}'
 )
 
 _ADHERENCE_PROMPT = (
@@ -1002,81 +998,253 @@ def extract_gen_prompt(path: str) -> str | None:
     return str(data["prompt"]) if data.get("prompt") else None
 
 
+def _generated_context(meta: dict) -> dict:
+    streams = []
+    for stream in meta.get("streams", []):
+        streams.append({key: stream.get(key) for key in
+                        ("codec_type", "codec_name", "width", "height", "r_frame_rate", "channels")
+                        if stream.get(key) is not None})
+    return {"format_name": (meta.get("format") or {}).get("format_name"), "streams": streams}
+
+
+def _generated_evidence(src: str, tmp: str, duration: float) -> tuple[list, list, list[float]]:
+    """Coarse full-timeline evidence: anchors plus scene-boundary representatives."""
+    cuts = _scene_cuts(src, duration)
+    budget = max(AI_QC_SYNTH_FRAMES, AI_QC_SYNTH_COARSE_FRAMES, 2)
+    edge = min(0.2, duration / 4)
+    anchors = [edge + (duration - 2 * edge) * i / max(budget - 1, 1) for i in range(budget)]
+    times = _dedupe_times(anchors + [min(t + 0.08, duration - 0.02) for t in cuts],
+                          duration, min_gap=0.12)
+    if len(times) > budget:
+        step = max(1, len(times) // budget)
+        times = times[::step][:budget]
+    parts: list = []
+    evidence: list = []
+    for index, at in enumerate(times, 1):
+        evidence_id = f"generated-coarse-{index}"
+        item = _frame_evidence(src, tmp, evidence_id, at, scale=AI_QC_FRAME_SCALE)
+        if not item:
+            continue
+        model, public = item
+        public["selection"] = "scene_boundary" if any(abs(at - cut) < 0.5 for cut in cuts) else "anchor"
+        public["shot_hint"] = f"shot-{1 + sum(cut <= at for cut in cuts)}"
+        parts.extend([{"type": "text", "text": f"Evidence {evidence_id} at {at:.3f}s:"}, model])
+        evidence.append(public)
+    return parts, evidence, cuts
+
+
+def _fine_generated_evidence(src: str, tmp: str, duration: float,
+                             candidates: list[float], cuts: list[float]) -> tuple[list, list]:
+    """Jittered samples around coarse suspicions test whether an observation is stable."""
+    times = []
+    for candidate in candidates:
+        times.extend([candidate - 0.12, candidate, candidate + 0.12])
+    times = _dedupe_times(times, duration, min_gap=0.05)[:AI_QC_SYNTH_FINE_MAX]
+    parts: list = []
+    evidence: list = []
+    for index, at in enumerate(times, 1):
+        evidence_id = f"generated-fine-{index}"
+        item = _frame_evidence(src, tmp, evidence_id, at, scale=AI_QC_FRAME_SCALE)
+        if not item:
+            continue
+        model, public = item
+        public["selection"] = "jittered_anomaly_verification"
+        public["shot_hint"] = f"shot-{1 + sum(cut <= at for cut in cuts)}"
+        parts.extend([{"type": "text", "text": f"Verification evidence {evidence_id} at {at:.3f}s:"}, model])
+        evidence.append(public)
+    return parts, evidence
+
+
+def _expanded_crop(box: list[float], padding: float = 0.025) -> tuple:
+    x, y, width, height = box
+    left = max(0.0, x - padding)
+    top = max(0.0, y - padding)
+    right = min(1.0, x + width + padding)
+    bottom = min(1.0, y + height + padding)
+    return left, top, max(0.01, right - left), max(0.01, bottom - top)
+
+
+def _typography_evidence(src: str, tmp: str, ledgers: list[dict]) -> tuple[list, list]:
+    """Extract model-located text regions without scaling away native glyph detail."""
+    candidates = []
+    for ledger in ledgers:
+        for snap in ledger.get("snapshots") or []:
+            at = snap.get("time_seconds")
+            if not isinstance(at, (int, float)):
+                continue
+            for region in snap.get("text_regions") or []:
+                if region.get("bbox"):
+                    candidates.append((float(at), region))
+    parts: list = []
+    evidence: list = []
+    for index, (at, region) in enumerate(candidates[:AI_QC_SYNTH_TEXT_MAX], 1):
+        evidence_id = f"generated-text-{index}"
+        item = _frame_evidence(src, tmp, evidence_id, at, scale=None,
+                               crop=_expanded_crop(region["bbox"]))
+        if not item:
+            continue
+        model, public = item
+        public.update({"track_key": region["track_key"], "selection": "native_resolution_text_crop"})
+        parts.extend([{"type": "text", "text":
+                       f"Text evidence {evidence_id}, track {region['track_key']}, at {at:.3f}s:"}, model])
+        evidence.append(public)
+    return parts, evidence
+
+
+def _dedupe_generated_findings(findings: list[dict]) -> list[dict]:
+    output = []
+    seen = set()
+    for finding in findings:
+        key = (finding.get("risk_id"), str(finding.get("detail", "")).casefold(),
+               tuple(finding.get("evidence_ids") or []))
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(finding)
+    return output
+
+
+def _synthetic_json(content: list, max_tokens: int) -> tuple[dict | None, str | None]:
+    """Keep one failed model stage from erasing the rest of the QC report."""
+    try:
+        data = _json_from(_gmi_chat(content, max_tokens=max_tokens))
+        return data, None if data is not None else "model reply was not parseable JSON"
+    except Exception as exc:
+        return None, str(exc)[:180]
+
+
 def run_synthetic_qc(src: str, meta: dict, tmp: str, gen_manifest_path: str | None) -> tuple:
-    """→ (checks, frames_used). Three prompt engines: generation artifacts,
-    temporal coherence (frame bursts), and prompt adherence vs the Genblaze
-    manifest's recorded prompt."""
+    """Build an asset-specific, hierarchical, read-only generated-media report."""
     checks: list = []
     duration = float(meta.get("format", {}).get("duration", 0) or 0)
     dur = max(duration, 0.5)
     if not any(s.get("codec_type") == "video" for s in meta.get("streams", [])):
-        return checks, 0
+        return checks, 0, {}
 
-    # 1. generation artifacts — evenly sampled stills
+    gen_prompt = extract_gen_prompt(gen_manifest_path) if gen_manifest_path else None
+    plan_raw, plan_error = _synthetic_json([
+        {"type": "text", "text": qgenerated.plan_prompt(gen_prompt, dur, _generated_context(meta))}
+    ], max_tokens=6000)
+    plan = qgenerated.normalize_plan(plan_raw, gen_prompt)
+    checks.append({"name": "ai_generated_qc_plan", "status": "info", "tier": "FYI",
+                   "detail": f"{len(plan['assertions'])} atomic assertion(s); "
+                             f"registry {qgenerated.RISK_REGISTRY_VERSION}"
+                             + (f"; planner unavailable, baseline plan used ({plan_error})" if plan_error else "")})
+    all_findings: list[dict] = []
+
+    # Existing artifact specialist remains useful; its observations now feed
+    # the generated-risk registry instead of living as an isolated score.
     n = max(AI_QC_SYNTH_FRAMES, 2)
     still_times = [dur * (i + 1) / (n + 1) for i in range(n)]
     stills = _sample_frames(src, still_times, tmp, "synth")
     frames = len(stills)
     if stills:
-        data = _json_from(_gmi_chat([{"type": "text", "text": _SYNTH_PROMPT}] + stills, max_tokens=4000))
+        data, artifact_error = _synthetic_json(
+            [{"type": "text", "text": _SYNTH_PROMPT}] + stills, max_tokens=4000)
         if data is None:
             checks.append({"name": "ai_synthetic_artifacts", "status": "info", "tier": "FYI",
-                           "detail": f"{frames} frame(s) reviewed; reply unparseable"})
+                           "detail": f"{frames} frame(s) supplied; inspection unavailable ({artifact_error})"})
         else:
             findings = data.get("findings") or []
             if findings:
                 detail = "; ".join(f"{f.get('category', '?')}: {f.get('issue', '?')}" for f in findings[:4])
                 checks.append({"name": "ai_synthetic_artifacts", "status": "warn", "tier": "ISSUE",
                                "detail": f"{len(findings)} generation defect(s): {detail}"})
+                risk_map = {"anatomy": "human_anatomy", "text": "rendered_text",
+                            "physics": "physics_contact", "merge": "object_permanence"}
+                for finding in findings[:12]:
+                    all_findings.append({"risk_id": risk_map.get(finding.get("category"), "imaging_quality"),
+                                         "detail": str(finding.get("issue") or "generation artifact")[:500],
+                                         "evidence_ids": [], "confidence": data.get("confidence", "medium")})
             else:
-                checks.append({"name": "ai_synthetic_artifacts", "status": "pass",
-                               "detail": f"{frames} frame(s): no generation defects"})
+                checks.append({"name": "ai_synthetic_artifacts", "status": "info", "tier": "FYI",
+                               "detail": f"{frames} sampled frame(s): no generation defect observed; "
+                                         "not full-timeline clearance"})
             if "appears_generated" in data:
                 checks.append({"name": "ai_origin_assessment", "status": "info", "tier": "FYI",
                                "detail": f"appears AI-generated: {bool(data['appears_generated'])} "
                                          f"(confidence {data.get('confidence', '?')})"})
 
-    # 2. temporal coherence — bursts of close-together frames
-    burst_starts = [dur * f for f in (0.2, 0.5, 0.8)]
-    parts: list = [{"type": "text", "text": _TEMPORAL_PROMPT}]
-    for bn, t0 in enumerate(burst_starts, 1):
-        burst_times = [t0, min(t0 + 0.4, dur - 0.05), min(t0 + 0.8, dur - 0.02)]
-        burst = _sample_frames(src, burst_times, tmp, f"burst{bn}")
-        if burst:
-            parts.append({"type": "text", "text": f"Burst {bn} (t≈{t0:.1f}s, 3 frames ~0.4s apart):"})
-            parts.extend(burst)
-            frames += len(burst)
-    if len(parts) > 1:
-        data = _json_from(_gmi_chat(parts, max_tokens=4000))
-        if data is None:
-            checks.append({"name": "ai_temporal_coherence", "status": "info", "tier": "FYI",
-                           "detail": "coherence reply unparseable"})
-        else:
-            issues = data.get("issues") or []
-            if issues or data.get("verdict") == "incoherent":
-                detail = "; ".join(f"{i.get('kind', '?')}: {i.get('issue', '?')}" for i in issues[:4]) \
-                         or "model judged the sequence incoherent"
-                checks.append({"name": "ai_temporal_coherence", "status": "warn", "tier": "ISSUE",
-                               "detail": detail})
-            else:
-                checks.append({"name": "ai_temporal_coherence", "status": "pass",
-                               "detail": f"identity/permanence/background stable across "
-                                         f"{len(burst_starts)} sampled bursts"})
+    # Coarse full-timeline scene graph, followed by denser jittered verification
+    # only where the structured reducer found a reason to look closer.
+    coarse_parts, coarse_evidence, shot_boundaries = _generated_evidence(src, tmp, dur)
+    coarse_raw, coarse_error = _synthetic_json(
+        [{"type": "text", "text": qgenerated.scene_ledger_prompt(plan, coarse_evidence, "coarse")}] + coarse_parts,
+        max_tokens=12000) if coarse_parts else (None, "no coarse frame evidence")
+    coarse_ledger = qgenerated.normalize_ledger(coarse_raw, coarse_evidence, "coarse")
+    coarse_findings = qgenerated.compare_ledger(coarse_ledger, plan)
+    all_findings.extend(coarse_findings)
+    frames += len(coarse_evidence)
 
-    # 3. prompt adherence — the provenance record IS the QC reference
+    candidates = qgenerated.candidate_timecodes(coarse_findings, [coarse_ledger], dur)
+    fine_parts, fine_evidence = _fine_generated_evidence(
+        src, tmp, dur, candidates, shot_boundaries)
+    fine_raw, fine_error = _synthetic_json(
+        [{"type": "text", "text": qgenerated.scene_ledger_prompt(plan, fine_evidence, "verification")}] + fine_parts,
+        max_tokens=10000) if fine_parts else (None, None)
+    fine_ledger = qgenerated.normalize_ledger(fine_raw, fine_evidence, "verification")
+    fine_findings = qgenerated.compare_ledger(fine_ledger, plan)
+    all_findings.extend(fine_findings)
+    frames += len(fine_evidence)
+    coarse_signatures = {(f["risk_id"], f["detail"].casefold()) for f in coarse_findings}
+    fine_signatures = {(f["risk_id"], f["detail"].casefold()) for f in fine_findings}
+    stable_risks = sorted({risk_id for risk_id, _ in coarse_signatures & fine_signatures})
+
+    continuity_findings = [f for f in coarse_findings + fine_findings
+                           if f["risk_id"] != "rendered_text"]
+    if continuity_findings:
+        detail = "; ".join(f"{f['risk_id']}: {f['detail']}" for f in continuity_findings[:4])
+        if stable_risks:
+            detail += f"; repeated under jittered sampling: {', '.join(stable_risks)}"
+        checks.append({"name": "ai_temporal_coherence", "status": "warn", "tier": "ISSUE",
+                       "detail": detail})
+    elif coarse_ledger.get("snapshots"):
+        checks.append({"name": "ai_temporal_coherence", "status": "info", "tier": "FYI",
+                       "detail": f"no structured continuity contradiction in {len(coarse_evidence)} coarse "
+                                 "frame(s); sampled evidence does not clear the full timeline"})
+    else:
+        checks.append({"name": "ai_temporal_coherence", "status": "info", "tier": "FYI",
+                       "detail": f"scene-graph ledger unavailable ({coarse_error}); continuity requires review"})
+
+    # Native-resolution typography pass. The coarse model locates regions; a
+    # separate literal OCR-style pass reads unscaled crops, and code compares
+    # each recurring text track across time.
+    text_parts, text_evidence = _typography_evidence(src, tmp, [coarse_ledger, fine_ledger])
+    text_raw, text_error = _synthetic_json(
+        [{"type": "text", "text": qgenerated.typography_prompt(text_evidence)}] + text_parts,
+        max_tokens=6000) if text_parts else (None, None)
+    text_observations = qgenerated.normalize_text_observations(text_raw, text_evidence)
+    text_findings = qgenerated.compare_text_observations(text_observations)
+    all_findings.extend(text_findings)
+    frames += len(text_evidence)
+    if text_findings:
+        checks.append({"name": "ai_rendered_text_integrity", "status": "warn", "tier": "ISSUE",
+                       "detail": "; ".join(f["detail"] for f in text_findings[:4])})
+    elif text_observations:
+        checks.append({"name": "ai_rendered_text_integrity", "status": "info", "tier": "FYI",
+                       "detail": f"{len(text_evidence)} native-resolution crop(s) inspected; no tracked "
+                                 "string change observed in sampled evidence"})
+    elif text_evidence:
+        checks.append({"name": "ai_rendered_text_integrity", "status": "info", "tier": "FYI",
+                       "detail": f"native-resolution text transcription unavailable ({text_error}); review required"})
+    else:
+        checks.append({"name": "ai_rendered_text_integrity", "status": "info", "tier": "FYI",
+                       "detail": "no trackable text region was located in sampled frames"})
+
+    # Prompt adherence remains a separate intent check, but low adherence also
+    # enters the generated-risk coverage rather than appearing only as a score.
     if gen_manifest_path:
-        gen_prompt = extract_gen_prompt(gen_manifest_path)
         if not gen_prompt:
             checks.append({"name": "ai_prompt_adherence", "status": "info", "tier": "FYI",
                            "detail": "generation manifest supplied but carries no visible prompt "
                                      "(redacted prompt_visibility?) — adherence not scorable"})
         elif stills:
-            data = _json_from(_gmi_chat(
+            data, adherence_error = _synthetic_json(
                 [{"type": "text", "text": _ADHERENCE_PROMPT.replace("{prompt}", gen_prompt[:1500])}] + stills,
-                max_tokens=4000))
+                max_tokens=4000)
             if data is None or not isinstance(data.get("adherence_score"), (int, float)):
                 checks.append({"name": "ai_prompt_adherence", "status": "info", "tier": "FYI",
-                               "detail": "adherence reply unparseable"})
+                               "detail": f"adherence inspection unavailable ({adherence_error})"})
             elif True:
                 score = float(data["adherence_score"])
                 mism = [str(m) for m in (data.get("mismatches") or [])][:3]
@@ -1088,7 +1256,31 @@ def run_synthetic_qc(src: str, meta: dict, tmp: str, gen_manifest_path: str | No
                     checks.append({"name": "ai_prompt_adherence", "status": "warn", "tier": "ISSUE",
                                    "detail": f"{score:.0f}/100 vs recorded prompt — mismatches: "
                                              f"{'; '.join(mism) or 'unspecified'}"})
-    return checks, frames
+                    all_findings.append({"risk_id": "prompt_elements",
+                                         "detail": f"Prompt adherence {score:.0f}/100: "
+                                                   f"{'; '.join(mism) or 'unspecified mismatch'}",
+                                         "evidence_ids": [], "confidence": "medium"})
+
+    all_findings = _dedupe_generated_findings(all_findings)
+    ledgers = [coarse_ledger] + ([fine_ledger] if fine_evidence else [])
+    coverage = qgenerated.build_coverage(plan, ledgers, all_findings)
+    checks.append({"name": "ai_generated_risk_coverage", "status": "info", "tier": "FYI",
+                   "detail": f"{coverage['assessed_risks']}/{coverage['total_risks']} generated-media "
+                             f"dimensions assessed; {coverage['suspected_risks']} suspected; every dimension accounted"})
+    details = {
+        "plan": plan,
+        "coverage": coverage,
+        "sampling": {"strategy": "coarse_scene_graph_then_jittered_verification",
+                     "coarse_frames": len(coarse_evidence), "fine_frames": len(fine_evidence),
+                     "native_text_crops": len(text_evidence), "shot_boundaries": shot_boundaries,
+                     "candidate_timecodes": candidates, "stable_risks": stable_risks,
+                     "coarse_ledger_error": coarse_error, "fine_ledger_error": fine_error,
+                     "sampled_evidence_is_not_full_timeline_clearance": True},
+        "ledgers": ledgers,
+        "typography": {"observations": text_observations, "findings": text_findings},
+        "findings": all_findings,
+    }
+    return checks, frames, details
 
 
 def summarize_via_gmi(meta: dict, captions_text: str | None = None) -> str | None:
@@ -1283,14 +1475,19 @@ def run_pipeline(job: Job) -> None:
             else:
                 progress(job, {"type": "step_started", "step": "qc_synthetic"})
                 try:
-                    syn_checks, syn_frames = run_synthetic_qc(src, meta, tmp, gen_manifest_path)
+                    syn_checks, syn_frames, synthetic_report = run_synthetic_qc(
+                        src, meta, tmp, gen_manifest_path)
                     if qc_report is None:
                         qc_report = {"status": "pass", "checks": []}
                     for check in syn_checks:
                         check.setdefault("source", "synthetic_ai")
                     qc_report["checks"].extend(syn_checks)
-                    qc_report["synthetic"] = {"model": GMI_MULTIMODAL_MODEL, "frames": syn_frames,
-                                              "prompt_reference": bool(gen_manifest_path)}
+                    qc_report["synthetic"] = {
+                        "model": GMI_MULTIMODAL_MODEL,
+                        "frames": syn_frames,
+                        "prompt_reference": bool(gen_manifest_path),
+                        **synthetic_report,
+                    }
                     progress(job, {"type": "step_done", "step": "qc_synthetic",
                                    "checks": [c["name"] for c in syn_checks],
                                    "billable": {"unit": "frames", "units": syn_frames}})

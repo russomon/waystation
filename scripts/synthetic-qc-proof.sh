@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Synthetic QC lane proof (mock GMI, zero spend):
 #   S  qc_synthetic ON + .genblaze.json sidecar (prompt: "a red ball…")
-#      → ai_synthetic_artifacts (anatomy defect surfaced), ai_origin_assessment,
-#        ai_temporal_coherence (identity drift), ai_prompt_adherence (low score
-#        → warn), metering qc_synthetic in frames
+#      → asset-specific assertion plan, 14-risk generated-media registry,
+#        coarse scene ledger → jittered verification, deterministic continuity
+#        findings, native-resolution tracked typography, artifact/origin checks,
+#        prompt adherence, and frame metering
 #   T  qc_synthetic OFF → no synthetic checks, step_skipped
 #   R  manifest sidecar with REDACTED prompt → adherence reports "not scorable"
 # Plus: sidecar-url accepts source.genblaze.json (200), a signed event for the
@@ -31,17 +32,56 @@ class H(BaseHTTPRequestHandler):
         kinds = [p.get("type") for p in content] if isinstance(content, list) else []
         texts = " ".join(p.get("text", "") for p in content if isinstance(p, dict)) \
             if isinstance(content, list) else str(content)
+        evidence_ids = list(dict.fromkeys(__import__("re").findall(
+            r'"evidence_id"\s*:\s*"([^"]+)"', texts)))
         if "input_audio" in kinds:
             text = "hello world"
+        elif "COMPILE A READ-ONLY QC BLUEPRINT" in texts:
+            text = json.dumps({"summary": "asset-specific red-ball inspection",
+                               "assertions": [
+                {"assertion_id": "A1", "risk_id": "prompt_elements",
+                 "requirement": "a red ball visibly bounces on a wooden floor",
+                 "scope": "whole_program", "evidence_strategy": "prompt_reference",
+                 "likely_failure_modes": ["ball absent", "wrong action"]},
+                {"assertion_id": "A2", "risk_id": "subject_identity",
+                 "requirement": "the recurring subject keeps the same red jacket",
+                 "scope": "whole_program", "evidence_strategy": "subject_tracking"},
+                {"assertion_id": "A3", "risk_id": "object_permanence",
+                 "requirement": "the red ball persists during the shot",
+                 "scope": "shot", "evidence_strategy": "object_tracking"},
+                {"assertion_id": "A4", "risk_id": "background_consistency",
+                 "requirement": "the room geometry remains stable",
+                 "scope": "shot", "evidence_strategy": "frame_bursts"},
+                {"assertion_id": "A5", "risk_id": "rendered_text",
+                 "requirement": "the OPEN sign keeps stable lettering",
+                 "scope": "shot", "evidence_strategy": "native_text_crops"}]})
+        elif "BUILD A SCENE-GRAPH LEDGER" in texts:
+            snapshots = []
+            for i, evidence_id in enumerate(evidence_ids):
+                changed = i % 2 == 1
+                snapshots.append({
+                    "evidence_id": evidence_id, "shot_id": "shot-1",
+                    "subjects": [{"track_key": "hero", "attributes": {
+                        "hair": "brown", "wardrobe": "blue jacket" if changed else "red jacket"}}],
+                    "objects": [{"track_key": "red-ball", "count": 0 if changed else 1,
+                                 "attributes": {"color": "red", "state": "missing" if changed else "held"}}],
+                    "background": {"location": "studio", "geometry": "glass wall" if changed else "brick wall"},
+                    "text_regions": [{"track_key": "door-sign", "text": "0PEN" if changed else "OPEN",
+                                      "bbox": [0.1, 0.1, 0.35, 0.2], "confidence": "high"}],
+                    "assertions": [{"assertion_id": "A1", "status": "contradict" if changed else "support",
+                                    "observation": "ball is absent" if changed else "red ball is visible"}],
+                    "anomalies": []})
+            text = json.dumps({"snapshots": snapshots})
+        elif "TRANSCRIBE TRACKED TEXT" in texts:
+            text = json.dumps({"observations": [
+                {"evidence_id": evidence_id, "track_key": "door-sign",
+                 "text": "0PEN" if i % 2 else "OPEN", "confidence": "high"}
+                for i, evidence_id in enumerate(evidence_ids)]})
         elif "RECORDED GENERATION" in texts:
             text = json.dumps({"adherence_score": 35,
                                "matches": ["outdoor setting"],
                                "mismatches": ["no red ball visible", "nothing bounces"],
                                "summary": "video does not depict the prompt"})
-        elif "TEMPORAL COHERENCE" in texts:
-            text = json.dumps({"issues": [{"issue": "subject's jacket changes color between bursts",
-                                           "kind": "identity"}],
-                               "verdict": "incoherent", "summary": "identity drift"})
         elif "AI-GENERATED video" in texts:
             text = json.dumps({"findings": [{"issue": "six fingers on left hand",
                                              "category": "anatomy", "frames": [2]}],
@@ -75,6 +115,7 @@ until curl -sf -o /dev/null --max-time 1 http://localhost:9000/minio/health/live
 until curl -sf -o /dev/null --max-time 1 http://localhost:8787/; do sleep 0.3; done
 ( cd "$WEB/pipeline" && PIPELINE_SHARED_SECRET=$SHARED \
    GMI_API_KEY=mock GMI_BASE_URL=http://localhost:8009 GMI_MULTIMODAL_MODEL=mock-mm GMI_MODEL=mock-text \
+   AI_QC_MIN_INTERVAL=0 \
    ./.venv/bin/uvicorn worker:app --port 8000 >/tmp/pipe.log 2>&1 ) &
 until curl -sf -o /dev/null --max-time 1 http://localhost:8000/healthz; do sleep 0.3; done
 echo "✓ stack up (mock GMI)"
@@ -160,7 +201,32 @@ org = ck(s, "ai_origin_assessment")
 need(org and "True" in org["detail"], f"origin assessment missing ({org})")
 tc = ck(s, "ai_temporal_coherence")
 print(f"  S temporal: {tc['status']} — {tc['detail'][:80]}")
-need(tc and tc["status"] == "warn" and "identity" in tc["detail"], "identity drift not surfaced")
+need(tc and tc["status"] == "warn" and "subject_identity" in tc["detail"],
+     "structured identity drift not surfaced")
+plan = s.get("synthetic", {}).get("plan", {})
+need(plan.get("version") == "waystation-generated-qc-plan/1.0", "generated QC plan version missing")
+need(any(a.get("requirement", "").startswith("a red ball") for a in plan.get("assertions", [])),
+     "asset-specific prompt assertion missing")
+need({a.get("risk_id") for a in plan.get("assertions", [])} >= {
+     "prompt_elements", "subject_identity", "background_consistency", "object_permanence", "rendered_text"},
+     "planned assertions do not cover requested generated dimensions")
+coverage = s.get("synthetic", {}).get("coverage", {})
+need(coverage.get("accounting_complete") is True and coverage.get("total_risks") == 14,
+     f"generated-risk registry incomplete ({coverage})")
+sampling = s.get("synthetic", {}).get("sampling", {})
+need(sampling.get("coarse_frames", 0) > 0 and sampling.get("fine_frames", 0) > 0,
+     f"hierarchical coarse-to-fine evidence missing ({sampling})")
+need("subject_identity" in sampling.get("stable_risks", []),
+     "jittered verification did not retain identity concern")
+need(sampling.get("native_text_crops", 0) >= 2, "native-resolution text crops missing")
+ledger_findings = s.get("synthetic", {}).get("findings", [])
+need({f.get("risk_id") for f in ledger_findings} >= {
+     "subject_identity", "object_permanence", "background_consistency", "rendered_text"},
+     "scene/text ledger findings incomplete")
+typ = ck(s, "ai_rendered_text_integrity")
+print(f"  S typography: {typ['status']} — {typ['detail'][:80]}")
+need(typ and typ["status"] == "warn" and "OPEN" in typ["detail"] and "0PEN" in typ["detail"],
+     "tracked typography mutation not surfaced")
 adh = ck(s, "ai_prompt_adherence")
 print(f"  S adherence: {adh['status']} — {adh['detail'][:90]}")
 need(adh and adh["status"] == "warn" and "35" in adh["detail"] and "red ball" in adh["detail"],
@@ -183,6 +249,6 @@ print(f"  R adherence: {radh['status']} — {radh['detail'][:80]}")
 need(radh and radh["status"] == "info" and "not scorable" in radh["detail"],
      "redacted prompt should report not-scorable")
 
-print("PASS ✓  synthetic lane: artifacts + coherence + prompt adherence + gating + metering" if ok else "FAIL")
+print("PASS ✓  synthetic lane: plan + registry + hierarchy + scene ledger + typography + adherence" if ok else "FAIL")
 sys.exit(0 if ok else 1)
 PYEOF

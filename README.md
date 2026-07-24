@@ -356,18 +356,22 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   prompt injection. The report identifies evidence IDs, timecodes, confidence,
   and known sampling limits instead of claiming full-timeline clearance.
 - ✅ **Synthetic QC lane** (`qc_synthetic` toggle) — QC for media that was
-  never shot. Three prompt engines: **generation artifacts** (anatomy,
-  garbled glyphs, physics, seams, AI sheen + an origin assessment),
-  **temporal coherence** (frame bursts checked for identity drift and
-  object permanence — the live run caught testsrc2's morphing shape as a
-  permanence violation), and **prompt adherence**: an uploaded
-  `.genblaze.json` generation record makes the manifest's own prompt the
-  QC reference — live-scored **98/100** for a matching prompt and
-  **0/100** for a mismatched one ("no red ball visible; nothing bounces").
-  Metered as `qc_synthetic` frames; redacted prompts reported honestly as
-  not-scorable. Proven by `scripts/synthetic-qc-proof.sh` (mock GMI:
-  defects surfaced, gating, sidecar event-filtering, metering) and live
-  against real GMI. GMI calls now pace themselves and back off on 429s.
+  never shot. A planning agent compiles the recorded generation intent into
+  atomic, evidence-scoped assertions; a deterministic fallback completes a
+  **14-dimension generated-media registry** even when the model omits one.
+  Coarse scene-boundary/anchor frames become a structured scene ledger, code
+  diffs recurring subjects, objects, backgrounds, and assertion observations,
+  then suspicious timecodes receive denser jittered verification. Model-located
+  text regions are re-extracted as **native-resolution crops**, transcribed
+  literally, and compared by deterministic string tracking. The existing
+  anatomy/physics/artifact specialist and **prompt adherence** remain: an
+  uploaded `.genblaze.json` makes the manifest's own prompt the QC reference
+  (previously live-scored **98/100** matching and **0/100** mismatched).
+  The recipient report exposes the blueprint, per-dimension coverage, findings,
+  and sampling audit; sampled observations never claim full-timeline clearance.
+  Redacted prompts remain not-scorable. Proven end to end by
+  `scripts/synthetic-qc-proof.sh` with mock GMI; the earlier artifact/adherence
+  lane was also verified live against real GMI.
 - **Declared, honestly gated**: unsupported certification and specialist
   bitstream/playback checks remain explicit `REVIEW_REQUIRED` or `UNVERIFIED`
   registry entries rather than silent gaps or false passes.

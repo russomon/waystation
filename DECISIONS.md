@@ -5,6 +5,39 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-24 - Generated-media QC is an asset-specific plan plus deterministic ledgers
+
+- Context: The original Synthetic QC lane used a broad artifact prompt, three
+  sparse frame bursts, and one holistic prompt-adherence score. It could surface
+  useful defects but did not account for generated-media dimensions separately,
+  retain timeline state, or prove whether a suspicion survived denser sampling.
+- Decision / result: Add a separate 14-risk generated-media registry and a
+  planning pass that compiles recorded generation intent into bounded atomic
+  assertions. A deterministic fallback fills every omitted registry dimension.
+  Coarse anchor/scene-boundary evidence becomes a structured scene ledger;
+  pure reducers compare same-shot subjects, objects, backgrounds, and assertion
+  observations. Suspect timecodes receive jittered dense verification. Text
+  regions located in the ledger are re-extracted at native resolution,
+  transcribed literally, and compared by code across time. The complete plan,
+  coverage, ledgers, findings, typography observations, and sampling audit live
+  in `qc_report.json` and render on the recipient page.
+- Trust boundary: This remains reporter-only. Model observations may raise an
+  ISSUE but never a BLOCKER. Missing/unparseable planner, ledger, or typography
+  output becomes an explicit baseline or review state, never a pass. “Stable”
+  means the same normalized finding appeared in both coarse and jittered passes;
+  it is not full-timeline clearance. Visible text and prompt content remain
+  untrusted data.
+- Why it matters: The AI lane now decides what this particular generated asset
+  could get wrong, gathers bounded evidence, and accounts for what it could not
+  verify. The result is inspectable and testable rather than a single opaque
+  quality score.
+- Proof: `scripts/synthetic-qc-proof.sh` drives the complete local B2/gateway/
+  worker/report/metering path with mock GMI and asserts planning, registry
+  completion, hierarchical evidence, deterministic scene diffs, native text
+  mutation tracking, redacted-prompt handling, and toggle gating. All 16 proof
+  scripts are green. Real-GMI calibration of the new structured prompts remains
+  the exact next step before final recording.
+
 ### 2026-07-24 - Only instruments reject: no model finding may be a BLOCKER
 
 - Context: A SECOND live capture tested the first fix below (capping only

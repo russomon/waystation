@@ -64,12 +64,17 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   generated-media failure modes. Filenames, captions, metadata, transcripts,
   and visible text are explicitly treated as untrusted evidence.
 - **Synthetic QC for generative media** - QC for video that was never shot:
-  generation artifacts (anatomy, garbled text, physics, AI sheen), temporal
-  coherence across frame bursts (identity drift, object permanence), and the
-  one no incumbent can build - **prompt adherence**: the Genblaze manifest's
-  recorded generation prompt becomes the QC reference, and the waystation
-  scores whether the output matches its own declared intent. Live: 98/100
-  for a faithful clip, 0/100 for a mismatched one.
+  a planning agent turns the recorded generation intent into atomic QC
+  assertions, while a deterministic fallback accounts for all 14 generated-
+  media dimensions. A full-timeline coarse scene ledger tracks subjects,
+  objects, backgrounds, and text; suspicious timecodes receive jittered dense
+  verification, and model-located typography is re-read from native-resolution
+  crops and compared across time. The report exposes the blueprint, evidence,
+  unresolved dimensions, and **prompt adherence** against the Genblaze
+  manifest's own recorded intent. Sampled AI observations can raise an ISSUE,
+  never reject or claim full-timeline clearance. Earlier live captures scored
+  98/100 for a faithful clip and 0/100 for a mismatched one; the expanded flow
+  is integration-proven with mock GMI.
 - **Netflix strict profile** - one toggle swaps thresholds for a
   zero-tolerance delivery spec (−24 LKFS ±1, −2 dBTP, native frame rates
   only, no pulldown, PSE hard-fail). Findings tier into
@@ -131,7 +136,7 @@ dedicated ASR model, but Gemini accepts `input_audio` content parts, so
 - Live Gemini vision caught the **burned-in timecode** in our test master
   unprompted; ASR caption accuracy scored 21/21 words.
 - A QC report nobody - including us - can alter for 24 hours.
-- Thirteen one-command proof scripts; every feature claim in this page is
+- Sixteen one-command proof scripts; every feature claim in this page is
   executable.
 
 ## What we learned

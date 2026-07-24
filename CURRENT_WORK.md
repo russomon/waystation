@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-24 (measured lip-sync in Docker; hybrid QC lane; instruments-only-reject cap)
+Updated: 2026-07-24 (asset-specific generated-media QC blueprint and timeline ledgers)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03)
 
@@ -14,10 +14,56 @@ switches and chat history gaps.
 - Active task: Backblaze Generative Media Hackathon submission. Waystation is a
   read-only QC reporter: deterministic instruments feed a three-pass agentic
   inspection, and an 18-risk registry prevents silent omissions.
-- Immediate next action: **record the demo video** (`docs/demo-script.md`, now
-  current) and re-paste the Devpost sections. The engineering is done and the
-  real-GMI capture is complete (see below) — the remaining work is the
-  submission artifacts, not code.
+- Immediate next action: run one representative generated clip plus its
+  `.genblaze.json` through the expanded Synthetic QC lane against **real GMI**.
+  Inspect the recipient page's blueprint, 14-dimension coverage, coarse/fine
+  sampling audit, continuity findings, and typography tracks for useful,
+  non-duplicative output. The integration is fully mock-proven, but these new
+  structured prompts have not yet had a live-model calibration pass. Then
+  update the demo shot list if needed and record the video.
+
+## Asset-specific generated-media QC (2026-07-24)
+
+Five requested upgrades landed as one read-only subsystem:
+
+1. **Asset-specific QC blueprint** (`pipeline/qc/generated.py`): a planning
+   agent compiles the generation prompt, file context, and baseline risks into
+   atomic assertions with scope, evidence strategy, and likely failure modes.
+   Normalization is allowlisted and bounded; if the model omits a dimension or
+   returns unusable JSON, deterministic baseline assertions fill the plan.
+2. **Timeline scene-graph ledger**: ordered observations use stable keys for
+   subjects, objects, backgrounds, text, and plan assertions. Pure reducers
+   compare same-shot observations and raise timecoded ISSUE-level concerns for
+   identity/attribute drift, object count/state changes, background changes,
+   and blueprint contradictions.
+3. **Hierarchical evidence**: up to 12 anchor/scene-boundary frames build the
+   coarse ledger; its suspect timecodes receive bounded ±120 ms jittered dense
+   verification. The report records candidate timecodes and only labels a risk
+   stable when the same normalized finding recurs in both passes.
+4. **Generated-media dimension registry**: a separate versioned 14-risk
+   registry accounts for prompt elements, identity, background, permanence,
+   anatomy, motion, flicker, physics, shadows/reflections, camera continuity,
+   rendered text, spatial relationships, style, and imaging quality. Every
+   dimension is `ASSESSED`, `SUSPECTED`, or `REVIEW_REQUIRED`; sampled evidence
+   never clears the full timeline.
+5. **Native-resolution typography**: model-located normalized text boxes are
+   re-extracted without scaling, transcribed literally in a separate
+   instruction-hardened pass, then compared by deterministic string tracking.
+   Missing/unparseable transcription becomes review-required, never clean.
+
+The recipient UI now renders the generated blueprint, risk coverage, findings,
+and sampling audit. Each model stage degrades independently so one provider or
+JSON failure does not erase the other generated QC evidence. The existing
+artifact/anatomy/physics specialist and manifest-backed prompt-adherence score
+remain and feed the new registry. `scripts/synthetic-qc-proof.sh` proves the
+whole B2 → worker → report → metering contract with mock GMI, including prompt
+redaction and the off toggle.
+
+Validation after this change: gateway `tsc --noEmit`, production client build,
+pipeline import, and **all 16 `scripts/*-proof.sh` green**. Docker, Photon,
+MediaInfo, WORM Object Lock, compute routing, and synthetic/agentic proofs all
+ran rather than being assumed. Real-GMI calibration of the five new structured
+stages is still pending and explicitly not claimed.
 
 ## This session (2026-07-24)
 
@@ -48,7 +94,7 @@ Four landed changes, all committed + pushed, all proofs green:
    2026-07-24.
 
 Validated at handoff: `gateway tsc --noEmit`, `client build`, `worker` import,
-and ALL 8 `scripts/*-proof.sh` — green.
+and all 16 `scripts/*-proof.sh` — green.
 
 ## Detection-coverage upgrades (2026-07-23)
 
@@ -151,7 +197,7 @@ each asserted by `scripts/coverage-proof.sh` (ffmpeg + venv only, no cloud):
 
 ## What Exists And Is Proven
 
-The suite now contains thirteen one-command proof scripts, including the new
+The suite now contains sixteen one-command proof scripts, including the new
 agentic contract proof and the MediaInfo proof (see
 `SHARED_CODING_WORKFLOW.md` for the table):
 
@@ -232,14 +278,15 @@ agentic contract proof and the MediaInfo proof (see
 
 ## Handoff
 
-- Safe stopping point: yes. Working tree clean, everything committed + pushed to
-  `origin/main`. Validation at this handoff: gateway `tsc --noEmit`, production
-  client build, `worker` import, and ALL 8 `scripts/*-proof.sh` green.
-- Exact next step: **record the demo video** per `docs/demo-script.md` (it is
-  current as of this session). Bring the stack up with `scripts/live-event-run.sh`
-  then `scripts/b2-register-events.sh` — the cloudflared quick-tunnel URL is
-  fresh each run, so the B2 event rule must be re-registered. Then re-paste the
-  Devpost sections from `docs/devpost-about.md`. No code work is required first.
+- Safe stopping point: yes after this change is committed and pushed. Validation
+  at this handoff: gateway `tsc --noEmit`, production client build, `worker`
+  import, and all 16 `scripts/*-proof.sh` green.
+- Exact next step: run a representative generated clip plus `.genblaze.json`
+  through real GMI and inspect the new structured report in the recipient UI.
+  Do not record the final demo until that model-calibration pass is satisfactory.
+  Then bring the stack up with `scripts/live-event-run.sh`, run
+  `scripts/b2-register-events.sh` for the fresh tunnel, record per
+  `docs/demo-script.md`, and re-paste `docs/devpost-about.md` into Devpost.
 - Two things to carry into the recording: (1) the demo master is faceless +
   stereo, so measured lip-sync / hybrid lip-sync / hybrid channel-semantics are
   silent on it by design — either run the optional real-face beat or narrate the

@@ -7,6 +7,15 @@ history.
 
 ## Now
 
+- **Live-calibrate the expanded generated-media lane**: run a representative
+  generated clip and its `.genblaze.json` through real GMI. Inspect the
+  asset-specific assertion plan, scene-ledger track keys, coarse-to-fine
+  candidate selection, repeated-finding stability, native-resolution text
+  tracks, 14-risk accounting, latency, and report readability. The complete
+  integration is mock-proven; live model behavior for these new schemas is the
+  remaining verification before recording. Tune prompts/normalizers only if
+  the capture exposes a concrete failure, and add that failure to
+  `scripts/synthetic-qc-proof.sh`.
 - **Demo video**: record against `docs/demo-script.md` (≤3:00 shot list). The
   Plan B manual-event path is no longer needed — Backblaze Event
   Notifications are enabled and proven, so the demo can show B2 firing the
@@ -84,5 +93,6 @@ history.
 
 ## Blockers
 
-- None. Backblaze Event Notifications were enabled on 2026-07-19 and the
-  B2-fired reactive loop is proven end to end. No technical work is blocked.
+- None. Backblaze Event Notifications and the B2-fired reactive loop remain
+  proven end to end. Real-GMI calibration of the expanded generated-media
+  schemas is a required pre-recording validation task, not an external blocker.
