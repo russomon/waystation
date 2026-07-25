@@ -59,6 +59,24 @@ chat threads.
   differently (`4ARRIVALS` vs `4RRIVALS`) yet produced the SAME structured
   concern, vindicating match_key excluding before/after strings — and the
   clean twin passed both models untouched.
+- Published record (2026-07-24, real GMI, WORM COMPLIANCE on B2):
+  `proficiency/rendered_text_mutation/d1a360c1df22-e85fd947.json` — primary
+  gemini-3.5-flash 5/5 plants caught, 5/5 clean twins passed, Wilson
+  [0.566, 1.0], PROVISIONAL n=5; juror gemini-3.6-flash 5/5 offline; deployed
+  pair policy 3 reproduced / 2 contested; citation verified EXACT.
+- SCOPE, stated precisely so nobody later overclaims it: this live run
+  validated TWO of the generated lane's five model stages — the coarse scene
+  ledger and native-resolution typography — plus their deterministic reducers.
+  The planner (`plan_prompt`), the jittered fine-verification pass, prompt
+  adherence, and the artifact specialist remain mock-proven only (NEXT_STEPS).
+  A passport measures the lane it was run against, not the whole synthetic lane.
+- The 2 contested verdicts are a measured property of jury policy 1.0, not a
+  model failure: both models caught 5/5 standalone, but `match_key` requires
+  identical `evidence_ids`, so a juror flagging the same mutation across a
+  different consecutive evidence pair reads as contested. Conservative and
+  honest (contested only raises review priority). Relaxing it to overlap-based
+  matching would bump JURY_POLICY_VERSION and invalidate this manifest — the
+  drift-invalidation flow working exactly as designed.
 - Proof: `scripts/jury-proof.sh` (reducer replay, contested-stays-suspected,
   PROMPT-BLINDNESS assertion, honest single_source) and
   `scripts/proficiency-proof.sh` (blind scoring branches through the real lane,

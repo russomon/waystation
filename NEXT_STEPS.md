@@ -21,14 +21,19 @@ history.
   against this configuration. Re-run `--publish` if any of model/prompt/
   reducer/commit changes (the citation will honestly flip to UNCALIBRATED).
 
-- **Live-calibrate the expanded generated-media lane**: run a representative
-  generated clip and its `.genblaze.json` through real GMI. Inspect the
-  asset-specific assertion plan, scene-ledger track keys, coarse-to-fine
-  candidate selection, repeated-finding stability, native-resolution text
-  tracks, 14-risk accounting, latency, and report readability. The complete
-  integration is mock-proven; live model behavior for these new schemas is the
-  remaining verification before recording. Tune prompts/normalizers only if
-  the capture exposes a concrete failure, and add that failure to
+- **Live-calibrate the REMAINING generated-media stages** (partially done —
+  does NOT block recording). The 2026-07-24 proficiency session put real GMI
+  through 10 blind assets and validated two of the five model stages: the
+  coarse **scene ledger** and **native-resolution typography**, plus their
+  deterministic reducers (5/5 sensitivity, 5/5 specificity). Still
+  live-unvalidated, all currently mock-proven only:
+  the **planner** (`plan_prompt` — the proficiency runner deliberately uses the
+  deterministic baseline plan), the **jittered fine verification** pass and its
+  repeated-finding stability, **prompt adherence**, the **artifact/anatomy
+  specialist**, and 14-risk accounting/report readability end to end.
+  To close it: run one representative generated clip plus its `.genblaze.json`
+  through real GMI and inspect the recipient page. Tune prompts/normalizers
+  only if the capture exposes a concrete failure, and add that failure to
   `scripts/synthetic-qc-proof.sh`.
 - **Demo video**: record against `docs/demo-script.md` (≤3:00 shot list). The
   Plan B manual-event path is no longer needed — Backblaze Event

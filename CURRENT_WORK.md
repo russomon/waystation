@@ -308,12 +308,24 @@ agentic contract proof and the MediaInfo proof (see
 - Safe stopping point: yes after this change is committed and pushed. Validation
   at this handoff: gateway `tsc --noEmit`, production client build, `worker`
   import, and all 16 `scripts/*-proof.sh` green.
-- Exact next step: run a representative generated clip plus `.genblaze.json`
-  through real GMI and inspect the new structured report in the recipient UI.
-  Do not record the final demo until that model-calibration pass is satisfactory.
-  Then bring the stack up with `scripts/live-event-run.sh`, run
-  `scripts/b2-register-events.sh` for the fresh tunnel, record per
-  `docs/demo-script.md`, and re-paste `docs/devpost-about.md` into Devpost.
+- Exact next step: **record the demo video.** No code work is required first.
+  `docs/demo-script.md` now carries both the shot list AND a "How to record"
+  production plan (silent screen captures + separate voiceover, setup
+  checklist, capture order, edit rules). Sequence: wire the passport env vars
+  (`NEXT_STEPS.md` → Now), bring the stack up with `scripts/live-event-run.sh`,
+  run `scripts/b2-register-events.sh` for the fresh tunnel (quick-tunnel URLs
+  are ephemeral), rehearse once keeping the transfer id, then capture. Finally
+  re-paste `docs/devpost-about.md` into Devpost.
+- Live-model calibration of the generated lane is PARTIAL, not complete. The
+  proficiency session put real GMI through 10 blind assets and validated TWO of
+  the five model stages — the coarse **scene ledger** and **native-resolution
+  typography** — plus their deterministic reducers, at 5/5 sensitivity and 5/5
+  specificity. It did NOT exercise the **planner** (`plan_prompt`; the runner
+  deliberately uses the deterministic baseline plan), the **jittered fine
+  verification** pass, **prompt adherence**, or the **artifact/anatomy
+  specialist**. Those four remain live-unvalidated — see NEXT_STEPS. This does
+  not block recording, but do not claim on camera that the whole generated lane
+  is live-calibrated; the passport beat covers exactly what was measured.
 - Two things to carry into the recording: (1) the demo master is faceless +
   stereo, so measured lip-sync / hybrid lip-sync / hybrid channel-semantics are
   silent on it by design — either run the optional real-face beat or narrate the

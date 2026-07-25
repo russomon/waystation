@@ -145,6 +145,68 @@ Same file, profile **Standard**: zero blockers, review-level issues only.
 > send mastered video; it arrives QC'd, summarized, and provable.
 > Built on Backblaze B2 and GMI Cloud."
 
+## How to record (production plan)
+
+**Approach: capture the screen silently, narrate separately, then cut.** Do NOT
+try to talk and drive the app at the same time. Every beat here depends on
+real cloud latency you cannot control, and a fluffed sentence at 2:40 would
+otherwise mean re-running the whole pipeline. Silent captures + a separate
+voiceover track means a bad line costs one retake of the line, not the take.
+
+**One-time setup (before any capture)**
+
+1. **Turn on Do Not Disturb / Focus.** One Slack or Mail banner mid-take kills
+   an otherwise perfect run. Also quit anything with a dock badge.
+2. **Use a clean browser window** — a fresh profile or guest window: no
+   bookmarks bar, no extensions, no other tabs, no personal autofill.
+3. **Set the display to a 16:9 scaled resolution** and record the whole screen
+   or a fixed window region. Never resize mid-take. 1080p is the safe target;
+   record higher and downscale rather than upscaling later.
+4. **Big fonts:** terminal at a size readable on a phone, browser at ~125 %.
+   Judges may watch on a laptop in a browser tab, not a cinema screen.
+5. **Check what's on screen that shouldn't be:** bucket names are fine, but
+   keep `.env`, key IDs, and tunnel URLs out of frame. Never open `.env`.
+6. If the passport beat is in, wire it first (see `NEXT_STEPS.md` → Now):
+   `GMI_JURY_MODEL`, `PROFICIENCY_MANIFEST_PATH`, `WAYSTATION_COMMIT`.
+
+**Capture order** (each is a separate silent clip — do not try for one take)
+
+1. Full rehearsal, recording everything. Keep it: it gives you the finished
+   transfer id the WORM beat needs, and it is your safety net if a later run
+   behaves oddly.
+2. The send + live progress stream (beats 0:15–1:10). Record it ONCE in real
+   time and trim the waits in the edit — never fake or speed-ramp a progress
+   bar in a way that implies it was faster than it was.
+3. The report scroll (1:10–2:00), slowly. Pause on each section for a beat
+   longer than feels natural; you will be glad of the headroom when cutting.
+4. The WORM terminal shot, the contrast send, and (optional) the passport beat
+   as separate clips.
+
+**Audio**
+
+- Record the voiceover in one pass against the rough cut, reading the beat
+  script. A USB mic or even AirPods beats a laptop mic in a hard-surfaced room.
+- Speak ~15 % slower than feels right. Technical content read at conversational
+  speed is hard to follow on first hearing.
+- Leave a half-second of silence between beats — it gives the edit somewhere
+  to breathe and makes trims invisible.
+
+**Edit**
+
+- Cut to the narration, not the other way round: lay the voiceover first, then
+  trim the screen clips to fit.
+- Keep the total under the Devpost limit (the shot list targets ≤ 3:00 —
+  confirm the exact limit and required hosting on the hackathon's rules page
+  before uploading, and upload as unlisted/public per those rules).
+- No music bed under the technical beats, or add it very low: the report text
+  is doing the work and judges may be watching at low volume.
+- Burn in nothing you cannot defend. If a number is on screen, it must be the
+  number the run produced.
+
+**Tools:** macOS built-in screen recording (⇧⌘5) is sufficient for capture;
+any editor that supports separate audio and video tracks will do. Nothing here
+needs a paid tool.
+
 ## Recording notes
 
 - Rehearse once end-to-end; keep the rehearsal's transfer id for beat 4.
