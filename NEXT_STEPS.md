@@ -7,15 +7,19 @@ history.
 
 ## Now
 
-- **Publish the citable proficiency manifest + demo wiring**: after this
-  commit lands (clean worktree), run a full live proficiency session and
-  publish the WORM record, then point the demo stack at it:
-  `GMI_JURY_MODEL=google/gemini-3.6-flash scripts/proficiency.sh --class
-  rendered_text_mutation --publish` (real GMI + real B2 +
-  `MANIFEST_LOCK_DAYS>0`), download the manifest locally, set
-  `PROFICIENCY_MANIFEST_PATH` + `GMI_JURY_MODEL` + `WAYSTATION_COMMIT` in the
-  demo environment so the recipient page renders a full passport
-  (reproducibility + EXACT-match proficiency + Wilson CIs).
+- **Demo wiring for the passport (manifest is PUBLISHED)**: the live
+  proficiency session ran 2026-07-24 against real GMI and the record is
+  WORM-locked on B2 at
+  `proficiency/rendered_text_mutation/d1a360c1df22-e85fd947.json`
+  (COMPLIANCE; commit e85fd947; **primary gemini-3.5-flash 5/5 plants caught,
+  5/5 clean twins passed, Wilson [0.566, 1.0], PROVISIONAL n=5; juror
+  gemini-3.6-flash 5/5 offline; deployed pair policy 3 reproduced / 2
+  contested**). For the demo run set:
+  `GMI_JURY_MODEL=google/gemini-3.6-flash`,
+  `PROFICIENCY_MANIFEST_PATH=<local copy of that manifest>`,
+  `WAYSTATION_COMMIT=<full e85fd947 sha>` — verified to render citation EXACT
+  against this configuration. Re-run `--publish` if any of model/prompt/
+  reducer/commit changes (the citation will honestly flip to UNCALIBRATED).
 
 - **Live-calibrate the expanded generated-media lane**: run a representative
   generated clip and its `.genblaze.json` through real GMI. Inspect the
@@ -85,6 +89,15 @@ history.
 - Per-customer billing on the metering ledger (Stripe/Lago meters).
 
 ## Later
+
+- Jury policy 1.1 candidate, from the LIVE pair-policy data: both models
+  caught 5/5 plants standalone, yet the deployed policy scored 3 reproduced /
+  2 contested — `match_key` requires identical `evidence_ids`, so a juror that
+  flags the same mutation across a DIFFERENT consecutive evidence pair reads
+  as contested. Honest but conservative (contested only raises review
+  priority; nothing is lost). Consider relaxing evidence_ids to overlap-based
+  matching under a bumped JURY_POLICY_VERSION, then re-publish proficiency —
+  exactly the drift-invalidation flow the passport was designed for.
 
 - Queue between gateway and workers, then autoscaling on backlogged
   media-minutes (the metering ledger is already the right signal).
