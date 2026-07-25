@@ -39,7 +39,9 @@ from pydantic import BaseModel
 from qc import agentic as qagentic
 from qc import audio as qaudio
 from qc import avsync as qavsync
+from qc import foundry as qfoundry
 from qc import generated as qgenerated
+from qc import jury as qjury
 from qc import hybrid as qhybrid
 from qc import imf as qimf
 from qc import mediainfo as qmediainfo
@@ -90,6 +92,19 @@ GMI_MODEL = os.environ.get("GMI_MODEL") or "openai/gpt-4o-mini"
 # audio verbatim). Kept separate from GMI_MODEL so text summaries can use a
 # cheaper model.
 GMI_MULTIMODAL_MODEL = os.environ.get("GMI_MULTIMODAL_MODEL") or "google/gemini-3.5-flash"
+# Blind second juror for the reliability passport. OPT-IN (default empty — the
+# jury doubles inference cost for juried passes, so enabling it is explicit).
+# Empty → findings carry an honest `single_source` verdict, never a silent skip.
+# Probed 2026-07-24: openai/gpt-4o is in GMI's catalog but had no live capacity
+# (429 on every attempt); google/gemini-3.6-flash accepted image+audio with
+# strict JSON. A same-family juror is disclosed as such in the passport.
+GMI_JURY_MODEL = os.environ.get("GMI_JURY_MODEL", "").strip()
+# Published proficiency manifest for the generated-typography lane (a local
+# copy of the WORM-locked B2 object, produced by scripts/proficiency.sh
+# --publish). The report cites it ONLY when its recorded configuration exactly
+# matches the current runtime — otherwise the lane renders UNCALIBRATED. Unset
+# → UNCALIBRATED ("no proficiency record for this configuration").
+PROFICIENCY_MANIFEST_PATH = os.environ.get("PROFICIENCY_MANIFEST_PATH", "").strip()
 AI_QC_FRAMES = int(os.environ.get("AI_QC_FRAMES", "8"))              # floor on initial frames
 AI_QC_FRAMES_MAX = int(os.environ.get("AI_QC_FRAMES_MAX", "40"))     # ceiling on initial frames
 AI_QC_SECONDS_PER_FRAME = float(os.environ.get("AI_QC_SECONDS_PER_FRAME", "45"))  # duration scaling
@@ -266,7 +281,9 @@ AI_QC_MIN_INTERVAL = float(os.environ.get("AI_QC_MIN_INTERVAL", "4"))
 _gmi_last_call = 0.0
 
 
-def _gmi_chat(content: list, max_tokens: int = 2000) -> str:
+def _gmi_chat(content: list, max_tokens: int = 2000, model: str | None = None) -> str:
+    """model=None → the primary multimodal model. The jury lane passes an
+    explicit second-family model id; nothing else should."""
     global _gmi_last_call
     for attempt in range(4):
         wait = AI_QC_MIN_INTERVAL - (time.monotonic() - _gmi_last_call)
@@ -275,7 +292,7 @@ def _gmi_chat(content: list, max_tokens: int = 2000) -> str:
         _gmi_last_call = time.monotonic()
         try:
             response = gb_gmi_chat(
-                GMI_MULTIMODAL_MODEL,
+                model or GMI_MULTIMODAL_MODEL,
                 messages=[{"role": "user", "content": content}],
                 temperature=0, max_tokens=max_tokens,
                 api_key=GMI_API_KEY,
@@ -1091,6 +1108,97 @@ def _typography_evidence(src: str, tmp: str, ledgers: list[dict]) -> tuple[list,
     return parts, evidence
 
 
+def _typography_current_config() -> dict:
+    """The runtime configuration of the generated-typography lane, in EXACTLY
+    the shape scripts/proficiency.sh records — a proficiency manifest is
+    citable only when every key matches (foundry.citation_state). The commit
+    comes from WAYSTATION_COMMIT (baked/injected; the Docker image carries no
+    .git) — unknown commit ⇒ mismatch ⇒ honest UNCALIBRATED."""
+    sha = lambda text: hashlib.sha256(text.encode()).hexdigest()
+    return {
+        "primary_model": GMI_MULTIMODAL_MODEL,
+        "juror_model": GMI_JURY_MODEL or None,
+        "jury_enabled": bool(GMI_JURY_MODEL),
+        "jury_policy_version": qjury.JURY_POLICY_VERSION,
+        "typography_prompt_sha256": sha(qgenerated.typography_prompt([])),
+        "ledger_prompt_sha256": sha(qgenerated.scene_ledger_prompt({}, [], "coarse")),
+        "plan_version": qgenerated.PLAN_VERSION,
+        "ledger_version": qgenerated.LEDGER_VERSION,
+        "reducer_version": qgenerated.REDUCER_VERSION,
+        "suite_version": qfoundry.SUITE_VERSION,
+        "renderer_version": "waystation-foundry-render/1.0",
+        "sampler": {"targeted_path": "coarse_ledger+typography (production adds a jittered fine pass)",
+                    **{k: v for k, v in os.environ.items() if k.startswith("AI_QC_SYNTH")}},
+        "waystation_commit": os.environ.get("WAYSTATION_COMMIT", ""),
+        "worktree_dirty": False,
+    }
+
+
+def _typography_proficiency() -> dict:
+    """Load the published proficiency manifest (if configured) and bind it to
+    the current config. Absent/mismatched/draft ⇒ UNCALIBRATED — silence about
+    proficiency is disclosed, never implied."""
+    if not PROFICIENCY_MANIFEST_PATH or not os.path.exists(PROFICIENCY_MANIFEST_PATH):
+        return {"citation": {"state": "UNCALIBRATED",
+                             "reason": "no proficiency manifest for this configuration"}}
+    try:
+        doc = json.loads(open(PROFICIENCY_MANIFEST_PATH, encoding="utf-8").read())
+    except (OSError, ValueError) as exc:
+        return {"citation": {"state": "UNCALIBRATED",
+                             "reason": f"proficiency manifest unreadable ({exc})"}}
+    citation = qfoundry.citation_state(doc, _typography_current_config())
+    out = {"citation": citation,
+           "manifest_version": doc.get("version"),
+           "suite_sha256": doc.get("suite_sha256"),
+           "execution_date": doc.get("execution_date")}
+    if citation["state"] == "EXACT":
+        out["primary"] = doc.get("primary")
+        if doc.get("juror_offline"):
+            out["juror_offline"] = doc["juror_offline"]
+        if doc.get("deployed_pair_policy"):
+            out["deployed_pair_policy"] = doc["deployed_pair_policy"]
+    return out
+
+
+def _handoff_packets(findings: list[dict], plan: dict, ledgers: list[dict],
+                     text_observations: list[dict], proficiency: dict | None) -> list[dict]:
+    """Deterministic downstream packets — NO model call. Prompt clauses come
+    ONLY from assertion ids a reducer actually retained (never inferred from a
+    shared risk_id); fields are empty when no deterministic mapping exists.
+    Diagnostic only: a human or downstream system decides what to do."""
+    times_by_evidence: dict[str, float] = {}
+    for ledger in ledgers:
+        for snap in ledger.get("snapshots") or []:
+            if isinstance(snap.get("time_seconds"), (int, float)):
+                times_by_evidence[snap["evidence_id"]] = float(snap["time_seconds"])
+    for obs in text_observations:
+        if isinstance(obs.get("time_seconds"), (int, float)):
+            times_by_evidence[obs["evidence_id"]] = float(obs["time_seconds"])
+    clauses_by_id = {a["assertion_id"]: a["requirement"]
+                     for a in plan.get("assertions") or []}
+    packets = []
+    for finding in findings:
+        assertion_ids = [a for a in (finding.get("assertion_ids") or []) if a in clauses_by_id]
+        evidence_ids = finding.get("evidence_ids") or []
+        packets.append({
+            "finding_id": finding.get("finding_id"),
+            "kind": finding.get("kind"),
+            "risk_id": finding.get("risk_id"),
+            "detail": finding.get("detail"),
+            "timecodes": sorted({round(times_by_evidence[e], 3) for e in evidence_ids
+                                 if e in times_by_evidence}),
+            "evidence_ids": evidence_ids,
+            "related_assertion_ids": assertion_ids,
+            "related_prompt_clauses": [clauses_by_id[a] for a in assertion_ids],
+            "reliability_passport_ref": {
+                "jury_verdict": (finding.get("jury") or {}).get("verdict"),
+                "proficiency_suite_sha256": (proficiency or {}).get("suite_sha256"),
+                "proficiency_state": ((proficiency or {}).get("citation") or {}).get("state"),
+            },
+        })
+    return packets
+
+
 def _dedupe_generated_findings(findings: list[dict]) -> list[dict]:
     output = []
     seen = set()
@@ -1104,10 +1212,11 @@ def _dedupe_generated_findings(findings: list[dict]) -> list[dict]:
     return output
 
 
-def _synthetic_json(content: list, max_tokens: int) -> tuple[dict | None, str | None]:
+def _synthetic_json(content: list, max_tokens: int,
+                    model: str | None = None) -> tuple[dict | None, str | None]:
     """Keep one failed model stage from erasing the rest of the QC report."""
     try:
-        data = _json_from(_gmi_chat(content, max_tokens=max_tokens))
+        data = _json_from(_gmi_chat(content, max_tokens=max_tokens, model=model))
         return data, None if data is not None else "model reply was not parseable JSON"
     except Exception as exc:
         return None, str(exc)[:180]
@@ -1215,11 +1324,72 @@ def run_synthetic_qc(src: str, meta: dict, tmp: str, gen_manifest_path: str | No
         max_tokens=6000) if text_parts else (None, None)
     text_observations = qgenerated.normalize_text_observations(text_raw, text_evidence)
     text_findings = qgenerated.compare_text_observations(text_observations)
+
+    # ── Blind jury (reliability passport, reproducibility axis) ──
+    # Runs ONLY when a primary finding exists (passes are never juried) and a
+    # juror model is explicitly configured. BLINDNESS CONTRACT: the juror gets
+    # the SAME evidence and the SAME typography_prompt — never the primary's
+    # findings. Its raw observations run through the SAME normalizer + reducer
+    # (replay), and the two structured finding sets are matched on match_key.
+    # This measures reproducibility of the whole perceive-then-compute path;
+    # a contested finding STAYS in the report with RAISED review priority.
+    jury_info: dict = {}
+    if text_findings and GMI_JURY_MODEL:
+        juror_raw, juror_error = _synthetic_json(
+            [{"type": "text", "text": qgenerated.typography_prompt(text_evidence)}] + text_parts,
+            max_tokens=6000, model=GMI_JURY_MODEL)
+        juror_observations = qgenerated.normalize_text_observations(juror_raw, text_evidence)
+        juror_findings = qgenerated.compare_text_observations(juror_observations)
+        juror_available = juror_raw is not None
+        verdicts = qjury.replay_verdicts(text_findings, juror_findings, juror_available)
+        diagnostics = qjury.agree_labels(
+            {f"{o['evidence_id']}:{o['track_key']}": o["text"] for o in text_observations},
+            {f"{o['evidence_id']}:{o['track_key']}": o["text"] for o in juror_observations})
+        by_id = {v["finding_id"]: v for v in verdicts}
+        for finding in text_findings:
+            finding["jury"] = qjury.reproducibility_block(
+                by_id[finding["finding_id"]], GMI_MULTIMODAL_MODEL, GMI_JURY_MODEL)
+        jury_info = {
+            "policy_version": qjury.JURY_POLICY_VERSION,
+            "juror_model": GMI_JURY_MODEL,
+            "juror_relation": qjury.juror_relation(GMI_MULTIMODAL_MODEL, GMI_JURY_MODEL),
+            "verdicts": verdicts,
+            "diagnostics": diagnostics,
+            "juror_findings_unmatched": qjury.juror_only_keys(text_findings, juror_findings),
+            "juror_observations": juror_observations,
+            "frames": len(text_evidence) if juror_available else 0,
+            "error": juror_error,
+        }
+    elif text_findings:
+        # No juror configured: disclosed on every finding, never silent.
+        for finding in text_findings:
+            finding["jury"] = qjury.reproducibility_block(
+                {"finding_id": finding["finding_id"], "verdict": "single_source",
+                 "review_priority": "normal"}, GMI_MULTIMODAL_MODEL, None)
+        jury_info = {"policy_version": qjury.JURY_POLICY_VERSION,
+                     "juror_model": None, "juror_relation": "single_source",
+                     "frames": 0}
+
+    # Proficiency citation (the passport's second axis): bind the published
+    # WORM manifest to the CURRENT config; mismatch/absence ⇒ UNCALIBRATED.
+    typography_proficiency = _typography_proficiency()
+    for finding in text_findings:
+        finding["proficiency"] = typography_proficiency
+
     all_findings.extend(text_findings)
     frames += len(text_evidence)
     if text_findings:
+        detail = "; ".join(f["detail"] for f in text_findings[:4])
+        contested = sum(1 for f in text_findings
+                        if (f.get("jury") or {}).get("verdict") == "contested")
+        reproduced = sum(1 for f in text_findings
+                         if (f.get("jury") or {}).get("verdict") == "reproduced")
+        if reproduced or contested:
+            detail += (f" — jury({jury_info.get('juror_relation')}): "
+                       f"{reproduced} reproduced, {contested} contested"
+                       + ("; review priority raised" if contested else ""))
         checks.append({"name": "ai_rendered_text_integrity", "status": "warn", "tier": "ISSUE",
-                       "detail": "; ".join(f["detail"] for f in text_findings[:4])})
+                       "detail": detail})
     elif text_observations:
         checks.append({"name": "ai_rendered_text_integrity", "status": "info", "tier": "FYI",
                        "detail": f"{len(text_evidence)} native-resolution crop(s) inspected; no tracked "
@@ -1277,8 +1447,15 @@ def run_synthetic_qc(src: str, meta: dict, tmp: str, gen_manifest_path: str | No
                      "coarse_ledger_error": coarse_error, "fine_ledger_error": fine_error,
                      "sampled_evidence_is_not_full_timeline_clearance": True},
         "ledgers": ledgers,
-        "typography": {"observations": text_observations, "findings": text_findings},
+        "typography": {"observations": text_observations, "findings": text_findings,
+                       **({"jury": jury_info} if jury_info else {}),
+                       "proficiency": typography_proficiency},
         "findings": all_findings,
+        # Deterministic downstream handoff (no model call, diagnostic only) —
+        # replaces "regeneration advice", which is repair advice and is
+        # rejected on reporter-only charter grounds.
+        "handoff_packets": _handoff_packets(all_findings, plan, ledgers,
+                                            text_observations, typography_proficiency),
     }
     return checks, frames, details
 
@@ -1491,6 +1668,12 @@ def run_pipeline(job: Job) -> None:
                     progress(job, {"type": "step_done", "step": "qc_synthetic",
                                    "checks": [c["name"] for c in syn_checks],
                                    "billable": {"unit": "frames", "units": syn_frames}})
+                    jury_frames = ((synthetic_report.get("typography") or {})
+                                   .get("jury") or {}).get("frames", 0)
+                    if jury_frames:
+                        # separate billable line: the blind second juror
+                        progress(job, {"type": "step_metered", "step": "qc_jury",
+                                       "billable": {"unit": "frames", "units": jury_frames}})
                 except Exception as e:
                     progress(job, {"type": "step_error", "step": "qc_synthetic", "error": str(e)})
         else:

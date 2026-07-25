@@ -7,6 +7,16 @@ history.
 
 ## Now
 
+- **Publish the citable proficiency manifest + demo wiring**: after this
+  commit lands (clean worktree), run a full live proficiency session and
+  publish the WORM record, then point the demo stack at it:
+  `GMI_JURY_MODEL=google/gemini-3.6-flash scripts/proficiency.sh --class
+  rendered_text_mutation --publish` (real GMI + real B2 +
+  `MANIFEST_LOCK_DAYS>0`), download the manifest locally, set
+  `PROFICIENCY_MANIFEST_PATH` + `GMI_JURY_MODEL` + `WAYSTATION_COMMIT` in the
+  demo environment so the recipient page renders a full passport
+  (reproducibility + EXACT-match proficiency + Wilson CIs).
+
 - **Live-calibrate the expanded generated-media lane**: run a representative
   generated clip and its `.genblaze.json` through real GMI. Inspect the
   asset-specific assertion plan, scene-ledger track keys, coarse-to-fine

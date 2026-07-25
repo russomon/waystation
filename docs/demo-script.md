@@ -118,6 +118,22 @@ Land on the `avsync_offset` finding — a real number in ms with a confidence, a
 `lip_sync` moving to SUSPECTED in the coverage table.
 > "Five frames out at 25 fps. Measured, not guessed."
 
+**OPTIONAL · +0:25 · The passport beat (strongest innovation shot)**
+Requires: a generated clip with planted signage (render one with
+`pipeline/foundry_render.py`), `GMI_JURY_MODEL=google/gemini-3.6-flash`, and
+`PROFICIENCY_MANIFEST_PATH` pointing at the published WORM manifest.
+Send the clip with Synthetic QC on; open the report's **AI reliability
+passport** section:
+> "I planted this defect myself — the sign flips from ARRIVALS to 4RRIVALS.
+> Waystation's model caught it. But here's the innovation: a second model,
+> blind to the first one's findings, independently re-examined the evidence —
+> REPRODUCED. And this exact configuration was tested against ten blind
+> planted defects: the catch rate is right here, with confidence intervals,
+> sealed under Object Lock. Every other tool asks you to trust its AI.
+> Waystation QCs the AI."
+Point at `PROVISIONAL · n=5` for one breath: "small sample, and it says so —
+that's the point."
+
 **2:25 – 2:45 · The contrast (pre-recorded second send, fast cut)**
 Same file, profile **Standard**: zero blockers, review-level issues only.
 > "Same master, standard profile — advisory. Netflix profile — rejected.

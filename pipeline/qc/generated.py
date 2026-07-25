@@ -16,6 +16,10 @@ from typing import Any
 PLAN_VERSION = "waystation-generated-qc-plan/1.0"
 RISK_REGISTRY_VERSION = "waystation-generated-risk-registry/1.0"
 LEDGER_VERSION = "waystation-scene-ledger/1.0"
+# Version of the deterministic reducers below. Cited by the reliability
+# passport: a proficiency manifest is only citable when the reducer version
+# (among other config hashes) matches the one that earned it.
+REDUCER_VERSION = "waystation-generated-reducers/1.1"
 
 GENERATED_RISK_REGISTRY: tuple[dict[str, str], ...] = (
     {"id": "prompt_elements", "label": "Prompt elements and requested actions", "scope": "intent"},
@@ -354,6 +358,18 @@ def normalize_text_observations(data: Any, evidence: list[dict]) -> list[dict]:
 
 
 def compare_text_observations(observations: list[dict]) -> list[dict]:
+    """Deterministic text-mutation findings with a STRUCTURED identity.
+
+    Each finding carries two identities (reliability-passport contract):
+      finding_id — unique instance of this report finding.
+      match_key  — the fields a BLIND second juror's independent reducer replay
+                   must reproduce to count as the same concern. before/after
+                   strings are comparison EVIDENCE, deliberately excluded from
+                   the match_key (two jurors reading "0PEN" vs "OPEN " both saw
+                   the mutation; exact-string equality is not required).
+    `assertion_ids` stays empty here — this reducer genuinely does not know
+    blueprint assertions; linkage is never inferred from a shared risk_id.
+    The prose `detail` is a RENDERING of the structure, not the identity."""
     findings = []
     by_track: dict[str, list[dict]] = {}
     for item in observations:
@@ -365,11 +381,21 @@ def compare_text_observations(observations: list[dict]) -> list[dict]:
             if not left or not right or left == right:
                 continue
             similarity = SequenceMatcher(None, left, right).ratio()
+            evidence_ids = [before["evidence_id"], after["evidence_id"]]
             findings.append({
+                "finding_id": f"text_mutation:{track}:{before['evidence_id']}:{after['evidence_id']}",
+                "kind": "text_mutation",
                 "risk_id": "rendered_text",
+                "track_key": track,
+                "before": before["text"],
+                "after": after["text"],
+                "similarity": round(similarity, 3),
+                "match_key": {"kind": "text_mutation", "risk_id": "rendered_text",
+                              "track_key": track, "evidence_ids": evidence_ids},
+                "assertion_ids": [],
                 "detail": f"Tracked text {track} changed: {before['text']!r} -> {after['text']!r} "
                           f"(similarity {similarity:.2f})",
-                "evidence_ids": [before["evidence_id"], after["evidence_id"]],
+                "evidence_ids": evidence_ids,
                 "confidence": "high" if before["confidence"] == after["confidence"] == "high" else "medium",
             })
     return findings

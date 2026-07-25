@@ -145,6 +145,51 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           `Stable concerns: ${(sampling.stable_risks ?? []).join(", ") || "none"} · full-timeline clearance: no`,
         ]);
       }
+
+      // AI Reliability Passport — raw dimensions only, never a composite
+      // score. Reproducibility (blind jury) + proficiency (blind planted
+      // defects, cited only on an EXACT configuration match).
+      const typo = synthetic.typography;
+      const passportLines: string[] = [];
+      for (const f of (typo?.findings ?? []) as any[]) {
+        const j = f.jury;
+        if (!j) continue;
+        passportLines.push(
+          `${f.finding_id}: reproducibility ${String(j.verdict ?? "?").toUpperCase()}` +
+          (j.juror_model ? ` · juror ${j.juror_model} (${j.juror_relation})` : " · no juror configured") +
+          (j.review_priority === "raised" ? " · review priority RAISED" : ""));
+      }
+      const prof = typo?.proficiency;
+      if (prof) {
+        const cite = prof.citation ?? {};
+        if (cite.state === "EXACT" && prof.primary) {
+          const p = prof.primary;
+          const w = p.sensitivity_wilson95 ?? [];
+          passportLines.push(
+            `Proficiency (EXACT config match): ${p.caught}/${p.n_plants} planted defects caught` +
+            (w.length === 2 ? ` · Wilson95 [${w[0]}, ${w[1]}]` : "") +
+            ` · clean-twin specificity ${p.true_negatives}/${p.n_twins}` +
+            (p.provisional ? ` · PROVISIONAL · n=${p.n_plants}` : ""));
+          passportLines.push(
+            `Proficiency record: suite ${String(prof.suite_sha256 ?? "").slice(0, 12)}… · ${prof.execution_date ?? ""} · WORM-locked`);
+        } else {
+          const why = cite.reason ??
+            (cite.mismatched_keys?.length ? `configuration drift: ${cite.mismatched_keys.join(", ")}` : "no record");
+          passportLines.push(`Proficiency: UNCALIBRATED — ${why}`);
+        }
+      }
+      addSection("AI reliability passport", passportLines);
+
+      // Deterministic downstream handoff packets (no model involved) — a
+      // machine-readable pointer set a human or later system can act on.
+      const packets = synthetic.handoff_packets ?? [];
+      if (packets.length) {
+        const packetBtn = el(`<a class="btn ghost">Download handoff packets (${packets.length})</a>`) as HTMLAnchorElement;
+        packetBtn.href = URL.createObjectURL(
+          new Blob([JSON.stringify(packets, null, 2)], { type: "application/json" }));
+        packetBtn.download = "handoff-packets.json";
+        badge.append(packetBtn);
+      }
     }
 
     const support = (qc.checks ?? []).filter((c: any) => c.source !== "deterministic" && c.source !== "agentic_ai");

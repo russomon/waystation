@@ -36,6 +36,8 @@ asserts the results:
 bash scripts/agentic-qc-proof.sh   # charter, request allowlist, mandatory 18-risk accounting, no-repair contract
 bash scripts/coverage-proof.sh     # detection coverage: tiled full-timeline PSE, blind-pass audio, scene/anomaly frames, lip-sync proxy
 bash scripts/hybrid-proof.sh       # perceive-then-compute: AV-offset recovery + abstain, channel semantics, honest coverage (no cloud)
+bash scripts/jury-proof.sh         # AI reliability passport: blind second-model jury, reducer replay, prompt blindness (mock, zero spend)
+bash scripts/proficiency-proof.sh  # proficiency foundry: blind planted defects + clean twins, WORM-locked proficiency manifest
 bash scripts/netflix-qc-proof.sh   # Netflix profile: 4 BLOCKERs, reporter-only mode, PSE, VMAF/MOS
 bash scripts/ai-qc-proof.sh        # 3-pass agentic lane + adaptive evidence + ASR WER (mock GMI, zero spend)
 bash scripts/qc-proof.sh           # deterministic AV + caption QC with exact defect counts
@@ -347,6 +349,23 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   dialogue on the LFE). A hybrid WARN raises `SUSPECTED`; a hybrid PASS never
   CLEARs (AI perception can flag, never certify). Proven by
   `scripts/hybrid-proof.sh` (ffmpeg + venv, no cloud).
+- ✅ **AI Reliability Passport — Waystation QCs the AI.** Every other tool
+  asks you to trust its model; Waystation MEASURES it and attaches the
+  measurement to each AI finding. Two axes, raw dimensions only, never a
+  composite score: **(1) blind Jury** — a second model family re-perceives the
+  same evidence (never shown the primary's findings), its observations replay
+  through the same deterministic reducer, and structured findings are matched
+  in code → `reproduced | contested | single_source`; a contested finding
+  STAYS suspected with raised review priority. **(2) Proficiency Foundry** —
+  seeded challenge suites plant ONE measured defect (mutated signage glyphs,
+  wrong loudness, bad framerate) beside untouched clean twins, hide the truth,
+  run the exact production lane, and score detection deterministically with
+  Wilson intervals (`PROVISIONAL · n=5` labeled honestly). Results ship as an
+  immutable proficiency manifest under B2 Object Lock, citable ONLY on an
+  exact configuration match — any model/prompt/reducer drift renders the lane
+  UNCALIBRATED. Proven by `scripts/jury-proof.sh` +
+  `scripts/proficiency-proof.sh`; live: a planted `ARRIVALS→4RRIVALS` was
+  caught and independently reproduced by the blind juror on first run.
 - ✅ **Prompt-native human QC charter** — the independent sweep explicitly
   searches sampled evidence for pixel defects, isolated corruption, banding,
   moire, cadence/judder, color discontinuities, text/graphics mistakes,

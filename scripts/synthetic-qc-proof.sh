@@ -227,6 +227,31 @@ typ = ck(s, "ai_rendered_text_integrity")
 print(f"  S typography: {typ['status']} — {typ['detail'][:80]}")
 need(typ and typ["status"] == "warn" and "OPEN" in typ["detail"] and "0PEN" in typ["detail"],
      "tracked typography mutation not surfaced")
+
+# Structured finding identity + reliability passport (2026-07-24): typography
+# findings carry finding_id/match_key (jury replay contract), an honest
+# single_source jury verdict when no juror is configured, an UNCALIBRATED
+# proficiency citation when no manifest matches, and deterministic handoff
+# packets with NO invented assertion linkage.
+tfs = s.get("synthetic", {}).get("typography", {}).get("findings", [])
+need(tfs, "structured typography findings missing")
+tf = tfs[0]
+need(tf.get("finding_id", "").startswith("text_mutation:"), f"finding_id missing ({tf.get('finding_id')})")
+need(tf.get("match_key", {}).get("kind") == "text_mutation", "match_key missing/wrong")
+need(tf.get("assertion_ids") == [], "typography reducer must not invent assertion links")
+need(tf.get("jury", {}).get("verdict") == "single_source",
+     f"no-juror run must disclose single_source ({tf.get('jury')})")
+need(tf.get("proficiency", {}).get("citation", {}).get("state") == "UNCALIBRATED",
+     "no-manifest run must render proficiency UNCALIBRATED")
+packets = s.get("synthetic", {}).get("handoff_packets", [])
+need(packets, "handoff packets missing")
+pk = next((p for p in packets if p.get("kind") == "text_mutation"), None)
+need(pk and pk.get("related_assertion_ids") == [] and pk.get("related_prompt_clauses") == [],
+     "packet invented prompt-clause linkage the reducer never retained")
+need(pk and pk.get("reliability_passport_ref", {}).get("jury_verdict") == "single_source",
+     "packet missing passport ref")
+print(f"  S passport: finding {tf['finding_id'][:40]}… jury={tf['jury']['verdict']}, "
+      f"proficiency={tf['proficiency']['citation']['state']}, {len(packets)} packet(s)")
 adh = ck(s, "ai_prompt_adherence")
 print(f"  S adherence: {adh['status']} — {adh['detail'][:90]}")
 need(adh and adh["status"] == "warn" and "35" in adh["detail"] and "red ball" in adh["detail"],

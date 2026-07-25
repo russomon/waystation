@@ -5,6 +5,66 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-24 - AI Reliability Passport: blind Jury (reproducibility) + Proficiency Foundry
+
+- Context: Every AI-QC product asks the user to TRUST model findings. This
+  project has repeatedly measured why that fails. The innovation is to make the
+  AI lane itself a measured instrument: every AI-derived finding carries an
+  auditable passport with two independently measured axes — and NO composite
+  score, ever (a single "confidence: 87%" would recreate false certainty).
+- **Jury (reproducibility, not accuracy):** when the generated-typography
+  reducer produces a finding and `GMI_JURY_MODEL` is set (opt-in, default
+  EMPTY), a second model family re-perceives the SAME evidence under a strict
+  BLINDNESS contract — it never sees the primary's findings. Its raw
+  observations replay through the SAME normalizer + reducer, and the two
+  structured finding sets are matched on `match_key` (`qc/jury.py`; findings
+  gained `finding_id`/`match_key` identities in `qc/generated.py`). Verdicts:
+  `reproduced | contested | single_source`. A CONTESTED finding STAYS
+  SUSPECTED with RAISED review priority — disagreement is information, never
+  an eraser. Diagnostics (raw agreement, confusion matrix, Gwet's AC1 — kappa
+  is unstable on imbalanced labels) ride along; they are not the verdict.
+  Probed live: gpt-4o/-mini sit in GMI's catalog but had NO serving capacity
+  (429 on every attempt), so v1 ships gemini-3.5 × gemini-3.6 — disclosed in
+  the passport as `same_family_cross_generation`, never claimed as vendor
+  independence ("cross-family reproducibility", both ride GMI's control plane).
+- **Proficiency Foundry (proficiency, not "calibration"):** seeded, randomized
+  challenge suites — clean base, untouched clean twin, ONE precisely measured
+  planted defect (`qc/foundry.py` plans; `foundry_render.py` renders with
+  Pillow+ffmpeg; ground truth exact by construction, hidden from the models).
+  `scripts/proficiency.sh --class rendered_text_mutation [--publish]` runs the
+  EXACT production lane subset and scores deterministically
+  (caught | missed | false_positive_on_twin), with Wilson 95% intervals always
+  rendered beside raw counts and labeled PROVISIONAL at small n. Three systems
+  measured separately: primary standalone, juror standalone offline (a
+  juror-only catch is `offline_juror_only_catch` — under the deployed
+  finding-only policy the jury characterizes reliability, it cannot add
+  recall), and the deployed pair policy conditional on a primary finding.
+  Control classes (loudness_delta_lu, bad_framerate) prove the scoring
+  machinery only and are labeled as such.
+- **Immutable proficiency manifest:** drafts are never citable; `--publish`
+  refuses a dirty worktree and writes the record to B2 under COMPLIANCE Object
+  Lock with full provenance (model ids, prompt sha256s, sampler/normalizer/
+  reducer/policy/suite/renderer versions, commit + dirty flag, seed, asset +
+  sidecar hashes, parameter ranges, n, Wilson CIs, execution date, and the
+  disclosure that a remote model id does not pin weights). The report cites
+  the manifest ONLY on an EXACT config match (`foundry.citation_state`) —
+  never "latest"; any drift renders the lane UNCALIBRATED.
+- **Handoff packets replace "regeneration advice"** (which is repair advice —
+  rejected on reporter-only charter grounds): per-finding, fully deterministic
+  `{finding_id, kind, timecodes, evidence_ids, related_assertion_ids,
+  related_prompt_clauses, reliability_passport_ref}`, where prompt clauses
+  come ONLY from assertion ids a reducer actually retained.
+- First live run: a planted `ARRIVALS→4RRIVALS` was caught by the primary,
+  independently reproduced by the blind juror — which transcribed the glyph
+  differently (`4ARRIVALS` vs `4RRIVALS`) yet produced the SAME structured
+  concern, vindicating match_key excluding before/after strings — and the
+  clean twin passed both models untouched.
+- Proof: `scripts/jury-proof.sh` (reducer replay, contested-stays-suspected,
+  PROMPT-BLINDNESS assertion, honest single_source) and
+  `scripts/proficiency-proof.sh` (blind scoring branches through the real lane,
+  manifest completeness, citation states, dirty-worktree refusal against an
+  isolated repo, WORM publish with rejected delete).
+
 ### 2026-07-24 - Generated-media QC is an asset-specific plan plus deterministic ledgers
 
 - Context: The original Synthetic QC lane used a broad artifact prompt, three

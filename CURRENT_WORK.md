@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-24 (asset-specific generated-media QC blueprint and timeline ledgers)
+Updated: 2026-07-24 (AI Reliability Passport: blind jury + proficiency foundry)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03)
 
@@ -21,6 +21,33 @@ switches and chat history gaps.
   non-duplicative output. The integration is fully mock-proven, but these new
   structured prompts have not yet had a live-model calibration pass. Then
   update the demo shot list if needed and record the video.
+
+## AI Reliability Passport (2026-07-24, latest)
+
+The hackathon headline: **Waystation QCs the AI.** Every AI-derived typography
+finding now carries an auditable passport — reproducibility from a BLIND
+second-model jury (reducer replay + match_key, `qc/jury.py`;
+`reproduced|contested|single_source`; contested STAYS suspected with raised
+priority) and proficiency from blind planted-defect testing
+(`qc/foundry.py` + `foundry_render.py` + `scripts/proficiency.sh`; clean twins
+measure false positives; Wilson CIs labeled PROVISIONAL; WORM-locked manifest
+citable only on EXACT config match, else UNCALIBRATED). Handoff packets
+(deterministic, no model) replace the rejected regeneration-advice idea.
+Findings gained structured identities (`finding_id`/`match_key`) in
+`qc/generated.py`. Full rationale in DECISIONS 2026-07-24.
+
+- Env: `GMI_JURY_MODEL` (opt-in, default empty; probed live — gpt-4o had no
+  GMI capacity, so gemini-3.6-flash jurors are disclosed as same-family),
+  `PROFICIENCY_MANIFEST_PATH` (published manifest copy for report citation),
+  `WAYSTATION_COMMIT` (config binding in Docker, no .git in image).
+- Proofs: `jury-proof.sh`, `proficiency-proof.sh`; `synthetic-qc-proof.sh`
+  extended for passport fields. First live run: planted `ARRIVALS→4RRIVALS`
+  caught by primary AND independently reproduced by the blind juror (which
+  transcribed the glyph differently — the match_key design working as
+  intended); clean twin passed both models.
+- REMAINING (before recording): full live proficiency session (10 assets ×
+  jury) → `--publish` the citable WORM manifest from a clean worktree; then
+  wire `PROFICIENCY_MANIFEST_PATH` + `GMI_JURY_MODEL` for the demo run.
 
 ## Asset-specific generated-media QC (2026-07-24)
 

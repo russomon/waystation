@@ -75,6 +75,23 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   never reject or claim full-timeline clearance. Earlier live captures scored
   98/100 for a faithful clip and 0/100 for a mismatched one; the expanded flow
   is integration-proven with mock GMI.
+- **AI Reliability Passport - Waystation QCs the AI** - the innovation no
+  QC product ships: every AI-derived finding carries an auditable measurement
+  of the AI itself, on two axes and never a composite score. **Blind Jury:**
+  a second model family independently re-perceives the same evidence (it is
+  never shown the first model's findings), its observations replay through the
+  same deterministic reducer, and the structured findings are matched in code
+  → `reproduced / contested / single_source`; a contested finding stays
+  suspected with *raised* review priority. **Proficiency Foundry:** seeded
+  challenge suites plant one precisely measured defect (a sign that flips
+  `ARRIVALS → 4RRIVALS`) beside untouched clean twins, hide the ground truth,
+  run the exact production lane blind, and score detection deterministically —
+  sensitivity AND clean-twin specificity with Wilson intervals, honestly
+  labeled `PROVISIONAL · n=5`. The proficiency record is sealed under B2
+  Object Lock and citable only while the exact model/prompt/reducer
+  configuration still matches — any drift renders the lane UNCALIBRATED. In
+  our first live run the planted mutation was caught by the primary model and
+  independently reproduced by the blind juror.
 - **Netflix strict profile** - one toggle swaps thresholds for a
   zero-tolerance delivery spec (−24 LKFS ±1, −2 dBTP, native frame rates
   only, no pulldown, PSE hard-fail). Findings tier into
