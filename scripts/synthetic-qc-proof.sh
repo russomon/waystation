@@ -167,9 +167,17 @@ run_job "$TID_R" '{"qc_synthetic":true,"qc_captions":false,"summarize":false,"qc
 echo "✓ R processed (redacted prompt)"
 
 echo "— sidecar + event-filter validation —"
+# Sidecar URLs are minted only for an upload the caller owns, so initiate one
+# first; an arbitrary key is refused before the name is even considered.
+SCJSON=$(curl -s -X POST http://localhost:8787/api/uploads -H 'content-type: application/json' \
+  --data '{"filename":"sidecar-host.mp4","contentType":"video/mp4","size":1048576}')
+SCKEY=$("$PY" -c "import json,sys;print(json.loads(sys.argv[1])['key'])" "$SCJSON")
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
+  -H 'content-type: application/json' --data "{\"key\":\"$SCKEY\",\"filename\":\"source.genblaze.json\"}")
+[ "$CODE" = "200" ] && echo "✓ source.genblaze.json accepted (200)" || { echo "FAIL: sidecar-url $CODE"; exit 1; }
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
   -H 'content-type: application/json' --data '{"key":"transfers/x/a.mp4","filename":"source.genblaze.json"}')
-[ "$CODE" = "200" ] && echo "✓ source.genblaze.json accepted (200)" || { echo "FAIL: sidecar-url $CODE"; exit 1; }
+[ "$CODE" = "404" ] && echo "✓ sidecar for an unowned key refused (404)" || { echo "FAIL: expected 404, got $CODE"; exit 1; }
 GENKEY="transfers/$TID_S/source.genblaze.json"
 BODY="{\"events\":[{\"eventType\":\"b2:ObjectCreated:Upload\",\"objectName\":\"$GENKEY\",\"bucketName\":\"$BUCKET\"}]}"
 SIG="v1=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')"

@@ -140,6 +140,97 @@ export function getTransfer(transferId: string): TransferRow | undefined {
   };
 }
 
+// ── uploads (ownership) ──
+//
+// Every multipart upload is bound to the session that initiated it. Later
+// routes must verify that binding: knowing another sender's key and upload id
+// must not be enough to sign parts, attach sidecars, or complete their upload.
+
+export interface UploadRow {
+  objectKey: string;
+  uploadId: string;
+  transferId: string;
+  sessionId: string | null;
+  filename?: string;
+  contentType?: string;
+  declaredSize?: number;
+  partSize?: number;
+  partCount?: number;
+  state: string;
+  createdAt: number;
+}
+
+const insertUpload = db.prepare(`
+  INSERT INTO uploads (object_key, upload_id, transfer_id, session_id, filename,
+                       content_type, declared_size, part_size, part_count, state, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+`);
+const selectUpload = db.prepare(`SELECT * FROM uploads WHERE object_key = ? AND upload_id = ?`);
+const updateUploadState = db.prepare(
+  `UPDATE uploads SET state = ? WHERE object_key = ? AND upload_id = ?`,
+);
+const countActive = db.prepare(
+  `SELECT COUNT(*) AS n FROM uploads WHERE session_id = ? AND state = 'active'`,
+);
+const countSince = db.prepare(
+  `SELECT COUNT(*) AS n FROM uploads WHERE session_id = ? AND state = 'complete' AND created_at >= ?`,
+);
+const countAllSince = db.prepare(
+  `SELECT COUNT(*) AS n FROM uploads WHERE state = 'complete' AND created_at >= ?`,
+);
+
+export function createUpload(u: Omit<UploadRow, "state" | "createdAt">): void {
+  insertUpload.run(
+    u.objectKey, u.uploadId, u.transferId, u.sessionId,
+    u.filename ?? null, u.contentType ?? null,
+    u.declaredSize ?? null, u.partSize ?? null, u.partCount ?? null,
+    new Date().toISOString(),
+  );
+}
+
+const selectUploadByKey = db.prepare(
+  `SELECT * FROM uploads WHERE object_key = ? ORDER BY created_at DESC LIMIT 1`,
+);
+
+/** Object keys embed a fresh transfer UUID per initiate, so a key identifies
+ *  one upload. Used by the outboard/sidecar routes, which address the master by
+ *  key alone; ownership is still verified against the returned row. */
+export function getUploadByKey(objectKey: string): UploadRow | undefined {
+  const r = selectUploadByKey.get(objectKey) as any;
+  return r ? rowToUpload(r) : undefined;
+}
+
+export function getUpload(objectKey: string, uploadId: string): UploadRow | undefined {
+  const r = selectUpload.get(objectKey, uploadId) as any;
+  return r ? rowToUpload(r) : undefined;
+}
+
+function rowToUpload(r: any): UploadRow {
+  return {
+    objectKey: r.object_key, uploadId: r.upload_id, transferId: r.transfer_id,
+    sessionId: r.session_id, filename: r.filename ?? undefined,
+    contentType: r.content_type ?? undefined,
+    declaredSize: r.declared_size ?? undefined,
+    partSize: r.part_size ?? undefined, partCount: r.part_count ?? undefined,
+    state: r.state, createdAt: Date.parse(r.created_at),
+  };
+}
+
+export const setUploadState = (objectKey: string, uploadId: string, state: string): void => {
+  updateUploadState.run(state, objectKey, uploadId);
+};
+
+export const activeUploadCount = (sessionId: string): number =>
+  Number((countActive.get(sessionId) as { n: number }).n);
+
+/** Completed uploads for one session since an ISO timestamp. */
+export const completedSince = (sessionId: string, sinceIso: string): number =>
+  Number((countSince.get(sessionId, sinceIso) as { n: number }).n);
+
+/** Completed uploads across all sessions since an ISO timestamp (daily cap). */
+export const completedSinceAll = (sinceIso: string): number =>
+  Number((countAllSince.get(sinceIso) as { n: number }).n);
+
 // ── meter events (idempotent) ──
 
 export interface MeterEvent {

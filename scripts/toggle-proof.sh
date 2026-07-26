@@ -108,9 +108,19 @@ wait_sse t3 pipeline_complete || { echo "FAIL: T3 never completed"; tail -5 /tmp
 echo "✓ T3 completed"
 
 echo "— sidecar-url validation —"
+# A sidecar URL is only minted for an upload the caller owns, so the name check
+# is exercised against a REAL initiated upload. An arbitrary key is refused
+# outright — otherwise this route would be a write primitive into any transfer
+# prefix.
+SCJSON=$(curl -s -X POST http://localhost:8787/api/uploads -H 'content-type: application/json' \
+  --data '{"filename":"sidecar-host.mp4","contentType":"video/mp4","size":1048576}')
+SCKEY=$("$PY" -c "import json,sys;print(json.loads(sys.argv[1])['key'])" "$SCJSON")
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
-  -H 'content-type: application/json' --data '{"key":"transfers/x/a.mp4","filename":"evil.txt"}')
+  -H 'content-type: application/json' --data "{\"key\":\"$SCKEY\",\"filename\":\"evil.txt\"}")
 [ "$CODE" = "400" ] && echo "✓ .txt sidecar rejected (400)" || { echo "FAIL: expected 400, got $CODE"; exit 1; }
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
+  -H 'content-type: application/json' --data '{"key":"transfers/x/a.mp4","filename":"subs.srt"}')
+[ "$CODE" = "404" ] && echo "✓ sidecar for an unowned key refused (404)" || { echo "FAIL: expected 404, got $CODE"; exit 1; }
 
 echo "=== assertions ==="
 "$PY" - "$T1" "$T2" "$T3" <<'PYEOF'

@@ -85,6 +85,14 @@ export const gwPost = (path: string, body?: unknown): Promise<any> =>
 export const gwEventSource = (path: string): EventSource =>
   new EventSource(url(path), { withCredentials: true });
 
+/** Exchange the access code for a session cookie. The code is sent exactly
+ *  once and is never persisted client-side — the cookie is HttpOnly, so this
+ *  page cannot read it back either. Throws GatewayError(401) on a bad code. */
+export const createSession = (code: string): Promise<any> =>
+  gwPost("/session", { code });
+
+export const endSession = (): Promise<any> => gwPost("/session/logout");
+
 /** Share/recipient link that preserves the deployed subpath (/waystation/).
  *  location.origin alone drops it and produces a dead link. */
 export const recipientLink = (transferId: string): string => {

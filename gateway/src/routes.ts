@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import {
   authConfig,
@@ -7,9 +7,24 @@ import {
   enforceOrigin,
   issueSession,
   limiter,
+  requireSession,
+  sessionIdOf,
   setSessionCookie,
   verifyAccessCode,
 } from "./auth.js";
+import {
+  createUpload,
+  getUpload,
+  getUploadByKey,
+  setUploadState,
+  type UploadRow,
+} from "./db.js";
+import {
+  validateFilename,
+  validatePartNumbers,
+  validateSidecarName,
+  validateSize,
+} from "./limits.js";
 import * as g from "./s3.js";
 import { verifyB2Signature, parseB2Events, isOriginalMedia, transferIdFromKey } from "./events.js";
 import { dispatchPipeline } from "./pipeline.js";
@@ -43,27 +58,92 @@ api.post("/session/logout", (c) => {
 });
 
 // ───────── upload (control plane) ─────────
-api.post("/uploads", async (c) => {
-  const { filename, contentType, size } = await c.req.json();
-  return c.json(await g.initiate(filename, contentType ?? "application/octet-stream", size));
+//
+// Every route here requires a sender session AND verifies that the supplied key
+// and multipart upload id belong to THAT session. Authentication alone is not
+// enough: with a single shared beta code, any code-holder would otherwise be
+// able to sign parts for, attach sidecars to, or complete somebody else's
+// upload just by knowing its identifiers.
+
+/** Resolve an upload the caller legitimately owns, or an error response.
+ *  A neutral 404 is returned whether the upload does not exist OR belongs to a
+ *  different session — never confirm the existence of another session's work. */
+function ownUpload(c: Context, row: UploadRow | undefined) {
+  if (!row || (authEnabled && row.sessionId !== sessionIdOf(c)))
+    return { fail: c.json({ error: "Upload not found.", code: "not_found" }, 404) };
+  return { row };
+}
+
+const ownedByPair = (c: Context, key: unknown, uploadId: unknown) =>
+  typeof key === "string" && typeof uploadId === "string" && key && uploadId
+    ? ownUpload(c, getUpload(key, uploadId))
+    : { fail: c.json({ error: "key and uploadId are required.", code: "bad_request" }, 400) };
+
+const ownedByKey = (c: Context, key: unknown) =>
+  typeof key === "string" && key
+    ? ownUpload(c, getUploadByKey(key))
+    : { fail: c.json({ error: "key is required.", code: "bad_request" }, 400) };
+
+api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_000), async (c) => {
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const name = validateFilename(body.filename);
+  if ("error" in name) return c.json({ error: name.error, code: name.code }, name.status);
+  const sized = validateSize(body.size);
+  if ("error" in sized) return c.json({ error: sized.error, code: sized.code }, sized.status);
+
+  // contentType is INFORMATIONAL: recorded and forwarded, never trusted to
+  // decide what work runs.
+  const contentType =
+    typeof body.contentType === "string" && body.contentType.length < 200
+      ? body.contentType
+      : "application/octet-stream";
+
+  const out = await g.initiate(name.filename, contentType, sized.size);
+  createUpload({
+    objectKey: out.key, uploadId: out.uploadId, transferId: out.transferId,
+    sessionId: sessionIdOf(c), filename: name.filename, contentType,
+    declaredSize: sized.size, partSize: out.partSize, partCount: out.partCount,
+  });
+  return c.json(out);
 });
-api.post("/uploads/parts", async (c) => {
-  const { key, uploadId, partNumbers } = await c.req.json();
-  return c.json(await g.presignParts(key, uploadId, partNumbers));
+
+api.post("/uploads/parts", requireSession, enforceOrigin, limiter("sign", 600, 60_000, true), async (c) => {
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const owned = ownedByPair(c, body.key, body.uploadId);
+  if ("fail" in owned) return owned.fail;
+  const parts = validatePartNumbers(body.partNumbers, owned.row.partCount ?? 10_000);
+  if ("error" in parts) return c.json({ error: parts.error, code: parts.code }, parts.status);
+  return c.json(await g.presignParts(owned.row.objectKey, owned.row.uploadId, parts.partNumbers));
 });
-api.get("/uploads/parts", async (c) =>
-  c.json(await g.listParts(c.req.query("key")!, c.req.query("uploadId")!)));
-api.post("/uploads/outboard-url", async (c) =>
-  c.json({ url: await g.presignPut((await c.req.json()).key + ".obao") }));
+
+// GET is protected too — it reveals which parts of an upload have landed.
+api.get("/uploads/parts", requireSession, async (c) => {
+  const owned = ownedByPair(c, c.req.query("key"), c.req.query("uploadId"));
+  if ("fail" in owned) return owned.fail;
+  return c.json(await g.listParts(owned.row.objectKey, owned.row.uploadId));
+});
+
+api.post("/uploads/outboard-url", requireSession, enforceOrigin, limiter("sign", 600, 60_000, true), async (c) => {
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const owned = ownedByKey(c, body.key);
+  if ("fail" in owned) return owned.fail;
+  return c.json({ url: await g.presignPut(`${owned.row.objectKey}.obao`) });
+});
+
 // Sidecars uploaded alongside the master: captions (.srt/.vtt) ride into the
 // caption QC; a source mezzanine (*.ref.mp4/.mov/.mxf) powers the reference
 // SSIM/PSNR/VMAF lane. Neither triggers its own pipeline run (event filter).
-api.post("/uploads/sidecar-url", async (c) => {
-  const { key, filename } = await c.req.json(); // key = the master's object key
-  if (!/(\.(srt|vtt)|\.ref\.(mp4|mov|mxf)|\.genblaze\.json)$/i.test(String(filename ?? "")))
-    return c.json({ error: "only .srt/.vtt captions, .ref.* mezzanine, or .genblaze.json manifest sidecars" }, 400);
-  const safe = String(filename).replace(/[^\w.\-]/g, "_");
-  return c.json({ url: await g.presignPut(`transfers/${transferIdFromKey(key)}/${safe}`) });
+// The name is allowlisted — an arbitrary filename here would be a write
+// primitive into the transfer prefix — and the destination is derived from the
+// OWNED row, never from caller-supplied text.
+api.post("/uploads/sidecar-url", requireSession, enforceOrigin, limiter("sign", 600, 60_000, true), async (c) => {
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const owned = ownedByKey(c, body.key);
+  if ("fail" in owned) return owned.fail;
+  const name = validateSidecarName(body.filename);
+  if ("error" in name) return c.json({ error: name.error, code: name.code }, name.status);
+  const safe = name.filename.replace(/[^\w.\-]/g, "_");
+  return c.json({ url: await g.presignPut(`transfers/${owned.row.transferId}/${safe}`) });
 });
 // Transfer-only detection looks ONLY at the boolean service flags. Options
 // also carries non-service keys (QC profile and compute target) that must not
@@ -79,24 +159,32 @@ const sanitizeOptions = (o?: Record<string, boolean | string>) => o
   ? Object.fromEntries(Object.entries(o).filter(([key]) => OPTION_KEYS.has(key)))
   : undefined;
 
-api.post("/uploads/complete", async (c) => {
-  const b = await c.req.json(); // { key, uploadId, blake3Root, options? }
-  const { bytes } = await g.complete(b.key, b.uploadId);
-  const transferId = transferIdFromKey(b.key);
+api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
+  const b = await c.req.json().catch(() => ({}) as Record<string, any>);
+  const owned = ownedByPair(c, b.key, b.uploadId);
+  if ("fail" in owned) return owned.fail;
+  // Idempotent: a retried completion must not re-assemble on B2 or re-meter
+  // the transfer. The first call wins; later calls acknowledge without work.
+  if (owned.row.state === "complete")
+    return c.json({ ok: true, alreadyComplete: true });
+
+  const { bytes } = await g.complete(owned.row.objectKey, owned.row.uploadId);
+  setUploadState(owned.row.objectKey, owned.row.uploadId, "complete");
+  const transferId = owned.row.transferId;
   // Unknown and retired options (including legacy self_heal) never enter the
   // transfer store or dispatch payload.
   const options = sanitizeOptions(b.options as Record<string, boolean | string> | undefined);
   // Always record — the event path needs `options` even without a hash root.
-  saveTransfer(transferId, { key: b.key, blake3Root: b.blake3Root, createdAt: Date.now(), options });
+  saveTransfer(transferId, { key: owned.row.objectKey, blake3Root: b.blake3Root, createdAt: Date.now(), options });
   // Billable event: the transfer itself, in GB delivered into the waystation.
-  meter({ transferId, event: "transfer", units: Number((bytes / 1e9).toFixed(6)), unit: "gb", ref: b.key });
+  meter({ transferId, event: "transfer", units: Number((bytes / 1e9).toFixed(6)), unit: "gb", ref: owned.row.objectKey });
   // Dev only: no real B2 event source locally, so simulate the
   // object-created trigger right after assembly. Production leaves
   // DEV_TRIGGER_ON_COMPLETE unset and the real B2 Event Notification drives it.
   if (env.DEV_TRIGGER_ON_COMPLETE === "true") {
     if (anyServiceOn(options)) {
-      sse.publish(transferId, { type: "pipeline_queued", key: b.key });
-      void dispatchPipeline({ bucket: env.B2_BUCKET, key: b.key, transferId, options });
+      sse.publish(transferId, { type: "pipeline_queued", key: owned.row.objectKey });
+      void dispatchPipeline({ bucket: env.B2_BUCKET, key: owned.row.objectKey, transferId, options });
     } else {
       sse.publish(transferId, { type: "pipeline_skipped", reason: "transfer-only" });
     }
