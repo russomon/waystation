@@ -13,3 +13,8 @@ __pycache__/
 .devdata/
 vendor/
 client/public/
+
+# SQLite control-plane state (WAYSTATION_DB_PATH); never committed
+*.db
+*.db-wal
+*.db-shm
