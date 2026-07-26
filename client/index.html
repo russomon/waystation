@@ -3,6 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Gateway control-plane base. Empty = same-origin "/api" (dev, via the
+         vite proxy). The export script rewrites this to the production API for
+         the hosted release, so the deployed host can be changed by editing this
+         one line without rebuilding. Large media never goes here — it moves
+         browser <-> Backblaze B2 directly. -->
+    <meta name="waystation-api" content="" />
     <title>Waystation</title>
     <style>
       :root { --blue: #2563eb; --ink: #111827; --mut: #6b7280; --line: #e5e7eb; --bg: #f8fafc; }

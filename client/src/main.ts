@@ -1,3 +1,4 @@
+import { gwEventSource, recipientLink } from "./config.js";
 import { uploadFile, type ServiceOptions } from "./uploader.js";
 import { renderDelivery } from "./delivery.js";
 
@@ -75,7 +76,9 @@ if (tid) {
         (p) => (logEl.textContent = `${p.phase}: ${gb(p.bytes)} / ${gb(p.total)} GB`),
       );
 
-      const link = `${location.origin}/?t=${transferId}`;
+      // Built from the current URL so the deployed subpath (/waystation/) is
+      // preserved — location.origin alone yields a dead link when hosted there.
+      const link = recipientLink(transferId);
       logEl.innerHTML =
         `uploaded ✓ — share: <a href="${link}">${link}</a><br><span id="pipe">waiting for the waystation…</span>`;
       const pipe = document.querySelector<HTMLSpanElement>("#pipe")!;
@@ -91,7 +94,7 @@ if (tid) {
         return;
       }
 
-      const es = new EventSource(`/api/progress/${transferId}`);
+      const es = gwEventSource(`/progress/${transferId}`);
       let where = "";  // compute label from pipeline_started ("local", "cloud-docker", …)
       es.onmessage = (e) => {
         const ev = JSON.parse(e.data);

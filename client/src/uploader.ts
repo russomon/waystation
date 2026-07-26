@@ -1,8 +1,13 @@
 // Parallel multipart upload straight to B2, resumable via ListParts.
+//
+// Two transports, deliberately kept apart: control calls go to the gateway
+// through gwPost/gwGet (credentialed, session cookie); the part/sidecar PUTs go
+// straight to Backblaze with a BARE fetch — no cookie, no gateway header. The
+// master file never passes through the gateway or Cloudflare.
 import { hashFile } from "./blake3.js";
+import { gwGet, gwPost } from "./config.js";
 import { getResume, saveResume, markPart, clearResume, type ResumeState } from "./resumeStore.js";
 
-const API = "/api";
 const CONCURRENCY = 6;
 
 export interface Progress { bytes: number; total: number; phase: string; }
@@ -98,6 +103,7 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
     for (let x = it.next(); !x.done; x = it.next()) await fn(x.value);
   }));
 }
-const post = (p: string, b: unknown) =>
-  fetch(API + p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }).then((r) => r.json());
-const get = (p: string) => fetch(API + p).then((r) => r.json());
+// Gateway control-plane calls (credentialed, status-aware). Backblaze PUTs
+// above use a bare fetch and must never route through these.
+const post = gwPost;
+const get = gwGet;

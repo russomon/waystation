@@ -2,6 +2,7 @@
 // "Verify provenance" button that re-hashes the assets (SHA-256, Web Crypto)
 // and checks them against the manifest. Reached at /?t=<transferId>.
 
+import { gwGet } from "./config.js";
 import { downloadVerified } from "./downloader.js";
 
 interface Asset { key: string; url: string; mime: string; size: number; }
@@ -30,9 +31,15 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string> {
 export async function renderDelivery(id: string, root: HTMLElement) {
   root.hidden = false;
   root.textContent = "Loading transfer…";
-  const res = await fetch(`/api/transfers/${id}`);
-  if (!res.ok) { root.textContent = "Transfer not found or expired."; return; }
-  const t: Transfer = await res.json();
+  let t: Transfer;
+  try {
+    t = await gwGet(`/transfers/${id}`);
+  } catch {
+    // Neutral response for missing, expired, or revoked capabilities — the
+    // recipient link is a bearer capability and must not distinguish them.
+    root.textContent = "Transfer not found or expired.";
+    return;
+  }
   const manifest = t.manifestUrl ? await fetch(t.manifestUrl).then((r) => r.json()).catch(() => null) : null;
   // Genblaze manifest (genblaze-core): run.steps[], assets with s3:// urls.
   const gbSteps: any[] = manifest?.run?.steps ?? [];
@@ -244,7 +251,9 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   }
 
   // Usage ledger — billing-ready metering for this transfer.
-  const usage = await fetch(`/api/transfers/${id}/usage`).then((r) => r.json()).catch(() => null);
+  // NOTE (step 6, recipient scoping): this exposes the internal billing ledger
+  // to anyone holding a recipient link and is removed from the recipient view.
+  const usage = await gwGet(`/transfers/${id}/usage`).catch(() => null);
   if (usage && usage.events?.length) {
     const u = el(`<details class="prov"><summary>Usage (billing-ready)</summary></details>`);
     const lines = Object.entries(usage.totals as Record<string, { units: number; unit: string }>)

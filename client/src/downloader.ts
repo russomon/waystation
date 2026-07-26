@@ -8,6 +8,7 @@
 // originals, swap the Blob for the File System Access API writable stream so
 // verified bytes flush straight to disk.
 import { verifyRange } from "./blake3.js";
+import { gwGet } from "./config.js";
 
 const RANGE = 4 << 20; // 4 MiB — a multiple of 1024, so every offset is chunk-aligned
 
@@ -21,7 +22,9 @@ export async function downloadVerified(
   transferId: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<{ blob: Blob; verified: boolean }> {
-  const t = await fetch(`/api/transfers/${transferId}`).then((r) => r.json());
+  // Control call → gateway (credentialed). The byte ranges below go straight to
+  // B2/CDN with a bare fetch — no cookie, no gateway header.
+  const t = await gwGet(`/transfers/${transferId}`);
 
   if (!t.outboardUrl || !t.blake3Root) {
     return { blob: new Blob([await fetchBytes(t.original.url)]), verified: false };
