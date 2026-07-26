@@ -1,5 +1,15 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import {
+  authConfig,
+  authEnabled,
+  clearSessionCookie,
+  enforceOrigin,
+  issueSession,
+  limiter,
+  setSessionCookie,
+  verifyAccessCode,
+} from "./auth.js";
 import * as g from "./s3.js";
 import { verifyB2Signature, parseB2Events, isOriginalMedia, transferIdFromKey } from "./events.js";
 import { dispatchPipeline } from "./pipeline.js";
@@ -9,6 +19,28 @@ import * as sse from "./sse.js";
 
 const env = process.env as Record<string, string>;
 export const api = new Hono();
+
+// ───────── sender session ─────────
+// The access code is exchanged ONCE for a signed, short-lived, opaque cookie;
+// the browser never stores the code. Rate limited hard because this is the only
+// endpoint where a code can be guessed, and it is reachable before any session
+// exists. Responses never distinguish "no code supplied" from "wrong code".
+api.post("/session", enforceOrigin, limiter("session", 10, 60_000), async (c) => {
+  if (!authEnabled)
+    return c.json({ ok: true, mode: "disabled", note: "authentication is off (development)" });
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const code = typeof body.code === "string" ? body.code : "";
+  if (!code || !verifyAccessCode(code, authConfig.codeHash!))
+    return c.json({ error: "That access code was not accepted.", code: "bad_code" }, 401);
+  const { token, expiresAt } = issueSession();
+  setSessionCookie(c, token);
+  return c.json({ ok: true, expiresAt });
+});
+
+api.post("/session/logout", (c) => {
+  clearSessionCookie(c);
+  return c.json({ ok: true });
+});
 
 // ───────── upload (control plane) ─────────
 api.post("/uploads", async (c) => {
