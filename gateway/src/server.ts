@@ -31,6 +31,13 @@ app.use(
 app.route("/api", api);
 app.get("/", (c) => c.text("waystation gateway"));
 
+// Liveness for the tunnel connector and deployment checks. Unauthenticated by
+// necessity — a health probe has no credentials — so it discloses NOTHING:
+// no version, no auth mode, no origins, no database path, no build id. Those
+// belong in the boot log on the host, not on an endpoint reachable from the
+// internet, where they would only help someone map the deployment.
+app.get("/healthz", (c) => c.json({ ok: true }));
+
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, () => {
   // Configuration disclosure only — never a code, hash, token, or secret.

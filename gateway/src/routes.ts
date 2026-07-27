@@ -67,6 +67,13 @@ api.post("/session/logout", (c) => {
   return c.json({ ok: true });
 });
 
+// Whether the page should show its access panel. Deliberately minimal: it says
+// only that a code is required and whether this browser already holds a valid
+// session — both of which the UI must know to render at all, and neither of
+// which helps an attacker. No mode names, versions, origins, or limits.
+api.get("/session", (c) =>
+  c.json({ authRequired: authEnabled, hasSession: sessionIdOf(c) !== null }));
+
 // ───────── upload (control plane) ─────────
 //
 // Every route here requires a sender session AND verifies that the supplied key

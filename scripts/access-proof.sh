@@ -227,6 +227,16 @@ need "$(code_of -X POST -H 'content-type: application/json' \
   "captions must still be accepted"
 echo "  N: reference-QC lane gated at the sidecar (403), captions unaffected ✓"
 
+echo "=== healthz discloses nothing ==="
+HZ=$(curl -s "http://localhost:$GW/healthz")
+need "$(code_of "http://localhost:$GW/healthz")" 200 "healthz must answer unauthenticated"
+[ "$(printf '%s' "$HZ" | tr -d ' ')" = '{"ok":true}' ] \
+  || { echo "  FAIL: healthz body should be exactly {\"ok\":true}, got: $HZ"; ok=0; }
+for LEAK in version commit auth mode origin database db path node env; do
+  printf '%s' "$HZ" | grep -qi "$LEAK" && { echo "  FAIL: healthz leaks '$LEAK'"; ok=0; }
+done
+echo "  S: /healthz is 200, unauthenticated, and reveals nothing about the deployment ✓"
+
 echo "=== recipient scoping ==="
 start_gw_env "RECIPIENT_LINK_TTL_DAYS=14"
 # O) the old generic signing oracle is gone

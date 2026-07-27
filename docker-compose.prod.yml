@@ -1,0 +1,120 @@
+# Waystation — production stack for the hosted MVP.
+#
+#     docker compose -f docker-compose.prod.yml up -d
+#
+# Deliberately a STANDALONE file rather than an overlay on docker-compose.yml:
+# Compose merges `ports` additively, so an override cannot remove the public
+# 8787 mapping — and the whole point here is that nothing is published. The
+# local file stays exactly as it is for development and docker-proof.sh.
+#
+# Shape:
+#   cloudflared ──(outbound only)──▶ Cloudflare edge ──▶ api.orbitolive.com
+#        │ private compose network
+#        ▼
+#   gateway:8787 ──▶ worker:8000
+#
+# NO container publishes a port. The VPS should have no public 80/443/8000/8787;
+# cloudflared dials OUT to Cloudflare (TCP/UDP 7844), so no inbound firewall
+# hole is needed at all. Large media never traverses this path: the browser PUTs
+# straight to Backblaze B2 and the worker reads/writes B2 directly. Cloudflare
+# carries only control messages, the B2 webhook, and SSE progress.
+#
+# Required in .env on the VPS (never committed):
+#   B2_S3_ENDPOINT B2_REGION B2_BUCKET B2_KEY_ID B2_APP_KEY
+#   B2_EVENT_SIGNING_SECRET PIPELINE_SHARED_SECRET GMI_API_KEY
+#   WAYSTATION_ACCESS_CODE_HASH WAYSTATION_SESSION_SECRET
+#   TUNNEL_TOKEN
+# Generate the access-code hash and session secret with:
+#   node scripts/make-access-code.mjs
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      NODE_ENV: production          # makes auth + persistent state FAIL CLOSED
+      PORT: 8787
+      PIPELINE_URL: http://worker:8000
+      PIPELINE_URL_CLOUD: http://worker:8000
+      # Worker progress posts stay on the private network. Routing them out
+      # through api.orbitolive.com and back would hairpin every callback
+      # through Cloudflare for no reason.
+      GATEWAY_PUBLIC_URL: http://gateway:8787
+      # DEV_TRIGGER_ON_COMPLETE is deliberately unset: in production the real
+      # B2 Event Notification drives the pipeline.
+
+      WAYSTATION_AUTH_MODE: access-code
+      WAYSTATION_SESSION_TTL_SECONDS: "3600"
+      WAYSTATION_ALLOWED_ORIGINS: "https://orbitolive.com,https://www.orbitolive.com"
+      WAYSTATION_DB_PATH: /data/waystation.db
+
+      # Cost controls. These are the hard bounds on hackathon exposure; see the
+      # runbook for the "stop new spend" procedure (set ACCEPT_UPLOADS=false).
+      WAYSTATION_ACCEPT_UPLOADS: "true"
+      MAX_UPLOAD_BYTES: "536870912"          # 512 MiB
+      MAX_ACTIVE_UPLOADS_PER_SESSION: "2"
+      MAX_JOBS_PER_SESSION: "10"
+      MAX_DAILY_JOBS: "60"
+      ALLOW_AI_QC: "true"
+      ALLOW_SYNTHETIC_QC: "true"
+      ALLOW_EXPENSIVE_REFERENCE_QC: "false"  # reference VMAF ~1x duration
+      RECIPIENT_LINK_TTL_DAYS: "14"
+    volumes:
+      - control:/data                        # SQLite: transfers, uploads, meters
+    # No `ports:` — reachable only through the tunnel and the compose network.
+    depends_on:
+      - worker
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e",
+             "fetch('http://localhost:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: ./pipeline
+      args:
+        INSTALL_SYNCNET: ${INSTALL_SYNCNET:-0}
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      PHOTON_JAR: /opt/photon
+      WORKER_LABEL: cloud-docker
+      # Conservative AI sampling for the preview deployment. These are existing
+      # worker knobs, so bounding them is deployment configuration — no QC code
+      # is touched and the proven behaviour is unchanged, just sampled less.
+      AI_QC_FRAMES: "6"
+      AI_QC_FRAMES_MAX: "16"
+      AI_QC_ASR_SECONDS: "30"
+      AI_QC_AUDIO_WINDOWS: "2"
+      AI_QC_SYNTH_COARSE_FRAMES: "8"
+      AI_QC_SYNTH_FINE_MAX: "6"
+    deploy:
+      resources:
+        limits:
+          cpus: "${WORKER_CPUS:-0}"
+    volumes:
+      - scratch:/tmp                         # size for the largest master
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      # ONLY the tunnel token — the application .env is deliberately not passed
+      # into this container. It needs no B2, GMI, or session secrets.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?TUNNEL_TOKEN is required}
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  control:
+  scratch:

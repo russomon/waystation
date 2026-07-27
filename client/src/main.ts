@@ -1,16 +1,64 @@
-import { gwEventSource, recipientLink } from "./config.js";
+import { createSession, GatewayError, gwEventSource, gwGet, recipientLink } from "./config.js";
 import { uploadFile, type ServiceOptions } from "./uploader.js";
 import { renderDelivery } from "./delivery.js";
 
 const tid = new URLSearchParams(location.search).get("t");
 const deliveryEl = document.querySelector<HTMLDivElement>("#delivery")!;
 const senderEl = document.querySelector<HTMLDivElement>("#sender")!;
+const gateEl = document.querySelector<HTMLDivElement>("#gate")!;
+
+/** Reveal the sender UI, or the access panel when the gateway wants a code.
+ *  The recipient view never calls this — a delivery link must open without a
+ *  sender session. */
+async function openSender(): Promise<void> {
+  let status: { authRequired?: boolean; hasSession?: boolean } = {};
+  try {
+    status = await gwGet("/session");
+  } catch {
+    // Gateway unreachable: show the sender UI and let the first real call
+    // report the failure, rather than trapping the user behind a code box.
+    senderEl.hidden = false;
+    return;
+  }
+  if (!status.authRequired || status.hasSession) {
+    senderEl.hidden = false;
+    return;
+  }
+
+  gateEl.hidden = false;
+  const input = document.querySelector<HTMLInputElement>("#accessCode")!;
+  const go = document.querySelector<HTMLButtonElement>("#gateGo")!;
+  const msg = document.querySelector<HTMLElement>("#gateMsg")!;
+  const submit = async () => {
+    const code = input.value.trim();
+    if (!code) { msg.textContent = "Enter the access code from your invitation."; return; }
+    go.disabled = true;
+    msg.textContent = "Checking…";
+    try {
+      await createSession(code);
+      // The code itself is never retained — the gateway set an HttpOnly cookie
+      // this page cannot read, which is the whole point.
+      input.value = "";
+      gateEl.hidden = true;
+      senderEl.hidden = false;
+    } catch (e) {
+      msg.textContent =
+        e instanceof GatewayError ? e.message : "Could not reach the waystation.";
+      go.disabled = false;
+      input.select();
+    }
+  };
+  go.onclick = submit;
+  input.onkeydown = (e) => { if (e.key === "Enter") void submit(); };
+  input.focus();
+}
 
 if (tid) {
-  // ── recipient view ──
+  // ── recipient view ── (bypasses the access panel entirely)
   senderEl.hidden = true;
   renderDelivery(tid, deliveryEl);
 } else {
+  void openSender();
   // ── sender view ──
   const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
   const fileIn = $<HTMLInputElement>("#file");

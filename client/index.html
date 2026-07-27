@@ -66,7 +66,27 @@
     </style>
   </head>
   <body>
-    <div id="sender">
+    <!-- Sender access. Shown only when the gateway reports that a session is
+         required; the recipient view (?t=<id>) never sees it. The code is sent
+         once in exchange for an HttpOnly session cookie and is never stored by
+         this page. Never prefill a real code here. -->
+    <div id="gate" hidden>
+      <h1>Waystation</h1>
+      <p class="tag">This is a controlled preview deployment.</p>
+      <div class="card">
+        <label class="pick" for="accessCode" style="cursor:auto">
+          <strong>Access code</strong>
+          <span class="muted">Provided with your preview invitation.</span>
+        </label>
+        <input id="accessCode" type="password" autocomplete="one-time-code"
+               spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
+               style="width:100%;font:inherit;padding:.6rem .8rem;border:1px solid var(--line);border-radius:10px" />
+        <p id="gateMsg" class="muted" style="min-height:1.4rem;margin:.6rem 0 .8rem"></p>
+        <button class="btn" id="gateGo">Continue</button>
+      </div>
+    </div>
+
+    <div id="sender" hidden>
       <h1>Waystation</h1>
       <p class="tag">Send mastered video. It arrives QC&rsquo;d, summarized, and provable.</p>
       <div class="card">
