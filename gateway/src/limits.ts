@@ -21,7 +21,8 @@ export const MAX_PART_NUMBERS_PER_REQUEST = 64;
 export interface Invalid {
   error: string;
   code: string;
-  status: 400 | 413;
+  /** 400 malformed · 403 refused by deployment policy · 413 over the size ceiling */
+  status: 400 | 403 | 413;
 }
 
 export function validateFilename(raw: unknown): Invalid | { filename: string } {
@@ -72,6 +73,7 @@ export function validatePartNumbers(raw: unknown, partCount: number): Invalid | 
 /** Sidecars that may ride alongside a master. Anything else is refused — an
  *  arbitrary filename here would be a write primitive into the transfer prefix. */
 export const SIDECAR_PATTERN = /(\.(srt|vtt)|\.ref\.(mp4|mov|mxf)|\.genblaze\.json)$/i;
+const REFERENCE_SIDECAR = /\.ref\.(mp4|mov|mxf)$/i;
 
 export function validateSidecarName(raw: unknown): Invalid | { filename: string } {
   const base = validateFilename(raw);
@@ -82,5 +84,72 @@ export function validateSidecarName(raw: unknown): Invalid | { filename: string 
       code: "bad_sidecar",
       status: 400,
     };
+  // A .ref.* mezzanine is what switches on reference SSIM/PSNR/VMAF, by far the
+  // most expensive lane (~1x content duration). Refusing the sidecar is how the
+  // lane is disabled — a dispatch-boundary control that never touches QC code.
+  if (!ALLOW_EXPENSIVE_REFERENCE_QC && REFERENCE_SIDECAR.test(base.filename))
+    return {
+      error: "Reference QC (SSIM/PSNR/VMAF) is disabled on this deployment.",
+      code: "reference_qc_disabled",
+      status: 403,
+    };
   return base;
 }
+
+// ── cost controls ──
+//
+// Rate limiting is not a financial control: it bounds requests per minute, not
+// spend. These are hard ceilings and switches, all enforced BEFORE any
+// multipart upload is created or any pipeline is dispatched, and all entirely
+// outside the QC engine. Post-probe reservation refinement and mid-pipeline
+// reconciliation are deliberately NOT here — they would require gateway <->
+// worker <-> pipeline coordination and would reach into submission-proven QC
+// behavior. Those belong to the commercial track.
+const flag = (v: string | undefined, dflt: boolean): boolean =>
+  v === undefined || v === "" ? dflt : v === "true" || v === "1";
+
+/** Master kill switch: stop new financial exposure without taking the service
+ *  down. Existing recipient links keep working. */
+export const ACCEPT_UPLOADS = flag(env.WAYSTATION_ACCEPT_UPLOADS, true);
+export const MAX_ACTIVE_UPLOADS_PER_SESSION = num(env.MAX_ACTIVE_UPLOADS_PER_SESSION, 3);
+export const MAX_JOBS_PER_SESSION = num(env.MAX_JOBS_PER_SESSION, 20);
+export const MAX_DAILY_JOBS = num(env.MAX_DAILY_JOBS, 200);
+
+/** Service allowlist. A disabled service is forced off in the stored options,
+ *  never merely hidden in the UI — the API is authoritative. */
+export const ALLOW_AI_QC = flag(env.ALLOW_AI_QC, true);
+export const ALLOW_SYNTHETIC_QC = flag(env.ALLOW_SYNTHETIC_QC, true);
+export const ALLOW_EXPENSIVE_REFERENCE_QC = flag(env.ALLOW_EXPENSIVE_REFERENCE_QC, false);
+
+export interface PolicyResult {
+  options?: Record<string, boolean | string>;
+  disabled: string[];
+}
+
+/** Force disallowed services off.
+ *
+ *  Subtlety that matters: by the existing contract, UNDEFINED options mean
+ *  "every service on". So when a service is disallowed we must MATERIALIZE an
+ *  options object carrying the explicit false — leaving it undefined would run
+ *  the very service the operator switched off. When everything is permitted the
+ *  value is passed through untouched, preserving the contract exactly. */
+export function applyServicePolicy(options?: Record<string, boolean | string>): PolicyResult {
+  const forced: Record<string, boolean> = {};
+  if (!ALLOW_AI_QC) forced.qc_ai = false;
+  if (!ALLOW_SYNTHETIC_QC) forced.qc_synthetic = false;
+  if (!Object.keys(forced).length) return { options, disabled: [] };
+
+  const merged = { ...(options ?? {}), ...forced };
+  // Report only what the sender actually asked for and lost.
+  const disabled = Object.keys(forced).filter(
+    (k) => options === undefined || options[k] !== false,
+  );
+  return { options: merged, disabled };
+}
+
+export const policyBanner = (): string =>
+  `limits: uploads=${ACCEPT_UPLOADS ? "accepting" : "PAUSED"} ` +
+  `max=${(MAX_UPLOAD_BYTES / 1024 ** 3).toFixed(1)}GiB ` +
+  `active/session=${MAX_ACTIVE_UPLOADS_PER_SESSION} jobs/session=${MAX_JOBS_PER_SESSION} ` +
+  `jobs/day=${MAX_DAILY_JOBS} ai=${ALLOW_AI_QC} synthetic=${ALLOW_SYNTHETIC_QC} ` +
+  `referenceQC=${ALLOW_EXPENSIVE_REFERENCE_QC}`;

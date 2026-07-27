@@ -13,6 +13,9 @@ import {
   verifyAccessCode,
 } from "./auth.js";
 import {
+  activeUploadCount,
+  completedSince,
+  completedSinceAll,
   createUpload,
   getUpload,
   getUploadByKey,
@@ -20,6 +23,11 @@ import {
   type UploadRow,
 } from "./db.js";
 import {
+  ACCEPT_UPLOADS,
+  applyServicePolicy,
+  MAX_ACTIVE_UPLOADS_PER_SESSION,
+  MAX_DAILY_JOBS,
+  MAX_JOBS_PER_SESSION,
   validateFilename,
   validatePartNumbers,
   validateSidecarName,
@@ -85,6 +93,32 @@ const ownedByKey = (c: Context, key: unknown) =>
     : { fail: c.json({ error: "key is required.", code: "bad_request" }, 400) };
 
 api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_000), async (c) => {
+  // Cost controls run BEFORE anything is created on the object store, so a
+  // refused request leaves no remote multipart state to clean up and incurs
+  // no spend. Rate limiting bounds requests; these bound exposure.
+  if (!ACCEPT_UPLOADS)
+    return c.json(
+      { error: "This deployment is not accepting new uploads right now.", code: "uploads_paused" },
+      503,
+    );
+  const sid = sessionIdOf(c) ?? "anonymous";
+  if (activeUploadCount(sid) >= MAX_ACTIVE_UPLOADS_PER_SESSION)
+    return c.json(
+      { error: `At most ${MAX_ACTIVE_UPLOADS_PER_SESSION} uploads may be in flight at once.`, code: "too_many_active" },
+      429,
+    );
+  const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
+  if (completedSince(sid, dayAgo) >= MAX_JOBS_PER_SESSION)
+    return c.json(
+      { error: "Daily job limit reached for this session.", code: "session_quota" },
+      429,
+    );
+  if (completedSinceAll(dayAgo) >= MAX_DAILY_JOBS)
+    return c.json(
+      { error: "This deployment has reached its daily job ceiling.", code: "daily_quota" },
+      429,
+    );
+
   const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
   const name = validateFilename(body.filename);
   if ("error" in name) return c.json({ error: name.error, code: name.code }, name.status);
@@ -173,9 +207,21 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   const transferId = owned.row.transferId;
   // Unknown and retired options (including legacy self_heal) never enter the
   // transfer store or dispatch payload.
-  const options = sanitizeOptions(b.options as Record<string, boolean | string> | undefined);
+  const requested = sanitizeOptions(b.options as Record<string, boolean | string> | undefined);
+  // Service allowlist: a disabled service is forced OFF in the stored options,
+  // not merely hidden in the UI — the API is authoritative. Applied before the
+  // record is written so the policy survives a restart and the B2 event path
+  // sees the same decision.
+  const { options, disabled } = applyServicePolicy(requested);
   // Always record — the event path needs `options` even without a hash root.
   saveTransfer(transferId, { key: owned.row.objectKey, blake3Root: b.blake3Root, createdAt: Date.now(), options });
+  // Report the skip honestly rather than silently dropping a requested service.
+  if (disabled.length)
+    sse.publish(transferId, {
+      type: "services_disabled",
+      services: disabled,
+      reason: "disabled by deployment policy",
+    });
   // Billable event: the transfer itself, in GB delivered into the waystation.
   meter({ transferId, event: "transfer", units: Number((bytes / 1e9).toFixed(6)), unit: "gb", ref: owned.row.objectKey });
   // Dev only: no real B2 event source locally, so simulate the

@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { allowedOrigins, authBanner, authEnabled } from "./auth.js";
 import { dbPathLabel } from "./db.js";
+import { policyBanner } from "./limits.js";
 import { api } from "./routes.js";
 
 const app = new Hono();
@@ -37,5 +38,6 @@ serve({ fetch: app.fetch, port }, () => {
   console.log(`  ${authBanner()}`);
   console.log(`  origins: ${allowedOrigins.join(", ")}`);
   console.log(`  state: ${dbPathLabel}`);
+  console.log(`  ${policyBanner()}`);
   if (!authEnabled) console.log("  WARNING: sender authentication is OFF (development mode)");
 });

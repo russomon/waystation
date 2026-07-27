@@ -158,6 +158,75 @@ RC=$(code_of "http://localhost:$GW/api/transfers/does-not-exist")
 need "$RC" 404 "unknown transfer should be not-found"
 echo "  I: recipient routes reachable without a sender session (unknown id -> 404, not 401) ✓"
 
+echo "=== cost controls (dispatch boundary only) ==="
+# K) service allowlist forces a disallowed service OFF in the STORED options.
+# The subtle case: undefined options mean "everything on" by contract, so the
+# policy must MATERIALIZE an explicit false rather than leave them undefined.
+# Written to a file: `tsx -e` evaluates in a CJS context that cannot resolve
+# these relative imports.
+cat > "$WEB/gateway/src/_policy_check.ts" <<'TSEOF'
+import { applyServicePolicy } from "./limits.js";
+let ok = true;
+const need = (c: boolean, m: string) => { if (!c) { console.log("  FAIL:", m); ok = false; } };
+// undefined options == all services on; policy MUST materialize the false
+const a = applyServicePolicy(undefined);
+need(a.options !== undefined, "undefined options left undefined -> disallowed AI QC would still run");
+need(a.options?.qc_ai === false, "qc_ai not forced off");
+need(a.disabled.includes("qc_ai"), "disabled service not reported");
+// an explicit request is overridden too
+const b = applyServicePolicy({ qc_ai: true, qc_av: true });
+need(b.options?.qc_ai === false, "explicit qc_ai:true not overridden");
+need(b.options?.qc_av === true, "unrelated service was altered");
+// a sender who already declined it is not reported as having lost anything
+const c2 = applyServicePolicy({ qc_ai: false });
+need(c2.disabled.length === 0, "reported a disable the sender never asked for");
+if (ok) console.log("  K: allowlist forces disallowed services off, incl. the undefined-options case ✓");
+process.exit(ok ? 0 : 1);
+TSEOF
+( cd "$WEB/gateway" && ALLOW_AI_QC=false npx tsx src/_policy_check.ts 2>&1 | grep -vE "Experimental|trace-warn"; exit "${PIPESTATUS[0]}" )
+[ $? -eq 0 ] || { echo "  FAIL: service-allowlist assertions did not pass"; ok=0; }
+rm -f "$WEB/gateway/src/_policy_check.ts"
+
+# L) kill switch, active-upload ceiling, reference-QC switch
+start_gw_env() { # $1=extra env assignments
+  { lsof -ti:$GW; } 2>/dev/null | xargs kill -9 2>/dev/null || true
+  ( cd "$WEB/gateway" && env $1 PORT=$GW \
+    WAYSTATION_DB_PATH="$WORK/gw-limits.db" WAYSTATION_AUTH_MODE=disabled \
+    WAYSTATION_ALLOWED_ORIGINS="https://orbitolive.com" \
+    B2_S3_ENDPOINT=http://localhost:$MIN B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin \
+    B2_BUCKET=$BUCKET B2_REGION=us-east-1 B2_FORCE_PATH_STYLE=true \
+    PIPELINE_SHARED_SECRET=ps CDN_BASE=https://cdn.test CDN_TOKEN_SECRET=d \
+    B2_EVENT_SIGNING_SECRET=s \
+    npx tsx src/server.ts >"/tmp/access-gw-limits.log" 2>&1 & )
+  until curl -sf -o /dev/null --max-time 1 http://localhost:$GW/; do sleep 0.3; done
+}
+init_body='{"filename":"a.mp4","contentType":"video/mp4","size":1048576}'
+
+start_gw_env "WAYSTATION_ACCEPT_UPLOADS=false"
+need "$(code_of -X POST -H 'content-type: application/json' --data "$init_body" \
+  http://localhost:$GW/api/uploads)" 503 "kill switch must refuse new uploads"
+echo "  L: WAYSTATION_ACCEPT_UPLOADS=false refuses new uploads (503) ✓"
+
+start_gw_env "MAX_ACTIVE_UPLOADS_PER_SESSION=2"
+for i in 1 2; do
+  curl -s -o /dev/null -X POST -H 'content-type: application/json' --data "$init_body" \
+    http://localhost:$GW/api/uploads
+done
+need "$(code_of -X POST -H 'content-type: application/json' --data "$init_body" \
+  http://localhost:$GW/api/uploads)" 429 "third concurrent upload must be refused"
+echo "  M: active-upload ceiling enforced (429) ✓"
+
+start_gw_env "ALLOW_EXPENSIVE_REFERENCE_QC=false"
+REFJSON=$(curl -s -X POST -H 'content-type: application/json' --data "$init_body" http://localhost:$GW/api/uploads)
+REFKEY=$("$PY" -c "import json,sys;print(json.loads(sys.argv[1])['key'])" "$REFJSON")
+need "$(code_of -X POST -H 'content-type: application/json' \
+  --data "{\"key\":\"$REFKEY\",\"filename\":\"source.ref.mp4\"}" http://localhost:$GW/api/uploads/sidecar-url)" 403 \
+  "reference mezzanine must be refused when reference QC is disabled"
+need "$(code_of -X POST -H 'content-type: application/json' \
+  --data "{\"key\":\"$REFKEY\",\"filename\":\"subs.srt\"}" http://localhost:$GW/api/uploads/sidecar-url)" 200 \
+  "captions must still be accepted"
+echo "  N: reference-QC lane gated at the sidecar (403), captions unaffected ✓"
+
 echo "=== auth disabled (dev / existing proof suite) ==="
 start_gw disabled
 need "$(code_of -X POST -H 'content-type: application/json' \
