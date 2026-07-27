@@ -1,26 +1,96 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-24 (AI Reliability Passport: blind jury + proficiency foundry)
+Updated: 2026-07-27 (Track A hosted MVP: auth, ownership, ceilings, recipient scoping)
 Machine: Mac Studio
-Mode: active — hackathon submission run (deadline 2026-08-03)
+Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
 Use this file for the active handoff state that should survive machine
 switches and chat history gaps.
 
 ## Focus
 
-- Current branch: `main`
-- Active task: Backblaze Generative Media Hackathon submission. Waystation is a
-  read-only QC reporter: deterministic instruments feed a three-pass agentic
-  inspection, and an 18-risk registry prevents silent omissions.
-- Immediate next action: run one representative generated clip plus its
-  `.genblaze.json` through the expanded Synthetic QC lane against **real GMI**.
-  Inspect the recipient page's blueprint, 14-dimension coverage, coarse/fine
-  sampling audit, continuity findings, and typography tracks for useful,
-  non-duplicative output. The integration is fully mock-proven, but these new
-  structured prompts have not yet had a live-model calibration pass. Then
-  update the demo shot list if needed and record the video.
+- Current branch: **`codex/hosted-waystation-mvp`** (waystation) and
+  **`codex/waystation-mvp`** (OrbitWebsite). Neither is merged; OrbitWebsite
+  `main` auto-deploys, so it must not be merged until the protected API is live
+  and the public rehearsal passes.
+- Active task: Track A of
+  `/Users/Shared/Orbit/Code/WAYSTATION_HOSTED_MVP_AND_COMMERCIAL_PLATFORM.md` —
+  a judge-accessible hosted MVP at `orbitolive.com/waystation/` talking to
+  `api.orbitolive.com/api/`. Track B (commercial) is NOT started.
+- Immediate next action: **the infrastructure prerequisite checkpoint.** All
+  seven implementation steps are done and proven locally; the next actions
+  require credentials and approvals that only the owner can grant (VPS,
+  Cloudflare Tunnel, DNS, B2 CORS, B2 webhook). See "Infrastructure checkpoint"
+  below. Do not create tunnels, change DNS, or repoint the live webhook without
+  explicit approval.
+
+## Track A hosted MVP (2026-07-27)
+
+Seven steps, each committed separately on `codex/hosted-waystation-mvp`:
+
+1. **Client transport** (`client/src/config.ts`) — API base from a `<meta>` tag
+   so the deployed host changes without a rebuild; `credentials:"include"`;
+   status-aware decoding; `EventSource` with `withCredentials`; share links
+   that preserve the subpath. Vite `base` is BUILD-ONLY (in dev it 404s the
+   root and hangs the readiness loops in dev-up/live-run/live-event-run).
+2. **SQLite control plane** (`gateway/src/db.ts`) via **node:sqlite** — built
+   into Node, verified in the deploy image (node:22-slim = 22.23.1), so no
+   native module to compile. Fixes the restart bug that silently promoted a
+   TRANSFER-ONLY job to full AI QC and billed it. Meter events idempotent.
+3. **Sender auth** (`gateway/src/auth.ts`) — `crypto.scrypt` code hash, one-shot
+   exchange for a signed `HttpOnly; SameSite=Strict` cookie (Secure in prod
+   only), exact credentialed CORS with preflight BEFORE auth, rate limits.
+4. **Ownership** — every upload route verifies key+uploadId belong to the
+   session; neutral 404 otherwise. Validation before any B2 state exists.
+5. **Cost controls** (`gateway/src/limits.ts`) — kill switch, active/session
+   and daily ceilings, service allowlist, `.ref.*` refusal gating the reference
+   VMAF lane. All at the dispatch boundary; QC internals untouched.
+6. **Recipient scoping** — expiry + revocation, transfer-scoped download
+   replacing the arbitrary-key signing oracle, billing ledger removed from the
+   recipient view (now sender-only).
+7. **`/healthz` + access panel + release export + prod compose** — export writes
+   a checksummed release manifest into OrbitWebsite; `docker-compose.prod.yml`
+   is standalone with cloudflared and ZERO published ports.
+
+Key invariant: **dev stays permissive, production fails closed.**
+`WAYSTATION_AUTH_MODE` defaults `disabled`, DB `:memory:`, reference QC allowed
+— that is what keeps the existing proof suite green. Under `NODE_ENV=production`
+the gateway refuses to start with auth off, missing/short secrets, or an
+ephemeral database.
+
+New env (see `docker-compose.prod.yml` for the deployed values):
+`WAYSTATION_AUTH_MODE`, `WAYSTATION_ACCESS_CODE_HASH`,
+`WAYSTATION_SESSION_SECRET`, `WAYSTATION_SESSION_TTL_SECONDS`,
+`WAYSTATION_ALLOWED_ORIGINS`, `WAYSTATION_DB_PATH`,
+`WAYSTATION_ACCEPT_UPLOADS`, `MAX_UPLOAD_BYTES`,
+`MAX_ACTIVE_UPLOADS_PER_SESSION`, `MAX_JOBS_PER_SESSION`, `MAX_DAILY_JOBS`,
+`ALLOW_AI_QC`, `ALLOW_SYNTHETIC_QC`, `ALLOW_EXPENSIVE_REFERENCE_QC`,
+`RECIPIENT_LINK_TTL_DAYS`, `TUNNEL_TOKEN`.
+Generate the code + secrets with `node scripts/make-access-code.mjs` — the code
+prints once; only the hash is ever configured, never committed.
+
+Verified in a real browser cross-origin (the condition the vite proxy hides):
+wrong code refused with the gate held, correct code reveals the sender UI, the
+code field cleared, `document.cookie` cannot see the session, nothing in
+local/sessionStorage, and the session survives a reload.
+
+## Infrastructure checkpoint (blocked on owner approval)
+
+Everything below needs credentials/approvals the implementation cannot grant:
+
+1. VPS selected + admin access
+2. Docker/Compose installed on it
+3. Production B2 + GMI secrets present on the VPS `.env`
+4. Cloudflare Tunnel creation (`waystation-production` → `api.orbitolive.com`
+   → `http://gateway:8787`, `TUNNEL_TOKEN` only into that container)
+5. B2 CORS for `https://orbitolive.com` + `https://www.orbitolive.com`
+6. B2 webhook repoint to `https://api.orbitolive.com/api/events/b2`
+7. Judge-code delivery method
+8. Small rights-cleared test asset
+
+Then: export the pinned release, merge the OrbitWebsite branch, run the roadmap
+§7.11 public rehearsal (14 checks), and only then record the demo.
 
 ## AI Reliability Passport (2026-07-24, latest)
 
@@ -87,7 +157,7 @@ whole B2 → worker → report → metering contract with mock GMI, including pr
 redaction and the off toggle.
 
 Validation after this change: gateway `tsc --noEmit`, production client build,
-pipeline import, and **all 16 `scripts/*-proof.sh` green**. Docker, Photon,
+pipeline import, and **every `scripts/*-proof.sh` green (discovered from the filesystem, not a fixed count)**. Docker, Photon,
 MediaInfo, WORM Object Lock, compute routing, and synthetic/agentic proofs all
 ran rather than being assumed. Real-GMI calibration of the five new structured
 stages is still pending and explicitly not claimed.
@@ -121,7 +191,7 @@ Four landed changes, all committed + pushed, all proofs green:
    2026-07-24.
 
 Validated at handoff: `gateway tsc --noEmit`, `client build`, `worker` import,
-and all 16 `scripts/*-proof.sh` — green.
+and every `scripts/*-proof.sh` — green (discovered, not a fixed count).
 
 ## Detection-coverage upgrades (2026-07-23)
 
@@ -281,7 +351,7 @@ agentic contract proof and the MediaInfo proof (see
   directory rename: venvs bake absolute-path shebangs into console scripts
   (e.g. uvicorn), so `.venv` must be recreated (not moved) when the checkout
   path changes. `.venv/bin/python` is a symlink and kept working, which
-  masked the break until a console script was run. On this handoff, **all 13
+  masked the break until a console script was run. On this handoff, **all then-current
   proof scripts were run green** on the rebuilt venv, including Docker,
   Photon, MediaInfo, Object Lock, and the new agentic integration.
 - `.env` holds real B2 + GMI credentials, is gitignored, and the full history
@@ -307,7 +377,7 @@ agentic contract proof and the MediaInfo proof (see
 
 - Safe stopping point: yes after this change is committed and pushed. Validation
   at this handoff: gateway `tsc --noEmit`, production client build, `worker`
-  import, and all 16 `scripts/*-proof.sh` green.
+  import, and every `scripts/*-proof.sh` green (discovered from the filesystem, not a fixed count).
 - Exact next step: **record the demo video.** No code work is required first.
   `docs/demo-script.md` now carries both the shot list AND a "How to record"
   production plan (silent screen captures + separate voiceover, setup

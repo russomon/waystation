@@ -5,6 +5,73 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-27 - Hosted MVP: the API is published only behind auth, ownership, and ceilings
+
+- Context: Track A of `WAYSTATION_HOSTED_MVP_AND_COMMERCIAL_PLATFORM.md` — serve
+  the client at `orbitolive.com/waystation/` with the API at
+  `api.orbitolive.com/api/`. Before hosting, the API had **no authentication,
+  no authorization, no limits, and no durable state**. Publishing it as-is
+  would have handed anyone presigned write URLs into the bucket and unbounded
+  GMI spend. Four verified defects drove the work:
+  `GET /downloads?key=` handed an unvalidated key to the CDN token signer — an
+  oracle for ANY object; `store.ts` was an in-memory Map ("Lost on restart")
+  whose loss silently promoted a TRANSFER-ONLY job to full AI QC and billed it,
+  because `options: undefined` means "all services on"; `metering.ts` had no
+  idempotency key so retried callbacks double-counted; and no upload route
+  verified that a key belonged to the caller.
+- Decision / result, in dependency order (SQLite first, so sessions and upload
+  ownership persist correctly on their first write rather than being built in
+  memory and rewritten):
+  1. One client transport module: API base from a `<meta>` tag (changeable in
+     deployed HTML without a rebuild), `credentials:"include"`, status-aware
+     decoding, `EventSource` with `withCredentials`. Vite `base` is applied to
+     BUILDS ONLY — in dev it would 404 the root and hang the `curl` readiness
+     loops in dev-up/live-run/live-event-run.
+  2. SQLite via **node:sqlite** (built into Node; verified in the deploy image
+     node:22-slim 22.23.1) over better-sqlite3, whose native build is a real
+     risk in a container days before a deadline. Tables transfers/uploads/
+     meter_events; meter events idempotent. SQL NULL options stay distinct from
+     a recorded object — persisting that distinction faithfully IS the fix.
+  3. Sender auth: one high-entropy code hashed with **crypto.scrypt** (no
+     native Argon2 dependency), exchanged ONCE for a signed, short-lived,
+     opaque `HttpOnly; SameSite=Strict` cookie (Secure in production only,
+     since a Secure cookie is never stored over plain http). Stateless
+     sessions, so rotating the signing secret invalidates all of them at once.
+  4. Ownership: every upload route verifies key+uploadId belong to the session,
+     returning a NEUTRAL 404 so the API never confirms another session's work.
+  5. Cost controls at the dispatch boundary only — kill switch, active/session
+     and daily job ceilings, service allowlist, and a `.ref.*` sidecar refusal
+     that gates the reference SSIM/PSNR/VMAF lane without touching QC code.
+  6. Recipient links stay open (a delivery must open without a sender session)
+     but gained expiry + revocation, a transfer-scoped download replacing the
+     oracle, and removal of the billing ledger from the recipient view.
+  7. `/healthz` that discloses nothing; a pinned, checksummed release export
+     into OrbitWebsite; a STANDALONE production compose (Compose merges `ports`
+     additively, so an overlay cannot remove the public 8787 mapping) with
+     cloudflared dialling out — zero published ports.
+- CORS is exact-origin with credentials and registered BEFORE the routes.
+  Hono's `cors()` answers OPTIONS with 204 and returns without calling next(),
+  so preflight never reaches the session gate; had auth run first, preflight
+  would 401 and the browser would never send the real request.
+- **Dev stays permissive, production fails closed.** `WAYSTATION_AUTH_MODE`
+  defaults to `disabled`, the database to `:memory:`, and reference QC to
+  allowed — that is what keeps the existing proof suite green. Under
+  `NODE_ENV=production` the gateway REFUSES to start with auth disabled, with
+  missing/short secrets, or with an ephemeral database. The literal
+  `waystationQC` from early planning is retired and must never be used.
+- Deliberately deferred to Track B: post-probe reservation refinement and
+  mid-pipeline budget reconciliation. Those need gateway↔worker↔pipeline
+  coordination and would reach into submission-proven QC behaviour.
+- Proof: `scripts/access-proof.sh` (16 assertion groups, MinIO-backed) covers
+  session-required, cross-session ownership, validation-before-B2, preflight
+  and exact CORS, the ceilings and kill switch, recipient scoping, `/healthz`
+  non-disclosure, and that disabled mode leaves dev open. It is
+  mutation-tested: reintroducing the undefined-options bug makes it fail.
+  Three existing proofs (toggle, synthetic-qc, netflix-qc) had asserted the OLD
+  weaker sidecar contract using a key that was never initiated — itself a write
+  primitive into any transfer prefix — and now initiate a real upload and also
+  assert an unowned key is refused, covering more than before.
+
 ### 2026-07-24 - AI Reliability Passport: blind Jury (reproducibility) + Proficiency Foundry
 
 - Context: Every AI-QC product asks the user to TRUST model findings. This
@@ -112,7 +179,7 @@ chat threads.
 - Proof: `scripts/synthetic-qc-proof.sh` drives the complete local B2/gateway/
   worker/report/metering path with mock GMI and asserts planning, registry
   completion, hierarchical evidence, deterministic scene diffs, native text
-  mutation tracking, redacted-prompt handling, and toggle gating. All 16 proof
+  mutation tracking, redacted-prompt handling, and toggle gating. All discovered proof
   scripts are green. Real-GMI calibration of the new structured prompts remains
   the exact next step before final recording.
 

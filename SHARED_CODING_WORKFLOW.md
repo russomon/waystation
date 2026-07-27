@@ -58,6 +58,7 @@ handoff:
 
 | Script | Covers |
 |---|---|
+| `scripts/access-proof.sh` | hosted-MVP access control: session required on every upload route, cross-session ownership refused, input validation, exact credentialed CORS + preflight-before-auth, cost ceilings + kill switch, recipient scoping, `/healthz` non-disclosure |
 | `scripts/coverage-proof.sh` | detection-coverage upgrades: tiled signal analysis, blind-pass audio, scene/anomaly frame selection, duration scaling, lip-sync proxy |
 | `scripts/avsync-proof.sh` | SyncNet AV-sync analyzer: honest-absence FYI, model cannot clear lip_sync; measures offset when SyncNet installed |
 | `scripts/hybrid-proof.sh` | perceive-then-compute hybrid: align recovers/abstains, channel-semantics flags dialogue-on-LFE, hybrid WARN→SUSPECTED but PASS never CLEARs (no cloud) |

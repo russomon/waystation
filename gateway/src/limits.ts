@@ -119,7 +119,12 @@ export const MAX_DAILY_JOBS = num(env.MAX_DAILY_JOBS, 200);
  *  never merely hidden in the UI — the API is authoritative. */
 export const ALLOW_AI_QC = flag(env.ALLOW_AI_QC, true);
 export const ALLOW_SYNTHETIC_QC = flag(env.ALLOW_SYNTHETIC_QC, true);
-export const ALLOW_EXPENSIVE_REFERENCE_QC = flag(env.ALLOW_EXPENSIVE_REFERENCE_QC, false);
+// Defaults PERMISSIVE, like WAYSTATION_AUTH_MODE and the in-memory database:
+// development and the proof suite must keep exercising the proven reference
+// SSIM/PSNR/VMAF lane (netflix-qc-proof uploads a .ref mezzanine and asserts a
+// VMAF/MOS result). The hosted deployment turns it OFF explicitly in
+// docker-compose.prod.yml, where the cost actually matters.
+export const ALLOW_EXPENSIVE_REFERENCE_QC = flag(env.ALLOW_EXPENSIVE_REFERENCE_QC, true);
 
 /** Lifetime of a recipient capability link, in days. 0 disables expiry.
  *  A bearer link that never expires can only be taken back by revocation. */

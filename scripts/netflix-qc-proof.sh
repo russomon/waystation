@@ -100,12 +100,22 @@ run_job "$TID_D" "$WORK/strobe.mp4" '{"profile":"netflix","qc_ai":false,"qc_capt
 echo "✓ D processed (netflix, strobe)"
 
 echo "— sidecar endpoint validation —"
+# Sidecar URLs are minted only for an upload the caller owns, so the name checks
+# run against a REAL initiated upload; an arbitrary key is refused outright,
+# because otherwise this route would be a write primitive into any transfer
+# prefix.
+SCJSON=$(curl -s -X POST http://localhost:8787/api/uploads -H 'content-type: application/json' \
+  --data '{"filename":"sidecar-host.mp4","contentType":"video/mp4","size":1048576}')
+SCKEY=$("$PY" -c "import json,sys;print(json.loads(sys.argv[1])['key'])" "$SCJSON")
 OK=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
-  -H 'content-type: application/json' --data '{"key":"transfers/x/a.mp4","filename":"master.ref.mp4"}')
+  -H 'content-type: application/json' --data "{\"key\":\"$SCKEY\",\"filename\":\"master.ref.mp4\"}")
 BAD=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
-  -H 'content-type: application/json' --data '{"key":"transfers/x/a.mp4","filename":"evil.exe"}')
-[ "$OK" = "200" ] && [ "$BAD" = "400" ] && echo "✓ .ref.mp4 accepted (200), .exe rejected (400)" \
-  || { echo "FAIL: sidecar validation ($OK/$BAD)"; exit 1; }
+  -H 'content-type: application/json' --data "{\"key\":\"$SCKEY\",\"filename\":\"evil.exe\"}")
+UNOWNED=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
+  -H 'content-type: application/json' --data '{"key":"transfers/x/a.mp4","filename":"master.ref.mp4"}')
+[ "$OK" = "200" ] && [ "$BAD" = "400" ] && [ "$UNOWNED" = "404" ] \
+  && echo "✓ .ref.mp4 accepted (200), .exe rejected (400), unowned key refused (404)" \
+  || { echo "FAIL: sidecar validation ($OK/$BAD/$UNOWNED)"; exit 1; }
 
 # signed event for the .ref key must NOT start a second pipeline
 REFKEY="transfers/$TID_A/good24.ref.mp4"
