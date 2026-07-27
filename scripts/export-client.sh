@@ -20,11 +20,14 @@ WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="/Users/Shared/Orbit/Code/OrbitWebsite/orbitolive/public/waystation"
 API_BASE="https://api.orbitolive.com/api"
 PUBLIC_BASE="/waystation/"
+# All-cloud hosted deployment: pin compute and hide the selector.
+FORCE_COMPUTE="cloud"
 while [ $# -gt 0 ]; do
   case "$1" in
     --target) TARGET=$2; shift 2;;
     --api-base) API_BASE=$2; shift 2;;
     --public-base) PUBLIC_BASE=$2; shift 2;;
+    --force-compute) FORCE_COMPUTE=$2; shift 2;;
     *) echo "unknown argument: $1"; exit 2;;
   esac
 done
@@ -45,15 +48,16 @@ DIST="$WEB/client/dist"
 
 # Point the built page at the production gateway. This is the ONE line that
 # decides which API the deployed app talks to.
-"$WEB/pipeline/.venv/bin/python" - "$DIST/index.html" "$API_BASE" <<'PY'
+"$WEB/pipeline/.venv/bin/python" - "$DIST/index.html" "$API_BASE" "$FORCE_COMPUTE" <<'PY'
 import re, sys
-path, api = sys.argv[1], sys.argv[2]
+path, api, compute = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(path, encoding="utf-8").read()
-new = f'<meta name="waystation-api" content="{api}" />'
-s2, n = re.subn(r'<meta name="waystation-api"[^>]*/>', new, s)
-if n != 1:
-    print(f"✗ expected exactly one waystation-api meta tag, found {n}"); sys.exit(1)
-open(path, "w", encoding="utf-8").write(s2)
+for name, value in (("waystation-api", api), ("waystation-compute", compute)):
+    s, n = re.subn(rf'<meta name="{name}"[^>]*/>',
+                   f'<meta name="{name}" content="{value}" />', s)
+    if n != 1:
+        print(f"\u2717 expected exactly one {name} meta tag, found {n}"); sys.exit(1)
+open(path, "w", encoding="utf-8").write(s)
 PY
 
 echo "▶ verifying the build"
@@ -64,6 +68,8 @@ if grep -qE '(src|href)="/assets/' "$DIST/index.html"; then
   echo "  ✗ index.html references root /assets/ — wrong base"; fail=1; fi
 grep -q "$PUBLIC_BASE" "$DIST/index.html" || { echo "  ✗ index.html does not reference $PUBLIC_BASE"; fail=1; }
 grep -q "$API_BASE" "$DIST/index.html" || { echo "  ✗ production API base not embedded"; fail=1; }
+grep -q "name=\"waystation-compute\" content=\"$FORCE_COMPUTE\"" "$DIST/index.html" \
+  || { echo "  ✗ compute target not pinned to $FORCE_COMPUTE"; fail=1; }
 WASM=$(find "$DIST" -name '*.wasm' | head -1)
 [ -n "$WASM" ] || { echo "  ✗ no .wasm in the build"; fail=1; }
 # The wasm URL is baked into the bundle; it must also carry the public base.

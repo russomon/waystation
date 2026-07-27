@@ -63,6 +63,10 @@ services:
       ALLOW_SYNTHETIC_QC: "true"
       ALLOW_EXPENSIVE_REFERENCE_QC: "false"  # reference VMAF ~1x duration
       RECIPIENT_LINK_TTL_DAYS: "14"
+      # All-cloud: gateway and worker share this host, so there is no second
+      # machine to route to. The client hides its selector; this makes the API
+      # authoritative, because hiding a control is never the enforcement.
+      WAYSTATION_FORCE_COMPUTE: "cloud"
     volumes:
       - control:/data                        # SQLite: transfers, uploads, meters
     # No `ports:` — reachable only through the tunnel and the compose network.

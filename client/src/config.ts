@@ -21,6 +21,14 @@ const metaContent = (name: string): string =>
 /** Gateway API base. Dev default "/api" keeps the vite proxy working. */
 export const API_BASE: string = metaContent("waystation-api") || "/api";
 
+/** When set, every job uses this compute target and the selector is hidden.
+ *  The hosted MVP is all-cloud — gateway and worker live together on one VPS,
+ *  so there is no second machine to route to and a visible Local/Cloud toggle
+ *  would imply a choice that does not exist. Empty (dev) keeps the selector,
+ *  and the dual-worker routing in the gateway is left intact for later.
+ *  The gateway enforces the same thing independently; this is UI only. */
+export const FORCED_COMPUTE: string = metaContent("waystation-compute");
+
 export class GatewayError extends Error {
   constructor(
     readonly status: number,

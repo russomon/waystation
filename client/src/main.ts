@@ -1,4 +1,4 @@
-import { createSession, GatewayError, gwEventSource, gwGet, recipientLink } from "./config.js";
+import { createSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink } from "./config.js";
 import { uploadFile, type ServiceOptions } from "./uploader.js";
 import { renderDelivery } from "./delivery.js";
 
@@ -93,10 +93,20 @@ if (tid) {
   // "Transfer only" greys out and overrides the individual services.
   transferOnly.onchange = () => servicesEl.classList.toggle("off", transferOnly.checked);
 
+  // All-cloud deployments pin the compute target and hide the selector: the
+  // gateway and worker share one host, so there is no second machine to route
+  // to and a visible toggle would imply a choice that does not exist. The
+  // gateway enforces this independently — hiding a control is never the
+  // enforcement.
+  if (FORCED_COMPUTE) {
+    const row = $<HTMLInputElement>("#opt_cloud").closest("label");
+    if (row) (row as HTMLElement).hidden = true;
+  }
+
   const currentOptions = (): ServiceOptions => {
     const profile = $<HTMLSelectElement>("#profile").value;
     const val = (id: string) => $<HTMLInputElement>("#" + id).checked;
-    const compute = val("opt_cloud") ? "cloud" : "local";
+    const compute = FORCED_COMPUTE || (val("opt_cloud") ? "cloud" : "local");
     if (transferOnly.checked)
       return { qc_av: false, qc_captions: false, qc_ai: false, qc_synthetic: false,
                thumbnail: false, summarize: false, profile, compute };

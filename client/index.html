@@ -9,10 +9,19 @@
          one line without rebuilding. Large media never goes here — it moves
          browser <-> Backblaze B2 directly. -->
     <meta name="waystation-api" content="" />
+    <!-- Pins the compute target and hides the Local/Cloud selector. The hosted
+         MVP is all-cloud (gateway + worker share one host), so the selector
+         would imply a choice that does not exist. Empty = dev, selector shown.
+         The gateway enforces the same pin independently. -->
+    <meta name="waystation-compute" content="" />
     <title>Waystation</title>
     <style>
       :root { --blue: #2563eb; --ink: #111827; --mut: #6b7280; --line: #e5e7eb; --bg: #f8fafc; }
       * { box-sizing: border-box; }
+      /* The UA stylesheet's [hidden] { display: none } loses to any author
+         `display` rule — .svc sets display:flex, so a hidden service row would
+         still render. Make `hidden` actually mean hidden, everywhere. */
+      [hidden] { display: none !important; }
       body { font: 15px/1.6 system-ui, sans-serif; max-width: 680px; margin: 5vh auto; padding: 0 1rem; color: var(--ink); }
       h1 { margin: 0 0 .1rem; letter-spacing: -0.02em; }
       .tag { color: var(--mut); margin: 0 0 1.4rem; }

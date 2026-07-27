@@ -63,6 +63,22 @@ export function verifyAccessCode(code: string, stored: string): boolean {
   return derived.length === expected.length && timingSafeEqual(derived, expected);
 }
 
+/** Structural check for `scrypt$N$r$p$saltB64$hashB64`. Guards against a hash
+ *  mangled by Docker Compose's `$` interpolation, which leaves a value that
+ *  still *looks* like a scrypt hash to a prefix test. */
+export function looksLikeScryptHash(value: string): boolean {
+  const parts = value.split("$");
+  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+  const [, n, r, p, salt, hash] = parts;
+  if (![n, r, p].every((x) => /^\d+$/.test(x) && Number(x) > 0)) return false;
+  try {
+    // A truncated or emptied base64 segment is the usual interpolation damage.
+    return Buffer.from(salt, "base64").length >= 8 && Buffer.from(hash, "base64").length >= 16;
+  } catch {
+    return false;
+  }
+}
+
 // ── configuration, validated at boot ──
 
 export interface AuthConfig {
@@ -87,8 +103,20 @@ function loadConfig(): AuthConfig {
   }
   const codeHash = (env.WAYSTATION_ACCESS_CODE_HASH || "").trim();
   const sessionSecret = (env.WAYSTATION_SESSION_SECRET || "").trim();
-  if (!codeHash || !codeHash.startsWith("scrypt$"))
-    throw new Error("WAYSTATION_ACCESS_CODE_HASH missing or not a scrypt hash — refusing to start");
+  if (!codeHash)
+    throw new Error("WAYSTATION_ACCESS_CODE_HASH missing — refusing to start");
+  // Validate the STRUCTURE, not just the prefix. Docker Compose interpolates
+  // `$` inside env_file values, so an unquoted hash arrives mangled — and
+  // `scrypt$16384$8$1===` still starts with "scrypt$". A prefix-only check
+  // would boot happily and then reject every correct code, which is a
+  // miserable thing to debug. Fail loudly here instead, with the fix.
+  if (!looksLikeScryptHash(codeHash))
+    throw new Error(
+      "WAYSTATION_ACCESS_CODE_HASH is not a well-formed scrypt hash — refusing to start. " +
+        "If it was set via a Docker Compose env_file, quote it: " +
+        "WAYSTATION_ACCESS_CODE_HASH='scrypt$...' (or escape each $ as $$). " +
+        "Compose expands $NAME inside env_file values and silently corrupts it.",
+    );
   if (sessionSecret.length < 32)
     throw new Error("WAYSTATION_SESSION_SECRET missing or too short (>=32 chars) — refusing to start");
   return { mode: "access-code", codeHash, sessionSecret };

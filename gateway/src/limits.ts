@@ -130,6 +130,14 @@ export const ALLOW_EXPENSIVE_REFERENCE_QC = flag(env.ALLOW_EXPENSIVE_REFERENCE_Q
  *  A bearer link that never expires can only be taken back by revocation. */
 export const RECIPIENT_LINK_TTL_DAYS = Number(env.RECIPIENT_LINK_TTL_DAYS ?? 14);
 
+/** Pin every job to one compute target. The hosted MVP is all-cloud — gateway
+ *  and worker share a host — so there is no second machine to route to. The
+ *  client also hides its selector, but hiding a control is not enforcement: a
+ *  crafted request could still ask for the other target, so the API decides.
+ *  Empty (the default) preserves the existing dual-worker routing untouched
+ *  for post-hackathon use. */
+export const FORCE_COMPUTE = (env.WAYSTATION_FORCE_COMPUTE || "").trim();
+
 export interface PolicyResult {
   options?: Record<string, boolean | string>;
   disabled: string[];
@@ -143,15 +151,18 @@ export interface PolicyResult {
  *  the very service the operator switched off. When everything is permitted the
  *  value is passed through untouched, preserving the contract exactly. */
 export function applyServicePolicy(options?: Record<string, boolean | string>): PolicyResult {
-  const forced: Record<string, boolean> = {};
+  const forced: Record<string, boolean | string> = {};
   if (!ALLOW_AI_QC) forced.qc_ai = false;
   if (!ALLOW_SYNTHETIC_QC) forced.qc_synthetic = false;
+  if (FORCE_COMPUTE) forced.compute = FORCE_COMPUTE;
   if (!Object.keys(forced).length) return { options, disabled: [] };
 
   const merged = { ...(options ?? {}), ...forced };
-  // Report only what the sender actually asked for and lost.
+  // Report only SERVICES the sender actually asked for and lost. `compute` is a
+  // pinned routing target, not a disabled service — listing it here would emit
+  // a misleading "services_disabled" event.
   const disabled = Object.keys(forced).filter(
-    (k) => options === undefined || options[k] !== false,
+    (k) => k !== "compute" && (options === undefined || options[k] !== false),
   );
   return { options: merged, disabled };
 }
@@ -162,4 +173,5 @@ export const policyBanner = (): string =>
   `active/session=${MAX_ACTIVE_UPLOADS_PER_SESSION} jobs/session=${MAX_JOBS_PER_SESSION} ` +
   `jobs/day=${MAX_DAILY_JOBS} ai=${ALLOW_AI_QC} synthetic=${ALLOW_SYNTHETIC_QC} ` +
   `referenceQC=${ALLOW_EXPENSIVE_REFERENCE_QC} ` +
-  `linkTTL=${RECIPIENT_LINK_TTL_DAYS || "never"}d`;
+  `linkTTL=${RECIPIENT_LINK_TTL_DAYS || "never"}d` +
+  (FORCE_COMPUTE ? ` compute=PINNED:${FORCE_COMPUTE}` : "");

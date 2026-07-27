@@ -275,6 +275,15 @@ api.get("/transfers/:id/download", async (c) => {
   // cannot satisfy startsWith and then resolve elsewhere.
   if (!key || key.includes("..") || !belongsToTransfer(key, id))
     return c.json({ error: "not found" }, 404);
+  // These are CDN-Worker URLs. The MVP does not deploy that Worker — the
+  // delivery page serves presigned B2 URLs from GET /transfers/:id instead —
+  // so without CDN config this would hand back "undefined/transfers/...".
+  // Say so rather than emit a broken link.
+  if (!env.CDN_BASE || !env.CDN_TOKEN_SECRET)
+    return c.json(
+      { error: "CDN delivery is not configured on this deployment.", code: "cdn_unconfigured" },
+      501,
+    );
   return c.json(g.downloadUrl(key));
 });
 
