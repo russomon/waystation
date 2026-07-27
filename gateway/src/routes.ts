@@ -16,6 +16,7 @@ import {
   activeUploadCount,
   completedSince,
   completedSinceAll,
+  capabilityRevoked,
   createUpload,
   getUpload,
   getUploadByKey,
@@ -28,6 +29,7 @@ import {
   MAX_ACTIVE_UPLOADS_PER_SESSION,
   MAX_DAILY_JOBS,
   MAX_JOBS_PER_SESSION,
+  RECIPIENT_LINK_TTL_DAYS,
   validateFilename,
   validatePartNumbers,
   validateSidecarName,
@@ -214,7 +216,17 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   // sees the same decision.
   const { options, disabled } = applyServicePolicy(requested);
   // Always record — the event path needs `options` even without a hash root.
-  saveTransfer(transferId, { key: owned.row.objectKey, blake3Root: b.blake3Root, createdAt: Date.now(), options });
+  // Recipient links are bearer capabilities, so they carry an expiry from the
+  // moment they exist (RECIPIENT_LINK_TTL_DAYS=0 disables expiry).
+  saveTransfer(transferId, {
+    key: owned.row.objectKey,
+    blake3Root: b.blake3Root,
+    createdAt: Date.now(),
+    options,
+    expiresAt: RECIPIENT_LINK_TTL_DAYS > 0
+      ? Date.now() + RECIPIENT_LINK_TTL_DAYS * 86_400_000
+      : undefined,
+  });
   // Report the skip honestly rather than silently dropping a requested service.
   if (disabled.length)
     sse.publish(transferId, {
@@ -238,8 +250,26 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   return c.json({ ok: true });
 });
 
-// ───────── download ─────────
-api.get("/downloads", async (c) => c.json(g.downloadUrl(c.req.query("key")!)));
+// ───────── download (transfer-scoped) ─────────
+//
+// This replaces a generic `GET /downloads?key=<anything>` that handed an
+// unvalidated key straight to the CDN token signer — a signing oracle for ANY
+// object in the bucket, reachable with no session. The key must now belong to
+// the transfer named in the path, so a capability grants access to that
+// delivery and nothing else.
+const belongsToTransfer = (key: string, id: string): boolean =>
+  key.startsWith(`transfers/${id}/`) || key.startsWith(`derivatives/${id}/`);
+
+api.get("/transfers/:id/download", async (c) => {
+  const id = c.req.param("id");
+  const key = c.req.query("key") ?? "";
+  if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
+  // Reject traversal before the prefix test, so "transfers/<id>/../../other"
+  // cannot satisfy startsWith and then resolve elsewhere.
+  if (!key || key.includes("..") || !belongsToTransfer(key, id))
+    return c.json({ error: "not found" }, 404);
+  return c.json(g.downloadUrl(key));
+});
 
 // ───────── delivery page data ─────────
 // Assembles a transfer from storage: the original + the pipeline's
@@ -256,6 +286,9 @@ const mimeOf = (k: string) =>
 
 api.get("/transfers/:id", async (c) => {
   const id = c.req.param("id");
+  // Expired or revoked capabilities are indistinguishable from unknown ones:
+  // a recipient link must never reveal that it once existed.
+  if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
   const all = await g.listKeys(`transfers/${id}/`);
   // The master is whatever ISN'T a sidecar — captions (.srt/.vtt), the bao
   // outboard, and reference mezzanines ride along under the same prefix and
@@ -335,4 +368,8 @@ api.post("/internal/progress", async (c) => {
 });
 
 // ───────── usage ledger (billing-ready; feeds Stripe/Lago meters later) ─────────
-api.get("/transfers/:id/usage", (c) => c.json(usageFor(c.req.param("id"))));
+// SENDER-ONLY. This is the internal billing ledger; it was previously readable
+// by anyone holding a recipient link, and the delivery page rendered it. A
+// recipient is a third party — often the customer's own client — and has no
+// business seeing what the sender is charged.
+api.get("/transfers/:id/usage", requireSession, (c) => c.json(usageFor(c.req.param("id"))));

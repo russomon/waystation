@@ -250,18 +250,10 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     card.append(prov);
   }
 
-  // Usage ledger — billing-ready metering for this transfer.
-  // NOTE (step 6, recipient scoping): this exposes the internal billing ledger
-  // to anyone holding a recipient link and is removed from the recipient view.
-  const usage = await gwGet(`/transfers/${id}/usage`).catch(() => null);
-  if (usage && usage.events?.length) {
-    const u = el(`<details class="prov"><summary>Usage (billing-ready)</summary></details>`);
-    const lines = Object.entries(usage.totals as Record<string, { units: number; unit: string }>)
-      .map(([k, v]) => `${k}: ${v.units} ${v.unit}`)
-      .join("<br>");
-    u.append(el(`<p class="mono">${lines}</p>`));
-    card.append(u);
-  }
+  // The billing ledger is deliberately NOT shown here. This page is opened by
+  // whoever holds the recipient link — often the sender's own client — and what
+  // the sender is charged is none of their business. /transfers/:id/usage is
+  // now sender-only; the operator reads it with a session.
   root.append(card);
 }
 

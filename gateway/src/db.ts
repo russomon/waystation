@@ -126,6 +126,41 @@ export function saveTransfer(transferId: string, meta: TransferRow): void {
   );
 }
 
+const updateRecipientState = db.prepare(
+  `UPDATE transfers SET expires_at = ?, revoked = ? WHERE transfer_id = ?`,
+);
+
+/** Recipient links are bearer capabilities: anyone holding the URL can open the
+ *  delivery. Expiry and revocation are the only ways to take one back, so both
+ *  are persisted rather than held in memory. */
+export function setRecipientState(
+  transferId: string,
+  opts: { expiresAt?: number | null; revoked?: boolean },
+): void {
+  const current = getTransfer(transferId);
+  updateRecipientState.run(
+    opts.expiresAt === undefined
+      ? current?.expiresAt
+        ? new Date(current.expiresAt).toISOString()
+        : null
+      : opts.expiresAt === null
+        ? null
+        : new Date(opts.expiresAt).toISOString(),
+    opts.revoked === undefined ? (current?.revoked ? 1 : 0) : opts.revoked ? 1 : 0,
+    transferId,
+  );
+}
+
+/** A capability is usable only while the record says so. Unknown transfers are
+ *  NOT treated as revoked — objects can predate the control-plane database, and
+ *  the event-driven path uploads straight to the bucket. */
+export function capabilityRevoked(transferId: string): boolean {
+  const t = getTransfer(transferId);
+  if (!t) return false;
+  if (t.revoked) return true;
+  return !!t.expiresAt && Date.now() > t.expiresAt;
+}
+
 export function getTransfer(transferId: string): TransferRow | undefined {
   const row = selectTransfer.get(transferId) as any;
   if (!row) return undefined;

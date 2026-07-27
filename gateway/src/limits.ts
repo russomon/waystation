@@ -121,6 +121,10 @@ export const ALLOW_AI_QC = flag(env.ALLOW_AI_QC, true);
 export const ALLOW_SYNTHETIC_QC = flag(env.ALLOW_SYNTHETIC_QC, true);
 export const ALLOW_EXPENSIVE_REFERENCE_QC = flag(env.ALLOW_EXPENSIVE_REFERENCE_QC, false);
 
+/** Lifetime of a recipient capability link, in days. 0 disables expiry.
+ *  A bearer link that never expires can only be taken back by revocation. */
+export const RECIPIENT_LINK_TTL_DAYS = Number(env.RECIPIENT_LINK_TTL_DAYS ?? 14);
+
 export interface PolicyResult {
   options?: Record<string, boolean | string>;
   disabled: string[];
@@ -152,4 +156,5 @@ export const policyBanner = (): string =>
   `max=${(MAX_UPLOAD_BYTES / 1024 ** 3).toFixed(1)}GiB ` +
   `active/session=${MAX_ACTIVE_UPLOADS_PER_SESSION} jobs/session=${MAX_JOBS_PER_SESSION} ` +
   `jobs/day=${MAX_DAILY_JOBS} ai=${ALLOW_AI_QC} synthetic=${ALLOW_SYNTHETIC_QC} ` +
-  `referenceQC=${ALLOW_EXPENSIVE_REFERENCE_QC}`;
+  `referenceQC=${ALLOW_EXPENSIVE_REFERENCE_QC} ` +
+  `linkTTL=${RECIPIENT_LINK_TTL_DAYS || "never"}d`;

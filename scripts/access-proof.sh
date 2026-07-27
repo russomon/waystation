@@ -227,6 +227,60 @@ need "$(code_of -X POST -H 'content-type: application/json' \
   "captions must still be accepted"
 echo "  N: reference-QC lane gated at the sidecar (403), captions unaffected ✓"
 
+echo "=== recipient scoping ==="
+start_gw_env "RECIPIENT_LINK_TTL_DAYS=14"
+# O) the old generic signing oracle is gone
+need "$(code_of "http://localhost:$GW/api/downloads?key=transfers/other/secret.mp4")" 404 \
+  "generic /downloads?key= must no longer exist"
+# P) transfer-scoped download only signs objects inside that transfer
+TID=$("$PY" -c "import uuid;print(uuid.uuid4())")
+need "$(code_of "http://localhost:$GW/api/transfers/$TID/download?key=transfers/$TID/master.mp4")" 200 \
+  "a key inside the transfer should sign"
+need "$(code_of "http://localhost:$GW/api/transfers/$TID/download?key=derivatives/$TID/qc_report.json")" 200 \
+  "a derivative of the transfer should sign"
+for BADKEY in "transfers/SOMEONE-ELSE/master.mp4" "derivatives/SOMEONE-ELSE/qc_report.json" \
+              "transfers/$TID/../SOMEONE-ELSE/master.mp4" ".env" "transfers/"; do
+  need "$(code_of --get --data-urlencode "key=$BADKEY" "http://localhost:$GW/api/transfers/$TID/download")" 404 \
+    "must not sign out-of-transfer key: $BADKEY"
+done
+echo "  O/P: signing oracle removed; only keys inside the transfer are signed ✓"
+
+# Q) billing ledger is sender-only (needs the auth-enabled gateway)
+start_gw access-code
+need "$(code_of "http://localhost:$GW/api/transfers/$TID/usage")" 401 \
+  "recipient must not read the billing ledger"
+curl -s -c "$WORK/s.ck" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+  --data "{\"code\":\"$CODE\"}" http://localhost:$GW/api/session >/dev/null
+need "$(code_of -b "$WORK/s.ck" "http://localhost:$GW/api/transfers/$TID/usage")" 200 \
+  "sender with a session should read usage"
+echo "  Q: usage ledger is sender-only (401 without a session, 200 with) ✓"
+grep -q "transfers/\${id}/usage" "$WEB/client/src/delivery.ts" \
+  && { echo "  FAIL: recipient page still requests the usage ledger"; ok=0; } \
+  || echo "  Q2: recipient page no longer requests the billing ledger ✓"
+
+# R) revocation / expiry produce a neutral 404
+cat > "$WEB/gateway/src/_revoke_check.ts" <<'TSEOF'
+import { saveTransfer } from "./store.js";
+import { setRecipientState, capabilityRevoked } from "./db.js";
+let ok = true;
+const need = (c: boolean, m: string) => { if (!c) { console.log("  FAIL:", m); ok = false; } };
+saveTransfer("live", { key: "transfers/live/m.mp4", createdAt: Date.now() });
+need(capabilityRevoked("live") === false, "fresh capability treated as revoked");
+setRecipientState("live", { revoked: true });
+need(capabilityRevoked("live") === true, "revocation not honoured");
+saveTransfer("stale", { key: "transfers/stale/m.mp4", createdAt: Date.now() });
+setRecipientState("stale", { expiresAt: Date.now() - 1000 });
+need(capabilityRevoked("stale") === true, "expiry not honoured");
+// unknown transfers are NOT revoked: objects can predate the database and the
+// event-driven path uploads straight to the bucket
+need(capabilityRevoked("never-seen") === false, "unknown transfer wrongly treated as revoked");
+if (ok) console.log("  R: revocation + expiry honoured; unknown ids unaffected ✓");
+process.exit(ok ? 0 : 1);
+TSEOF
+( cd "$WEB/gateway" && npx tsx src/_revoke_check.ts 2>&1 | grep -vE "Experimental|trace-warn"; exit "${PIPESTATUS[0]}" )
+[ $? -eq 0 ] || { echo "  FAIL: revocation assertions did not pass"; ok=0; }
+rm -f "$WEB/gateway/src/_revoke_check.ts"
+
 echo "=== auth disabled (dev / existing proof suite) ==="
 start_gw disabled
 need "$(code_of -X POST -H 'content-type: application/json' \
