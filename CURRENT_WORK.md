@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-27 (Track A hosted MVP: auth, ownership, ceilings, recipient scoping)
+Updated: 2026-07-28 (hosted MVP deployed and rehearsed — 14/14 production checks passed)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -10,20 +10,24 @@ switches and chat history gaps.
 
 ## Focus
 
-- Current branch: **`codex/hosted-waystation-mvp`** (waystation) and
-  **`codex/waystation-mvp`** (OrbitWebsite). Neither is merged; OrbitWebsite
-  `main` auto-deploys, so it must not be merged until the protected API is live
-  and the public rehearsal passes.
+- Current branch: **`codex/hosted-waystation-mvp`** (waystation). OrbitWebsite
+  `codex/waystation-mvp` **has been merged and published** — `main` is at
+  `d432d2c` and Cloudflare Pages serves the pinned release live.
 - Active task: Track A of
   `/Users/Shared/Orbit/Code/WAYSTATION_HOSTED_MVP_AND_COMMERCIAL_PLATFORM.md` —
   a judge-accessible hosted MVP at `orbitolive.com/waystation/` talking to
   `api.orbitolive.com/api/`. Track B (commercial) is NOT started.
-- Immediate next action: **the infrastructure prerequisite checkpoint.** All
-  seven implementation steps are done and proven locally; the next actions
-  require credentials and approvals that only the owner can grant (VPS,
-  Cloudflare Tunnel, DNS, B2 CORS, B2 webhook). See "Infrastructure checkpoint"
-  below. Do not create tunnels, change DNS, or repoint the live webhook without
-  explicit approval.
+- **The hosted MVP is deployed, published and rehearsed. 14/14 production
+  checks passed on 2026-07-28** — see the rehearsal record in `docs/DEPLOY.md`.
+  Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01`; transfer
+  `d292c10b-251a-46b9-83e6-26aba3569a53`; end-to-end ~3 m 36 s. Local proof
+  suite green at that commit (19 discovered, 19 passed).
+- Immediate next action: **record the baseline demo**, then decide whether to
+  build the narrow synthetic-origin feature before submission (design preserved
+  in `docs/SYNTHETIC_ORIGIN_PLAN.md`; deliberately NOT implemented).
+- The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
+  **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
+  the showcase-asset spec.
 
 ## Track A hosted MVP (2026-07-27)
 

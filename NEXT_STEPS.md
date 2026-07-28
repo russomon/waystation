@@ -7,6 +7,25 @@ history.
 
 ## Now
 
+- **Record the baseline hackathon demo.** The hosted MVP is deployed, published
+  and rehearsed — **14/14 production checks passed 2026-07-28** (record in
+  `docs/DEPLOY.md`). Nothing infrastructural blocks recording.
+
+- **Prepare the showcase asset** — the rehearsal deliberately used a cheap
+  10 s / 640×360 fixture to validate plumbing at minimum cost. That is the
+  *infrastructure rehearsal asset*, not the demo asset. For the recording,
+  prepare a separate **20–45 s, 720p or 1080p, known-generated** clip with:
+  genuine generator/model/prompt captured in a truthful `source.genblaze.json`;
+  visible text or signage across multiple shots; subject motion and temporal
+  continuity; audio plus a caption sidecar where practical; enough intentional
+  complexity to exercise synthetic QC, prompt adherence, evidence sampling and
+  the Passport. Do not let a weak test fixture become the public demonstration.
+
+- **Then decide on synthetic-origin QC.** Full design preserved in
+  `docs/SYNTHETIC_ORIGIN_PLAN.md` — deliberately NOT implemented, so it cannot
+  destabilise the submission. Deciding factor is whether the corpus can be
+  assembled in time; the code is the cheaper half.
+
 - **Demo wiring for the passport (manifest is PUBLISHED)**: the live
   proficiency session ran 2026-07-24 against real GMI and the record is
   WORM-locked on B2 at

@@ -198,6 +198,16 @@ abandoned uploads do not accrue storage.
 
 ## 8 · Publish the portal  ⚠ *owner approval*
 
+> **Done on 2026-07-28.** OrbitWebsite `codex/waystation-mvp` was merged to
+> `main` (`d432d2c`) and Cloudflare Pages serves the pinned release live. The
+> sequence below is retained as the procedure for the *next* release.
+>
+> One trap worth keeping: Pages answers `200` for **every** path under
+> `/waystation/` with a site-wide fallback page until the new deploy lands, so a
+> status-code probe gives a false positive. Wait on
+> `release-manifest.json` **parsing as JSON** — the fallback returns it as
+> `text/html`.
+
 **Order matters.** The release currently pinned in `codex/waystation-mvp`
 stays exactly as it is until the API is up and passing. Only then re-export, so
 the artifact records the *final* Waystation commit rather than an interim one.
@@ -257,6 +267,51 @@ never secrets.
 **Deployment is not "done" until a VPS exists, `/healthz` answers publicly, and
 all fourteen checks above pass.** Until then this is a prepared, locally-proven
 configuration and should be described as exactly that.
+
+### Rehearsal record — 2026-07-28 · **14/14 PASSED**
+
+Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01` (clean worktree on the
+VPS). Portal release pinned to the same commit, published as OrbitWebsite
+`d432d2c`. Transfer id **`d292c10b-251a-46b9-83e6-26aba3569a53`**. Models:
+`google/gemini-3.5-flash` for both the AI and synthetic lanes; `juror_model:
+null`. Asset: `demo-master.mp4` (782,981 B, h264 640×360, 30 fps, 10.0 s) plus
+`demo-captions.srt` (239 B) — the **infrastructure rehearsal asset, not the demo
+asset**. End-to-end 23:23:28Z → ~23:27:04Z (**~3 m 36 s**).
+
+| # | Check | Result |
+|---|---|---|
+| 1 | portal opens | ✓ manifest pins `578d37cd7e8a`; both meta pins correct; wasm `application/wasm`; 0 root-absolute `/assets/` refs |
+| 2 | wrong code refused | ✓ `401 bad_code` |
+| 3 | judge code starts session | ✓ `hasSession:true` (verified in-browser with credentials); gate hidden, compute selector hidden |
+| 4 | upload demo asset | ✓ transfer `d292c10b…` |
+| 5 | media direct to B2 | ✓ 3 PUTs → `s3.us-west-004.backblazeb2.com` totalling **832,124 B**; largest API request body **416 B** |
+| 6 | B2 webhook through the tunnel | ✓ `pipeline_queued` + exactly one `POST /jobs` from the gateway (`172.18.0.3`) + `DEV_TRIGGER_ON_COMPLETE` unset + B2 rule enabled/unsuspended |
+| 7 | only selected services run | ✓ `summarize` produced **only** `step_skipped · disabled by sender` — no `step_started`, no `step_done`, no output, no meter entry |
+| 8 | progress SSE | ✓ `withCredentials:true`, 20 events, 0 errors |
+| 9 | recipient link, no sender session | ✓ 200 with **no cookie**; unknown transfer **404 not 401**; `/usage` 401; foreign-key and traversal `/download` both 404 |
+| 10 | QC, evidence, passport, provenance render | ✓ Passport `UNCALIBRATED · "no proficiency manifest for this configuration"`, jury `SINGLE_SOURCE · no juror configured`; generated-media coverage 5/14 assessed, 2 suspected; findings capped at ISSUE |
+| 11 | download and verify | ✓ **two mechanisms separately** — SHA-256 3/3 against pipeline `manifest.json`; BLAKE3/Bao ranged verify → `downloaded ✓ (verified)` |
+| 12 | survives gateway restart | ✓ recipient doc identical modulo presign params; BLAKE3 root, options and link intact |
+| 13 | meter persistence + uniqueness | ✓ ledger identical across restart: 7 rows / 7 distinct keys, no name twice, no `summarize`; counters 1/10 session, 1/60 daily, 0/2 active |
+| 14 | no public service ports | ✓ 8787/8000/80/443/9000 closed before **and after** the restart; only SSH 22 |
+
+Local proof suite at the shipped commit: **19 discovered, 19 passed, 0 failed.**
+
+Honest limits recorded rather than papered over:
+
+- **Prompt-adherence QC: NOT RUN** — no source generation record was supplied
+  with this asset. A disclosed limitation, not a failure, and not one of the 14
+  checks. No generation record was invented to manufacture a pass.
+- **`UNCALIBRATED` and `SINGLE_SOURCE` are correct output**, not defects: the
+  production configuration has no published proficiency manifest and no second
+  juror is configured.
+- Check 13 establishes **persistence and observed uniqueness**. It is not a
+  proof of `recordMeter()` idempotency — nothing forced a replay. `meter_events`
+  has `idempotency_key` as its PRIMARY KEY, so duplicates are structurally
+  impossible at the storage layer, but the collapse-on-replay behaviour is
+  proven in the local suite, where a callback can be deliberately re-sent.
+- Conditional meter lines `qc_ai_escalation`, `qc_ai_evidence_audio`,
+  `qc_hybrid_audio` and `qc_jury` correctly did not fire on this asset.
 
 ---
 
