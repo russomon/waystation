@@ -56,6 +56,53 @@ sudo usermod -aG docker $USER && newgrp docker
 docker --version && docker compose version
 ```
 
+## 2b · Scratch data disk  ⚠ *required*
+
+The worker decodes, samples and re-encodes masters in temporary directories. A
+single job can transiently use several times the source file size, so that work
+gets a **dedicated data disk** — never the root filesystem, never the
+container's writable layer.
+
+Attach a block volume, then partition/format/mount it **once** (host
+administration; the repo never does this for you and must never reformat a disk
+that already holds data). Persist it in `/etc/fstab` by UUID with `nofail`:
+
+```
+UUID=<uuid> /mnt/waystation-scratch ext4 defaults,nofail 0 2
+```
+
+> Exactly **one** fstab entry per mount point. A LABEL= line and a UUID= line
+> for the same path both "work", but systemd then generates two competing
+> `.mount` units — remove the duplicate.
+
+Create the layout and validate:
+
+```bash
+bash scripts/preflight-scratch.sh --create
+```
+
+It checks that the path is a real mount point, is not the root device, has free
+space, has the full directory layout, and is genuinely writable (by writing).
+It never formats or mounts anything.
+
+Current deployment: `/dev/vdb1`, ext4, ~390 G at `/mnt/waystation-scratch`.
+
+Layout under `/mnt/waystation-scratch/waystation/`:
+
+| Directory | Used today |
+|---|---|
+| `tmp/` | **yes** — all worker scratch (`TMPDIR`), bound to `/tmp` as well |
+| `cache/` | **yes** — `XDG_CACHE_HOME`, `TORCH_HOME` (SyncNet weights ≈1.6 GB), `MPLCONFIGDIR` |
+| `logs/` | reserved — logs currently go to the Docker json-file driver, not to disk |
+| `uploads/` `jobs/` `runs/` `artifacts/` `exports/` | reserved — **not used today.** Waystation streams uploads browser→B2 and writes derivatives straight back to B2, so nothing stages locally. Created for convention and future use; expect them to stay empty. |
+
+Override the location with `WAYSTATION_SCRATCH` in `.env`.
+
+**The `control` volume deliberately stays on the root disk.** It holds
+transfers, uploads and the meter ledger — small, durable state, not scratch.
+Keeping it off a disk named "scratch" is what makes "never delete the control
+volume" a safe rule.
+
 ## 3 · Source
 
 Both repositories are **public**, so clone over HTTPS — the VPS needs no
@@ -146,10 +193,24 @@ the token enters the cloudflared container — never the application `.env`.
 ## 6 · Build and start
 
 ```bash
+bash scripts/preflight-scratch.sh                   # must PASS before starting
+docker compose -f docker-compose.prod.yml config -q # validates the compose file
 docker compose -f docker-compose.prod.yml build     # ~10-20 min first time, amd64
 docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs gateway | head -20
+```
+
+If the worker fails with a bind-mount error naming `/mnt/waystation-scratch`,
+that is the guard working: the scratch path is missing or the disk is not
+mounted. Run the preflight above — do **not** "fix" it by creating the
+directory on the root disk, which is precisely what the guard prevents.
+
+Confirm heavy writes land on the data disk and not on `/`:
+
+```bash
+df -hT /mnt/waystation-scratch /          # watch scratch grow, / stay flat
+docker compose -f docker-compose.prod.yml exec worker sh -c 'echo $TMPDIR; df -hT /scratch /tmp'
 ```
 
 The gateway boot log must show — and **must not** show any secret:

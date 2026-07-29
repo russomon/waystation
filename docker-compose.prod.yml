@@ -19,11 +19,19 @@
 # straight to Backblaze B2 and the worker reads/writes B2 directly. Cloudflare
 # carries only control messages, the B2 webhook, and SSE progress.
 #
+# SCRATCH DISK IS A PREREQUISITE. The worker bind-mounts a dedicated data disk
+# for heavy work; it will REFUSE TO START if the host path is missing (that is
+# deliberate — see the volumes block). Prepare it once:
+#   bash scripts/preflight-scratch.sh --create
+# Override the location with WAYSTATION_SCRATCH in .env; the default is
+# /mnt/waystation-scratch/waystation.
+#
 # Required in .env on the VPS (never committed):
 #   B2_S3_ENDPOINT B2_REGION B2_BUCKET B2_KEY_ID B2_APP_KEY
 #   B2_EVENT_SIGNING_SECRET PIPELINE_SHARED_SECRET GMI_API_KEY
 #   WAYSTATION_ACCESS_CODE_HASH WAYSTATION_SESSION_SECRET
 #   TUNNEL_TOKEN
+# Optional: WAYSTATION_SCRATCH (defaults to /mnt/waystation-scratch/waystation)
 # Generate the access-code hash and session secret with:
 #   node scripts/make-access-code.mjs
 
@@ -100,12 +108,39 @@ services:
       AI_QC_AUDIO_WINDOWS: "2"
       AI_QC_SYNTH_COARSE_FRAMES: "8"
       AI_QC_SYNTH_FINE_MAX: "6"
+
+      # ── scratch: every heavy write lands on the 390 GB data disk ──
+      # The worker's real scratch usage is two tempfile.TemporaryDirectory()
+      # calls (worker.py, qc/avsync.py). Python's tempfile honours TMPDIR, so
+      # this one variable moves ALL of it — no QC code is touched.
+      TMPDIR: /scratch/tmp
+      # Caches that would otherwise land in the container's writable layer.
+      # TORCH_HOME matters once INSTALL_SYNCNET=1: the weights are ~1.6 GB.
+      XDG_CACHE_HOME: /scratch/cache
+      TORCH_HOME: /scratch/cache/torch
+      MPLCONFIGDIR: /scratch/cache/matplotlib
     deploy:
       resources:
         limits:
           cpus: "${WORKER_CPUS:-0}"
     volumes:
-      - scratch:/tmp                         # size for the largest master
+      # Long syntax with create_host_path:false ON PURPOSE. With the short
+      # form, a missing source directory is SILENTLY created by Docker on the
+      # root disk — the job then succeeds while filling /, which is the exact
+      # failure this disk exists to prevent. Failing to start is much better.
+      - type: bind
+        source: ${WAYSTATION_SCRATCH:-/mnt/waystation-scratch/waystation}
+        target: /scratch
+        bind:
+          create_host_path: false
+      # /tmp stays explicitly bound: pipeline/Dockerfile declares `VOLUME /tmp`,
+      # so leaving it unmounted gets an ANONYMOUS volume back on the root disk.
+      # This also catches anything that ignores TMPDIR and hardcodes /tmp.
+      - type: bind
+        source: ${WAYSTATION_SCRATCH:-/mnt/waystation-scratch/waystation}/tmp
+        target: /tmp
+        bind:
+          create_host_path: false
     restart: unless-stopped
 
   cloudflared:
@@ -120,5 +155,13 @@ services:
     restart: unless-stopped
 
 volumes:
+  # `control` stays a NAMED VOLUME and stays on the root disk. It is small,
+  # durable state (transfers, uploads, the meter ledger) — not scratch. Moving
+  # it onto a disk named "scratch" invites someone to clear that disk and lose
+  # the billing ledger. The runbook's "never delete the control volume" rule
+  # only works if control is not co-located with disposable data.
   control:
-  scratch:
+  # `scratch` (named volume) is RETIRED — the worker now bind-mounts the
+  # /mnt/waystation-scratch data disk instead. The old volume is left in place
+  # rather than removed so an operator can inspect or roll back; reclaim it
+  # deliberately with `docker volume rm waystation_scratch` once satisfied.
