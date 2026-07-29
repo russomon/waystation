@@ -6,11 +6,49 @@ requires human or specialist review.
 Everything on screen is real: real B2 bucket, real GMI inference, real
 Object Lock.
 
+> **This records against the HOSTED PRODUCTION deployment.** There is no local
+> stack, no quick-tunnel, and nothing to register before recording.
+>
+> | | |
+> |---|---|
+> | Portal | `https://orbitolive.com/waystation/` |
+> | API | `https://api.orbitolive.com/api` |
+> | Upload path | browser → **Backblaze B2 directly** (presigned multipart PUT) |
+> | Trigger | **B2 Event Notifications** → the running production gateway through the Cloudflare Tunnel |
+> | Compute | pinned `cloud`; the Local/Cloud selector is hidden in the hosted build |
+>
+> Do **not** run `scripts/live-event-run.sh`, start a `cloudflared` quick-tunnel,
+> or repoint the production B2 event rule. The rule (`waystation-pipeline`,
+> prefix `transfers/`) is already live and pointed at the production gateway;
+> repointing it would break the deployment mid-recording.
+
+## ⚠ Never on camera
+
+Recording publishes whatever is on screen. Before you hit record:
+
+- **The judge access code.** Type it with the capture paused, or authenticate
+  before recording starts. The field is `type="password"`, but the clipboard,
+  a password manager overlay, or a typo shown in plaintext all leak it.
+- **The session cookie**, any devtools Application/Storage panel, and any
+  request headers view.
+- **API keys and tokens** — `.env`, the B2 or Cloudflare dashboards, `docker
+  compose config`, the tunnel token.
+- **Complete recipient URLs.** A recipient transfer id is a **bearer
+  capability**: anyone who reads it off the video owns that delivery forever.
+  Blur, crop, or truncate the address bar for every share-link shot, and
+  **revoke the demo transfer afterwards** (see "After recording" below).
+- The terminal `worm-demo.sh` shot prints a transfer id — frame it so only the
+  Object Lock response is legible, or blur the id in post.
+
 ## Prep checklist (before recording)
 
-1. Stack up: `bash scripts/live-event-run.sh` (wait for "reactive stack ready").
-   - Run `bash scripts/b2-register-events.sh` so the fresh quick-tunnel URL is
-     registered and B2 fires the webhook itself.
+1. Confirm the hosted deployment is healthy — nothing to start:
+   ```bash
+   curl -s https://api.orbitolive.com/healthz          # -> {"ok":true}
+   curl -s https://orbitolive.com/waystation/release-manifest.json | head -c 120
+   ```
+   If the manifest does not parse as JSON, Cloudflare Pages is still serving its
+   fallback page; wait and retry rather than trusting a `200`.
 2. Demo master on the Desktop (regenerate any time):
    ```bash
    say -o /tmp/demo.aiff "Hello and welcome to the Waystation demo. This master was delivered through the cloud waystation. Quality control has built an issue report."
@@ -35,8 +73,13 @@ Object Lock.
    built an issue report.
    ```
    (This master is deliberately illegal: 30 fps, ≈ −10.7 LKFS, +8.1 dBTP.)
-3. Browser at `http://localhost:5173`, ~125 % zoom. Terminal with a big font.
-4. Have one finished transfer id handy for the WORM shot (from a rehearsal run).
+3. Browser at `https://orbitolive.com/waystation/`, ~125 % zoom, in a clean
+   window (no bookmarks bar, no other tabs, no extensions visible). Terminal
+   with a big font. **Authenticate with the judge code before recording starts**
+   so the code never reaches the capture.
+4. Have one finished transfer id handy for the WORM shot (from a prior run) —
+   keep it in a scratch file, not in the repo, and frame the shot so it is not
+   legible.
 5. **Only if you want the measured-lip-sync beat** (see the optional beat below):
    build the SyncNet-enabled worker and prepare a REAL-FACE clip with a known
    injected offset — the demo master above is a test pattern with no face, so
@@ -74,9 +117,13 @@ Click **Send**.
 **0:45 – 1:10 · The reactive moment**
 Stay on the progress line. When the upload finishes: "the gateway does
 nothing more — Backblaze itself fires an ObjectCreated event at our webhook"
-. Steps stream in live via SSE: qc → qc_ai → manifest.
+. Steps stream in live via SSE: qc → qc_ai → qc_synthetic → manifest.
 > "No polling, no compute idling. The pipeline exists only while there's
 > work."
+
+Measured in the 2026-07-28 rehearsal, if you want a number to quote: **832,124
+bytes of media went browser→B2 directly, while the largest request that touched
+our API was 416 bytes.** The media never crosses Cloudflare or our server.
 
 **1:10 – 2:00 · The verdict (open the share link)**
 Scroll slowly through the delivery page:
@@ -119,20 +166,37 @@ Land on the `avsync_offset` finding — a real number in ms with a confidence, a
 > "Five frames out at 25 fps. Measured, not guessed."
 
 **OPTIONAL · +0:25 · The passport beat (strongest innovation shot)**
-Requires: a generated clip with planted signage (render one with
-`pipeline/foundry_render.py`), `GMI_JURY_MODEL=google/gemini-3.6-flash`, and
-`PROFICIENCY_MANIFEST_PATH` pointing at the published WORM manifest.
-Send the clip with Synthetic QC on; open the report's **AI reliability
-passport** section:
-> "I planted this defect myself — the sign flips from ARRIVALS to 4RRIVALS.
-> Waystation's model caught it. But here's the innovation: a second model,
-> blind to the first one's findings, independently re-examined the evidence —
-> REPRODUCED. And this exact configuration was tested against ten blind
-> planted defects: the catch rate is right here, with confidence intervals,
-> sealed under Object Lock. Every other tool asks you to trust its AI.
-> Waystation QCs the AI."
-Point at `PROVISIONAL · n=5` for one breath: "small sample, and it says so —
-that's the point."
+
+> **Record what the deployment actually says.** On the current production
+> deployment the Passport reads **`UNCALIBRATED · "no proficiency manifest for
+> this configuration"`** and the jury reads **`SINGLE_SOURCE · no juror
+> configured`**. The published WORM manifest is bound to commit `e85fd947`;
+> production runs `578d37c`, so `citation_state()` correctly refuses to cite it.
+>
+> **Do not set `WAYSTATION_COMMIT` to the old sha to make the citation read
+> EXACT.** That manufactures a binding for code that did not produce those
+> numbers — precisely the failure the Passport exists to detect. Do not alter
+> the production Passport configuration for the recording.
+
+Two honest ways to shoot this beat:
+
+**(a) Ship the refusal — recommended, and the stronger story.** Send a generated
+clip with planted signage (render one with `pipeline/foundry_render.py`) with
+Synthetic QC on, and open the **AI reliability passport** section:
+> "Waystation's model caught the planted defect. Now watch what it says about
+> *itself*. This configuration has no proficiency record published against it,
+> so the passport reads UNCALIBRATED — it refuses to quote a catch rate it
+> hasn't earned on this exact build. And with no second juror configured, it
+> reports SINGLE_SOURCE rather than implying agreement it never obtained.
+> Every other tool asks you to trust its AI. This one tells you when *not* to."
+
+**(b) Earn a citable Passport first.** Publish a NEW proficiency manifest
+against the exact deployed configuration — commit, model identities, prompts,
+reducers, sampling config — from a clean worktree, then point
+`PROFICIENCY_MANIFEST_PATH` at that new record and re-verify the citation reads
+EXACT before recording. This is real work, not a config flag; do not attempt it
+under time pressure. If it lands, add `PROVISIONAL · n=<N>` for one breath:
+"small sample, and it says so — that's the point."
 
 **2:25 – 2:45 · The contrast (pre-recorded second send, fast cut)**
 Same file, profile **Standard**: zero blockers, review-level issues only.
@@ -164,10 +228,16 @@ voiceover track means a bad line costs one retake of the line, not the take.
    record higher and downscale rather than upscaling later.
 4. **Big fonts:** terminal at a size readable on a phone, browser at ~125 %.
    Judges may watch on a laptop in a browser tab, not a cinema screen.
-5. **Check what's on screen that shouldn't be:** bucket names are fine, but
-   keep `.env`, key IDs, and tunnel URLs out of frame. Never open `.env`.
-6. If the passport beat is in, wire it first (see `NEXT_STEPS.md` → Now):
-   `GMI_JURY_MODEL`, `PROFICIENCY_MANIFEST_PATH`, `WAYSTATION_COMMIT`.
+5. **Check what's on screen that shouldn't be** — see "⚠ Never on camera" at the
+   top. Bucket names are fine; the judge code, session cookie, key IDs, tunnel
+   token and complete recipient URLs are not. Never open `.env`.
+6. **Authenticate before the capture starts.** The session cookie lasts 3600 s,
+   so log in, confirm the sender panel is showing, then begin recording. If a
+   take runs past the TTL you will be bounced to the code gate mid-shot — re-auth
+   with capture paused, never on camera.
+7. The passport beat needs **no** configuration change. Record what the
+   deployment says (`UNCALIBRATED` / `SINGLE_SOURCE`) — see that beat above.
+   Do not set `WAYSTATION_COMMIT` to an older sha to force an EXACT citation.
 
 **Capture order** (each is a separate silent clip — do not try for one take)
 
@@ -207,9 +277,37 @@ voiceover track means a bad line costs one retake of the line, not the take.
 any editor that supports separate audio and video tracks will do. Nothing here
 needs a paid tool.
 
+## After recording — close the capability
+
+Every transfer shown on camera should be treated as **exposed**, even if you
+blurred the URL: a single legible frame is enough. Revoke it once the take is in
+the can. The control is `transfers.revoked = 1` on the production control plane;
+`/transfers/:id` and `/transfers/:id/download` then return a neutral 404 that is
+byte-identical to an unknown id, so the link reveals nothing — not even that it
+once existed.
+
+```bash
+ssh <vps> "cd ~/waystation && docker compose -f docker-compose.prod.yml \
+  exec -T -e TID='<transfer-id>' gateway node -e '
+    const {DatabaseSync}=require(\"node:sqlite\");
+    const db=new DatabaseSync(\"/data/waystation.db\");
+    console.log(db.prepare(\"update transfers set revoked = 1 where transfer_id = ?\")
+      .run(process.env.TID).changes);
+  '"
+```
+
+Then confirm: `curl -s -o /dev/null -w '%{http_code}\n' \
+https://api.orbitolive.com/api/transfers/<id>` must print `404`.
+
+Presigned B2 URLs carry their own 3600 s TTL and expire independently, so an
+hour after the take the derivative URLs are dead regardless. Do **not** delete
+the control volume or any WORM-locked provenance object to "clean up" — the
+Object Lock evidence is the product, and revocation is the correct control.
+
 ## Recording notes
 
-- Rehearse once end-to-end; keep the rehearsal's transfer id for beat 4.
+- Rehearse once end-to-end; keep the rehearsal's transfer id for beat 4 in a
+  scratch file outside the repo — never commit a complete transfer id.
 - GMI latency varies (5–40 s for the AI steps) — record the progress stream
   in real time once, and cut the wait in the edit rather than faking it.
 - If Gemini's vision findings differ between takes (it's a model, not a

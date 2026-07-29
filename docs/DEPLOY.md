@@ -272,7 +272,7 @@ configuration and should be described as exactly that.
 
 Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01` (clean worktree on the
 VPS). Portal release pinned to the same commit, published as OrbitWebsite
-`d432d2c`. Transfer id **`d292c10b-251a-46b9-83e6-26aba3569a53`**. Models:
+`d432d2c`. Transfer id **`d292c10b…`**. Models:
 `google/gemini-3.5-flash` for both the AI and synthetic lanes; `juror_model:
 null`. Asset: `demo-master.mp4` (782,981 B, h264 640×360, 30 fps, 10.0 s) plus
 `demo-captions.srt` (239 B) — the **infrastructure rehearsal asset, not the demo

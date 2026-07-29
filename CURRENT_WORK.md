@@ -20,7 +20,7 @@ switches and chat history gaps.
 - **The hosted MVP is deployed, published and rehearsed. 14/14 production
   checks passed on 2026-07-28** — see the rehearsal record in `docs/DEPLOY.md`.
   Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01`; transfer
-  `d292c10b-251a-46b9-83e6-26aba3569a53`; end-to-end ~3 m 36 s. Local proof
+  `d292c10b…`; end-to-end ~3 m 36 s. Local proof
   suite green at that commit (19 discovered, 19 passed).
 - Immediate next action: **record the baseline demo**, then decide whether to
   build the narrow synthetic-origin feature before submission (design preserved
@@ -79,22 +79,35 @@ wrong code refused with the gate held, correct code reveals the sender UI, the
 code field cleared, `document.cookie` cannot see the session, nothing in
 local/sessionStorage, and the session survives a reload.
 
-## Infrastructure checkpoint (blocked on owner approval)
+## Infrastructure checkpoint — **COMPLETE (2026-07-28)**
 
-Everything below needs credentials/approvals the implementation cannot grant:
+All eight items are done; none is blocking any more:
 
-1. VPS selected + admin access
-2. Docker/Compose installed on it
-3. Production B2 + GMI secrets present on the VPS `.env`
-4. Cloudflare Tunnel creation (`waystation-production` → `api.orbitolive.com`
-   → `http://gateway:8787`, `TUNNEL_TOKEN` only into that container)
-5. B2 CORS for `https://orbitolive.com` + `https://www.orbitolive.com`
-6. B2 webhook repoint to `https://api.orbitolive.com/api/events/b2`
-7. Judge-code delivery method
-8. Small rights-cleared test asset
+1. ✓ VPS provisioned and hardened (Vultr, Ubuntu 24.04, UFW OpenSSH only)
+2. ✓ Docker/Compose installed; images built natively on the VPS (amd64)
+3. ✓ Production B2 + GMI secrets on the VPS `.env` (password manager holds them)
+4. ✓ Cloudflare Tunnel `waystation-production` → `api.orbitolive.com`
+5. ✓ B2 CORS for `https://orbitolive.com` + `https://www.orbitolive.com`
+6. ✓ B2 event rule enabled, unsuspended, targeting `/api/events/b2`
+7. ✓ Judge-code delivery method settled (owner-held, never on screen)
+8. ✓ Rehearsal asset used
 
-Then: export the pinned release, merge the OrbitWebsite branch, run the roadmap
-§7.11 public rehearsal (14 checks), and only then record the demo.
+The pinned release was exported, the OrbitWebsite branch merged and published,
+and the 14-check rehearsal passed **14/14**. Remaining before submission:
+record the demo. See `docs/DEPLOY.md` for the rehearsal record.
+
+## Recipient-capability hygiene
+
+Recipient transfer ids are **bearer capabilities** — anyone holding one can read
+the delivery. The rehearsal id was committed to public documentation and to a
+public commit message, so it was **revoked on the production control plane**
+(`transfers.revoked = 1`). Both `/transfers/:id` and `/transfers/:id/download`
+now return a neutral 404 byte-identical to an unknown id, and every presigned
+URL minted during that run has passed its 3600 s TTL.
+
+Git history was deliberately **not** rewritten: the commit is already public, so
+revocation is the control that actually works. Going forward, **record only a
+shortened id** (first 8 characters) in tracked files and commit messages.
 
 ## AI Reliability Passport (2026-07-24, latest)
 
@@ -119,9 +132,17 @@ Findings gained structured identities (`finding_id`/`match_key`) in
   caught by primary AND independently reproduced by the blind juror (which
   transcribed the glyph differently — the match_key design working as
   intended); clean twin passed both models.
-- REMAINING (before recording): full live proficiency session (10 assets ×
-  jury) → `--publish` the citable WORM manifest from a clean worktree; then
-  wire `PROFICIENCY_MANIFEST_PATH` + `GMI_JURY_MODEL` for the demo run.
+- **Production status: the deployed Passport is `UNCALIBRATED`, and that is
+  correct.** The published WORM manifest is bound to commit `e85fd947`;
+  production runs `578d37c`, so `citation_state()` rightly refuses to cite it.
+  The 2026-07-28 rehearsal reported `UNCALIBRATED · "no proficiency manifest for
+  this configuration"` and jury `SINGLE_SOURCE · no juror configured`. Both are
+  honest output and are safe to show on camera.
+- **Never** set `WAYSTATION_COMMIT` to the older `e85fd947` sha to make the
+  citation read EXACT — that manufactures a binding for code which did not
+  produce those numbers, and defeats the entire point of the Passport. A citable
+  Passport requires publishing a NEW manifest against the exact deployed
+  configuration from a clean worktree. Does NOT block recording.
 
 ## Asset-specific generated-media QC (2026-07-24)
 

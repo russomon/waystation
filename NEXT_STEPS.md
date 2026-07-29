@@ -26,19 +26,31 @@ history.
   destabilise the submission. Deciding factor is whether the corpus can be
   assembled in time; the code is the cheaper half.
 
-- **Demo wiring for the passport (manifest is PUBLISHED)**: the live
-  proficiency session ran 2026-07-24 against real GMI and the record is
-  WORM-locked on B2 at
-  `proficiency/rendered_text_mutation/d1a360c1df22-e85fd947.json`
-  (COMPLIANCE; commit e85fd947; **primary gemini-3.5-flash 5/5 plants caught,
-  5/5 clean twins passed, Wilson [0.566, 1.0], PROVISIONAL n=5; juror
+- **The deployed Passport is honestly `UNCALIBRATED`. Leave it that way.**
+
+  A proficiency manifest exists and is WORM-locked on B2 at
+  `proficiency/rendered_text_mutation/d1a360c1df22-e85fd947.json` (COMPLIANCE;
+  bound to commit `e85fd947`; primary gemini-3.5-flash 5/5 plants caught, 5/5
+  clean twins passed, Wilson [0.566, 1.0], PROVISIONAL n=5; juror
   gemini-3.6-flash 5/5 offline; deployed pair policy 3 reproduced / 2
-  contested**). For the demo run set:
-  `GMI_JURY_MODEL=google/gemini-3.6-flash`,
-  `PROFICIENCY_MANIFEST_PATH=<local copy of that manifest>`,
-  `WAYSTATION_COMMIT=<full e85fd947 sha>` — verified to render citation EXACT
-  against this configuration. Re-run `--publish` if any of model/prompt/
-  reducer/commit changes (the citation will honestly flip to UNCALIBRATED).
+  contested). **That record is bound to `e85fd947`. Production runs `578d37c`.**
+
+  > **Do not set `WAYSTATION_COMMIT=<e85fd947 sha>` on the production
+  > deployment.** `citation_state()` compares the recorded config against the
+  > running one; overriding the commit to match an older manifest would
+  > manufacture an EXACT citation for code that did not produce those numbers.
+  > That is falsifying the binding, and it is the one thing the whole Passport
+  > design exists to prevent. The rehearsal on 2026-07-28 correctly reported
+  > `UNCALIBRATED · "no proficiency manifest for this configuration"`, which is
+  > the truthful state and is safe to show on camera.
+
+  The **only** honest way to a citable Passport is to publish a *new* manifest
+  against the exact deployed configuration — commit, model identities, prompts,
+  reducers, sampling configuration — from a clean worktree, then point
+  `PROFICIENCY_MANIFEST_PATH` at that new record. Re-run `--publish` whenever
+  any of those change; the citation is supposed to flip to UNCALIBRATED when
+  they do. **Do not alter the production Passport configuration** to chase a
+  green label.
 
 - **Live-calibrate the REMAINING generated-media stages** (partially done —
   does NOT block recording). The 2026-07-24 proficiency session put real GMI
