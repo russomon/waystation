@@ -96,7 +96,29 @@ Layout under `/mnt/waystation-scratch/waystation/`:
 | `logs/` | reserved — logs currently go to the Docker json-file driver, not to disk |
 | `uploads/` `jobs/` `runs/` `artifacts/` `exports/` | reserved — **not used today.** Waystation streams uploads browser→B2 and writes derivatives straight back to B2, so nothing stages locally. Created for convention and future use; expect them to stay empty. |
 
-Override the location with `WAYSTATION_SCRATCH` in `.env`.
+### Overrides
+
+`WAYSTATION_SCRATCH` is the **single source of truth**. The preflight derives
+the filesystem to validate *from it* (via `findmnt`), so an override moves the
+checks with it and the two cannot drift apart.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `WAYSTATION_SCRATCH` | `/mnt/waystation-scratch/waystation` | Scratch root. Compose binds this to `/scratch`; preflight validates whatever filesystem backs it. |
+| `WAYSTATION_SCRATCH_MOUNT` | *(unset — derived)* | **Optional pin.** Only set this to assert a specific mount point. If the mount actually backing `WAYSTATION_SCRATCH` is not this, preflight fails. |
+| `WAYSTATION_SCRATCH_DEVICE` | *(unset)* | **Optional pin** on the backing device, e.g. `/dev/vdb1`. |
+| `WAYSTATION_SCRATCH_MIN_FREE_GB` | `20` | Minimum free space. |
+
+Set only `WAYSTATION_SCRATCH` unless you have a reason to assert more. The pins
+exist to catch drift on a host you do not fully control; a mismatch is a hard
+failure, not a warning, because a silently-wrong mount is the failure mode this
+whole section exists to prevent.
+
+Whatever you set, **a scratch path that resolves to the root filesystem fails
+loudly** — that is the one condition the check refuses to let past.
+
+The preflight is Linux-only (it needs `findmnt`). On macOS it exits 0 with a
+note: local development uses `docker-compose.yml`, which has no scratch disk.
 
 **The `control` volume deliberately stays on the root disk.** It holds
 transfers, uploads and the meter ledger — small, durable state, not scratch.
