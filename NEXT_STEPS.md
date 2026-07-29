@@ -66,12 +66,20 @@ history.
   through real GMI and inspect the recipient page. Tune prompts/normalizers
   only if the capture exposes a concrete failure, and add that failure to
   `scripts/synthetic-qc-proof.sh`.
-- **Demo video**: record against `docs/demo-script.md` (≤3:00 shot list). The
-  Plan B manual-event path is no longer needed — Backblaze Event
-  Notifications are enabled and proven, so the demo can show B2 firing the
-  event for real. Start `scripts/live-event-run.sh`, run
-  `scripts/b2-register-events.sh` to point the rule at the current tunnel,
-  then upload and let B2 drive the pipeline.
+- **Demo video**: record against **`docs/demo-script.md`**, which is the
+  **authoritative hosted-production procedure** (≤3:00 shot list). Record
+  against the deployed service at `https://orbitolive.com/waystation/` /
+  `https://api.orbitolive.com/api`.
+
+  > **Superseded:** earlier revisions of this file told you to start
+  > `scripts/live-event-run.sh` and run `scripts/b2-register-events.sh` to point
+  > the B2 rule at a fresh quick-tunnel. **Do not do that.** Those steps belong
+  > to the old local/quick-tunnel workflow. The production rule
+  > (`waystation-pipeline`, prefix `transfers/`) is permanently registered
+  > against `https://api.orbitolive.com/api/events/b2` and was verified enabled
+  > and unsuspended during the 2026-07-28 rehearsal — re-registering it would
+  > point production at a dead tunnel and break the deployment. There is nothing
+  > to start and nothing to register before recording.
 - **Devpost**: re-paste the updated "What it does" and "What's next" sections
   from `docs/devpost-about.md`; the repo URL is
   `https://github.com/russomon/waystation`.

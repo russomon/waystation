@@ -367,11 +367,15 @@ agentic contract proof and the MediaInfo proof (see
   (5/13 → 7/13 assessed) — normal model variance; read them off the screen on
   the take, do not memorize a rehearsal number. Retained reports live in the
   session scratchpad only (not in the repo).
-- Event Notifications are registered per-tunnel: a cloudflared quick-tunnel
-  URL is ephemeral, so after starting `scripts/live-event-run.sh`, run
-  `scripts/b2-register-events.sh` to (re)point the B2 rule at the current
-  tunnel. A rule left pointing at a dead tunnel is harmless (events just do
-  not deliver) but should be re-registered before a demo.
+- ~~Event Notifications are registered per-tunnel~~ — **SUPERSEDED 2026-07-28.**
+  That was true only while the pipeline ran behind an ephemeral cloudflared
+  quick-tunnel. Production now has a **stable hostname**, so the B2 rule
+  (`waystation-pipeline`, prefix `transfers/`) is registered **once** against
+  `https://api.orbitolive.com/api/events/b2` and stays valid. Verified enabled,
+  unsuspended and firing during the rehearsal.
+  **Do not run `scripts/b2-register-events.sh` against production** — it would
+  repoint the live rule at whatever tunnel happens to be up and silently stop
+  the hosted pipeline. Those scripts remain only for local development.
 - The pipeline venv is Python 3.13 and was REBUILT on 2026-07-19 after the
   directory rename: venvs bake absolute-path shebangs into console scripts
   (e.g. uvicorn), so `.venv` must be recreated (not moved) when the checkout
@@ -404,13 +408,21 @@ agentic contract proof and the MediaInfo proof (see
   at this handoff: gateway `tsc --noEmit`, production client build, `worker`
   import, and every `scripts/*-proof.sh` green (discovered from the filesystem, not a fixed count).
 - Exact next step: **record the demo video.** No code work is required first.
-  `docs/demo-script.md` now carries both the shot list AND a "How to record"
-  production plan (silent screen captures + separate voiceover, setup
-  checklist, capture order, edit rules). Sequence: wire the passport env vars
-  (`NEXT_STEPS.md` → Now), bring the stack up with `scripts/live-event-run.sh`,
-  run `scripts/b2-register-events.sh` for the fresh tunnel (quick-tunnel URLs
-  are ephemeral), rehearse once keeping the transfer id, then capture. Finally
-  re-paste `docs/devpost-about.md` into Devpost.
+  **`docs/demo-script.md` is the authoritative hosted-production procedure** —
+  shot list plus a "How to record" plan (silent screen captures + separate
+  voiceover, setup checklist, capture order, edit rules), a "never on camera"
+  list, and an after-recording revocation step.
+
+  Sequence: confirm `https://api.orbitolive.com/healthz` answers and the portal
+  manifest parses as JSON, authenticate at
+  `https://orbitolive.com/waystation/` **before** the capture starts, then
+  record. Finally re-paste `docs/devpost-about.md` into Devpost.
+
+  > **Superseded:** do NOT "bring the stack up with `scripts/live-event-run.sh`"
+  > or "run `scripts/b2-register-events.sh` for the fresh tunnel". There is no
+  > local stack and no ephemeral tunnel in the hosted deployment; repointing the
+  > production B2 rule would break it. Do NOT wire passport env vars either —
+  > the deployed Passport is honestly `UNCALIBRATED` and must stay that way.
 - Live-model calibration of the generated lane is PARTIAL, not complete. The
   proficiency session put real GMI through 10 blind assets and validated TWO of
   the five model stages — the coarse **scene ledger** and **native-resolution
