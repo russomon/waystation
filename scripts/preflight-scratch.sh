@@ -161,6 +161,20 @@ try_sudo() {
 }
 
 echo ""
+# GATE: never create anything once validation has already failed. Without this,
+# `--create` would cheerfully mkdir -p a tree on the ROOT filesystem (or on a
+# path whose mount/device pin disagreed) and then report the failure — having
+# already built the thing the check exists to prevent. Refuse first, and leave
+# the filesystem exactly as it was found.
+if [ "$CREATE" = 1 ] && [ "$fail" != 0 ]; then
+  echo "REFUSING TO CREATE — validation failed above."
+  note "Nothing was created. $SCRATCH was NOT touched."
+  note "Fix the mount, the scratch path, or the pins, then re-run with --create."
+  echo ""
+  echo "FAIL ✗  refusing to create scratch directories on an unvalidated location"
+  exit 1
+fi
+
 if [ "$CREATE" = 1 ]; then
   echo "▶ creating layout under $SCRATCH"
   # A partially-created tree is not unsafe — these are empty directories, and a
@@ -173,7 +187,7 @@ for d in "${SUBDIRS[@]}"; do
   if [ -d "$SCRATCH/$d" ]; then
     actual=$(stat -c '%a' "$SCRATCH/$d" 2>/dev/null || stat -f '%Lp' "$SCRATCH/$d" 2>/dev/null || echo "?")
     if [ "$actual" = "${MODE#0}" ] || [ "$actual" = "$MODE" ]; then ok "$SCRATCH/$d ($actual)"
-    else ok "$SCRATCH/$d (mode $actual, expected $MODE)"; fi
+    else bad "$SCRATCH/$d (mode $actual, expected $MODE — re-run with --create to fix)"; fi
   else
     bad "missing $SCRATCH/$d  (run: bash scripts/preflight-scratch.sh --create)"
   fi
