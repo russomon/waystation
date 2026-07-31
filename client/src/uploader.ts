@@ -4,7 +4,7 @@
 // through gwPost/gwGet (credentialed, session cookie); the part/sidecar PUTs go
 // straight to Backblaze with a BARE fetch — no cookie, no gateway header. The
 // master file never passes through the gateway or Cloudflare.
-import { hashFile } from "./blake3.js";
+import { hashFile, hashFileRootOnly } from "./blake3.js";
 import { gwGet, gwPost } from "./config.js";
 import { getResume, saveResume, markPart, clearResume, type ResumeState } from "./resumeStore.js";
 
@@ -32,9 +32,14 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
     const r = await post("/uploads", {
       filename: file.name, contentType: file.type || "application/octet-stream", size: file.size,
     });
-    st = { fp, key: r.key, uploadId: r.uploadId, partSize: r.partSize, partCount: r.partCount, done: {} };
+    st = {
+      fp, key: r.key, uploadId: r.uploadId, partSize: r.partSize, partCount: r.partCount,
+      verificationMode: r.verificationMode ?? "range",
+      done: {},
+    };
     await saveResume(st);
   }
+  st.verificationMode ??= "range";
 
   // 2. reconcile with B2's truth (parts that survived a crash/reload)
   const server: { partNumber: number; etag: string }[] =
@@ -42,8 +47,12 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
   for (const p of server) st.done[p.partNumber] = p.etag;
   await saveResume(st);
 
-  // 3. hash pass (content address) runs concurrently with uploads
-  const hashing = hashFile(file, (b) => onProgress({ bytes: b, total: file.size, phase: "hashing" }));
+  // 3. hash pass (content address) runs concurrently with uploads. Range mode
+  // also builds the bao outboard. Root-only mode keeps memory flat for huge
+  // files and records only the whole-file BLAKE3 root.
+  const hashing = st.verificationMode === "range"
+    ? hashFile(file, (b) => onProgress({ bytes: b, total: file.size, phase: "hashing" }))
+    : hashFileRootOnly(file, (b) => onProgress({ bytes: b, total: file.size, phase: "hashing root" }));
 
   // 4. upload only the missing parts, in parallel, capturing ETags
   const missing = range(1, st.partCount).filter((n) => !st!.done[n]);
@@ -61,12 +70,18 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
     onProgress({ bytes: Math.min(uploaded, file.size), total: file.size, phase: "uploading" });
   });
 
-  const { root, outboard } = await hashing;
+  const hashed = await hashing;
+  const root = hashed.root;
 
-  // 5. upload the bao outboard sidecar (enables verified range/resumable download)
-  const ob = await post("/uploads/outboard-url", { key: st.key });
-  const obRes = await fetch(ob.url, { method: "PUT", body: outboard });
-  if (!obRes.ok) throw new Error(`outboard upload failed: HTTP ${obRes.status}`);
+  // 5. upload the bao outboard sidecar only when the gateway selected range
+  // verification. Large root-only transfers deliberately skip this because the
+  // current outboard implementation buffers the whole sidecar in browser memory.
+  if (st.verificationMode === "range") {
+    const outboard = (hashed as { root: string; outboard: Uint8Array }).outboard;
+    const ob = await post("/uploads/outboard-url", { key: st.key });
+    const obRes = await fetch(ob.url, { method: "PUT", body: outboard });
+    if (!obRes.ok) throw new Error(`outboard upload failed: HTTP ${obRes.status}`);
+  }
 
   // 5b. sidecars — must land BEFORE complete so the pipeline's sidecar
   // discovery sees them when the object-created event fires

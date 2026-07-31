@@ -201,6 +201,41 @@ broken link — deploy the Worker first if you ever want that route.
 Everything else (auth mode, origins, ceilings, the compute pin) is already set
 in `docker-compose.prod.yml` — read it before deploying.
 
+### Large-file ceiling and verification modes
+
+Hosted production accepts masters up to **350 GiB**:
+
+```text
+MAX_UPLOAD_BYTES=375809638400
+```
+
+The current bao outboard implementation buffers the whole outboard in browser
+wasm/JS memory, so verified-range mode is capped separately:
+
+```text
+VERIFIED_RANGE_MAX_BYTES=17179869184   # 16 GiB
+ALLOW_ROOT_ONLY_UPLOADS=true
+```
+
+Transfers at or below `VERIFIED_RANGE_MAX_BYTES` keep the full bao outboard and
+offer verified-range download. Larger transfers use **root-only large-file
+mode**: the browser still computes and stores the whole-file BLAKE3 root, but it
+does not create a `.obao` sidecar and the delivery page does not offer
+verified-range download. This is explicit policy, not a silent fallback.
+
+The worker still downloads the whole master to scratch for QC/thumbnail/summary
+work. To protect the 390 GB scratch disk, production disables every worker
+service above:
+
+```text
+MAX_QC_BYTES=107374182400              # 100 GiB
+MAX_ACTIVE_UPLOADS_PER_SESSION=1
+```
+
+Anything above `MAX_QC_BYTES` is transfer-only regardless of the sender's
+checkboxes. The gateway stores that decision before the B2 event path can
+dispatch, so a restart cannot resurrect QC for an oversized transfer.
+
 ## 5 · Cloudflare Tunnel  ⚠ *owner approval*
 
 Zero Trust → Networks → Tunnels → **Create a tunnel** (Cloudflared):

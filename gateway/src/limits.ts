@@ -11,10 +11,13 @@ const num = (v: string | undefined, fallback: number): number => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
+const GiB = 1024 ** 3;
 
 /** Hard ceiling checked BEFORE a multipart upload is initiated on B2, so an
  *  oversized claim never creates remote state or reserves any spend. */
-export const MAX_UPLOAD_BYTES = num(env.MAX_UPLOAD_BYTES, 2 * 1024 ** 3); // 2 GiB default
+export const MAX_UPLOAD_BYTES = num(env.MAX_UPLOAD_BYTES, 2 * GiB); // 2 GiB default
+export const VERIFIED_RANGE_MAX_BYTES = num(env.VERIFIED_RANGE_MAX_BYTES, 16 * GiB);
+export const MAX_QC_BYTES = num(env.MAX_QC_BYTES, 100 * GiB);
 export const MAX_FILENAME_LENGTH = 200;
 export const MAX_PART_NUMBERS_PER_REQUEST = 64;
 
@@ -108,6 +111,9 @@ export function validateSidecarName(raw: unknown): Invalid | { filename: string 
 const flag = (v: string | undefined, dflt: boolean): boolean =>
   v === undefined || v === "" ? dflt : v === "true" || v === "1";
 
+export const ALLOW_ROOT_ONLY_UPLOADS = flag(env.ALLOW_ROOT_ONLY_UPLOADS, false);
+export type VerificationMode = "range" | "root";
+
 /** Master kill switch: stop new financial exposure without taking the service
  *  down. Existing recipient links keep working. */
 export const ACCEPT_UPLOADS = flag(env.WAYSTATION_ACCEPT_UPLOADS, true);
@@ -138,6 +144,21 @@ export const RECIPIENT_LINK_TTL_DAYS = Number(env.RECIPIENT_LINK_TTL_DAYS ?? 14)
  *  for post-hackathon use. */
 export const FORCE_COMPUTE = (env.WAYSTATION_FORCE_COMPUTE || "").trim();
 
+export const SERVICE_KEYS = ["qc_av", "qc_captions", "qc_ai", "thumbnail", "summarize"] as const;
+export const PIPELINE_SERVICE_KEYS = [...SERVICE_KEYS, "qc_synthetic"] as const;
+
+export function verificationModeForSize(size: number): Invalid | { verificationMode: VerificationMode } {
+  if (size <= VERIFIED_RANGE_MAX_BYTES) return { verificationMode: "range" };
+  if (ALLOW_ROOT_ONLY_UPLOADS) return { verificationMode: "root" };
+  return {
+    error:
+      `Files above ${(VERIFIED_RANGE_MAX_BYTES / GiB).toFixed(1)} GiB require root-only large-file mode, ` +
+      "which is disabled on this deployment.",
+    code: "root_only_disabled",
+    status: 413,
+  };
+}
+
 export interface PolicyResult {
   options?: Record<string, boolean | string>;
   disabled: string[];
@@ -150,11 +171,14 @@ export interface PolicyResult {
  *  options object carrying the explicit false — leaving it undefined would run
  *  the very service the operator switched off. When everything is permitted the
  *  value is passed through untouched, preserving the contract exactly. */
-export function applyServicePolicy(options?: Record<string, boolean | string>): PolicyResult {
+export function applyServicePolicy(options?: Record<string, boolean | string>, sizeBytes?: number): PolicyResult {
   const forced: Record<string, boolean | string> = {};
   if (!ALLOW_AI_QC) forced.qc_ai = false;
   if (!ALLOW_SYNTHETIC_QC) forced.qc_synthetic = false;
   if (FORCE_COMPUTE) forced.compute = FORCE_COMPUTE;
+  if (sizeBytes !== undefined && sizeBytes > MAX_QC_BYTES) {
+    for (const k of PIPELINE_SERVICE_KEYS) forced[k] = false;
+  }
   if (!Object.keys(forced).length) return { options, disabled: [] };
 
   const merged = { ...(options ?? {}), ...forced };
@@ -169,7 +193,9 @@ export function applyServicePolicy(options?: Record<string, boolean | string>): 
 
 export const policyBanner = (): string =>
   `limits: uploads=${ACCEPT_UPLOADS ? "accepting" : "PAUSED"} ` +
-  `max=${(MAX_UPLOAD_BYTES / 1024 ** 3).toFixed(1)}GiB ` +
+  `max=${(MAX_UPLOAD_BYTES / GiB).toFixed(1)}GiB ` +
+  `verifiedRangeMax=${(VERIFIED_RANGE_MAX_BYTES / GiB).toFixed(1)}GiB ` +
+  `rootOnly=${ALLOW_ROOT_ONLY_UPLOADS} maxQC=${(MAX_QC_BYTES / GiB).toFixed(1)}GiB ` +
   `active/session=${MAX_ACTIVE_UPLOADS_PER_SESSION} jobs/session=${MAX_JOBS_PER_SESSION} ` +
   `jobs/day=${MAX_DAILY_JOBS} ai=${ALLOW_AI_QC} synthetic=${ALLOW_SYNTHETIC_QC} ` +
   `referenceQC=${ALLOW_EXPENSIVE_REFERENCE_QC} ` +

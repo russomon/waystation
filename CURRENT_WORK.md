@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-28 (hosted MVP deployed and rehearsed — 14/14 production checks passed)
+Updated: 2026-07-31 (350 GiB root-only large-file mode implemented)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -28,6 +28,21 @@ switches and chat history gaps.
 - The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
+
+## Large-file mode checkpoint — 2026-07-31
+
+- Production can accept uploads up to **350 GiB** via explicit root-only
+  large-file mode.
+- Files **≤16 GiB** keep bao outboard generation and verified-range download.
+- Files **>16 GiB** skip `.obao`, store the whole-file BLAKE3 root, and the
+  delivery page discloses that verified-range download is unavailable.
+- Files **>100 GiB** force every worker/QC service off, making them
+  transfer-only to protect the 390 GiB scratch disk.
+- Sender sessions now slide while preserving the same session id, so long
+  uploads can keep signing parts without changing ownership.
+- Validated: gateway build, client build, production compose config,
+  access-proof, toggle-proof, and targeted root-only initiate/outboard-refusal
+  integration.
 
 ## Track A hosted MVP (2026-07-27)
 

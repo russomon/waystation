@@ -63,10 +63,13 @@ services:
       # Cost controls. These are the hard bounds on hackathon exposure; see the
       # runbook for the "stop new spend" procedure (set ACCEPT_UPLOADS=false).
       WAYSTATION_ACCEPT_UPLOADS: "true"
-      MAX_UPLOAD_BYTES: "536870912"          # 512 MiB
-      MAX_ACTIVE_UPLOADS_PER_SESSION: "2"
+      MAX_UPLOAD_BYTES: "375809638400"       # 350 GiB
+      VERIFIED_RANGE_MAX_BYTES: "17179869184" # 16 GiB; above this uses root-only mode
+      ALLOW_ROOT_ONLY_UPLOADS: "true"
+      MAX_QC_BYTES: "107374182400"           # 100 GiB; larger transfers skip worker services
+      MAX_ACTIVE_UPLOADS_PER_SESSION: "1"
       MAX_JOBS_PER_SESSION: "10"
-      MAX_DAILY_JOBS: "60"
+      MAX_DAILY_JOBS: "20"
       ALLOW_AI_QC: "true"
       ALLOW_SYNTHETIC_QC: "true"
       ALLOW_EXPENSIVE_REFERENCE_QC: "false"  # reference VMAF ~1x duration

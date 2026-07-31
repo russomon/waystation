@@ -5,6 +5,30 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-31 - 350 GiB now uses root-only large-file mode
+
+- Context: The production scratch disk is mounted on `/mnt/waystation-scratch`
+  with roughly 390 GiB available, and the immediate requirement is to accept
+  files up to **350 GiB now**. The current browser-side bao outboard path is
+  not a credible 350 GiB implementation: it produces a range-verification
+  sidecar in JS/WASM memory and would force upload UX, storage, and memory
+  assumptions that are false at this size.
+- Decision: Allow production uploads up to **350 GiB** by switching files above
+  **16 GiB** into explicit `root` verification mode instead of blocking the
+  upload until multipart bao outboard generation exists. Root mode computes and
+  stores a whole-file BLAKE3 root, skips `.obao` upload, refuses
+  `/uploads/outboard-url`, and labels delivery as large transfer / BLAKE3 root
+  recorded / verified-range unavailable. Files at or below 16 GiB keep the
+  existing `range` mode with `.obao` and verified-range download.
+- Cost and disk boundary: Files above **100 GiB** force every worker/QC service
+  off, including synthetic QC, thumbnailing and summarization. At that size the
+  hosted product is transfer-only; this protects the 390 GiB scratch disk from
+  sidecar, transcode, and analysis amplification.
+- Consequence: This makes 350 GiB uploads usable now, but it is not full
+  350 GiB verified-range delivery. Recipients get direct download plus the
+  recorded BLAKE3 root; full multipart/range-backed outboard generation remains
+  Phase 2.
+
 ### 2026-07-27 - Hosted MVP: the API is published only behind auth, ownership, and ceilings
 
 - Context: Track A of `WAYSTATION_HOSTED_MVP_AND_COMMERCIAL_PLATFORM.md` — serve

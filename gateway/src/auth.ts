@@ -137,12 +137,15 @@ function sign(payload: string): string {
   return b64url(createHmac("sha256", authConfig.sessionSecret!).update(payload).digest());
 }
 
-export function issueSession(): { token: string; sid: string; expiresAt: number } {
-  const sid = randomUUID();
+export function issueSession(existingSid?: string): { token: string; sid: string; expiresAt: number } {
+  const sid = existingSid ?? randomUUID();
   const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
   const payload = b64url(Buffer.from(JSON.stringify({ sid, exp: expiresAt })));
   return { token: `${payload}.${sign(payload)}`, sid, expiresAt };
 }
+
+export const refreshSession = (sid: string): { token: string; sid: string; expiresAt: number } =>
+  issueSession(sid);
 
 /** Returns the session id, or null when absent, tampered, or expired. */
 export function readSession(token: string | undefined): string | null {
@@ -192,6 +195,8 @@ export const requireSession: MiddlewareHandler = async (c: Context, next: Next) 
   if (!sid)
     return c.json({ error: "Session required or expired.", code: "session_required" }, 401);
   c.set("sessionId", sid);
+  const { token } = refreshSession(sid);
+  setSessionCookie(c, token);
   return next();
 };
 

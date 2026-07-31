@@ -29,11 +29,13 @@ import {
   MAX_ACTIVE_UPLOADS_PER_SESSION,
   MAX_DAILY_JOBS,
   MAX_JOBS_PER_SESSION,
+  SERVICE_KEYS,
   RECIPIENT_LINK_TTL_DAYS,
   validateFilename,
   validatePartNumbers,
   validateSidecarName,
   validateSize,
+  verificationModeForSize,
 } from "./limits.js";
 import * as g from "./s3.js";
 import { verifyB2Signature, parseB2Events, isOriginalMedia, transferIdFromKey } from "./events.js";
@@ -133,6 +135,8 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
   if ("error" in name) return c.json({ error: name.error, code: name.code }, name.status);
   const sized = validateSize(body.size);
   if ("error" in sized) return c.json({ error: sized.error, code: sized.code }, sized.status);
+  const verification = verificationModeForSize(sized.size);
+  if ("error" in verification) return c.json({ error: verification.error, code: verification.code }, verification.status);
 
   // contentType is INFORMATIONAL: recorded and forwarded, never trusted to
   // decide what work runs.
@@ -146,8 +150,9 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
     objectKey: out.key, uploadId: out.uploadId, transferId: out.transferId,
     sessionId: sessionIdOf(c), filename: name.filename, contentType,
     declaredSize: sized.size, partSize: out.partSize, partCount: out.partCount,
+    verificationMode: verification.verificationMode,
   });
-  return c.json(out);
+  return c.json({ ...out, verificationMode: verification.verificationMode });
 });
 
 api.post("/uploads/parts", requireSession, enforceOrigin, limiter("sign", 600, 60_000, true), async (c) => {
@@ -170,6 +175,11 @@ api.post("/uploads/outboard-url", requireSession, enforceOrigin, limiter("sign",
   const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
   const owned = ownedByKey(c, body.key);
   if ("fail" in owned) return owned.fail;
+  if (owned.row.verificationMode !== "range")
+    return c.json(
+      { error: "This upload uses root-only verification and does not accept a bao outboard.", code: "outboard_disabled" },
+      403,
+    );
   return c.json({ url: await g.presignPut(`${owned.row.objectKey}.obao`) });
 });
 
@@ -194,7 +204,6 @@ api.post("/uploads/sidecar-url", requireSession, enforceOrigin, limiter("sign", 
 // Default-ON services: a missing key means "on" (matches the worker).
 // qc_synthetic is OPT-IN (worker defaults it off), so it only counts as
 // "a service is on" when explicitly true.
-const SERVICE_KEYS = ["qc_av", "qc_captions", "qc_ai", "thumbnail", "summarize"];
 const anyServiceOn = (o?: Record<string, boolean | string>) =>
   !o || SERVICE_KEYS.some((k) => o[k] !== false) || o["qc_synthetic"] === true;
 const OPTION_KEYS = new Set([...SERVICE_KEYS, "qc_synthetic", "profile", "compute"]);
@@ -221,13 +230,14 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   // not merely hidden in the UI — the API is authoritative. Applied before the
   // record is written so the policy survives a restart and the B2 event path
   // sees the same decision.
-  const { options, disabled } = applyServicePolicy(requested);
+  const { options, disabled } = applyServicePolicy(requested, bytes);
   // Always record — the event path needs `options` even without a hash root.
   // Recipient links are bearer capabilities, so they carry an expiry from the
   // moment they exist (RECIPIENT_LINK_TTL_DAYS=0 disables expiry).
   saveTransfer(transferId, {
     key: owned.row.objectKey,
     blake3Root: b.blake3Root,
+    verificationMode: owned.row.verificationMode,
     createdAt: Date.now(),
     options,
     expiresAt: RECIPIENT_LINK_TTL_DAYS > 0
@@ -239,7 +249,7 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
     sse.publish(transferId, {
       type: "services_disabled",
       services: disabled,
-      reason: "disabled by deployment policy",
+      reason: "disabled by deployment policy or size limit",
     });
   // Billable event: the transfer itself, in GB delivered into the waystation.
   meter({ transferId, event: "transfer", units: Number((bytes / 1e9).toFixed(6)), unit: "gb", ref: owned.row.objectKey });
@@ -318,12 +328,14 @@ api.get("/transfers/:id", async (c) => {
   const sign = async (k: string, size: number) => ({ key: k, url: await g.presignGet(k), mime: mimeOf(k), size });
 
   const manifest = derivs.find((d) => d.key.endsWith("manifest.json"));
+  const transfer = getTransfer(id);
   return c.json({
     transferId: id,
     original: { ...(await sign(orig.key, orig.size)), filename: orig.key.split("/").pop() },
     // verified-range download material (present once an upload went through
     // `complete`, which records the root and the .obao sidecar lands).
-    blake3Root: getTransfer(id)?.blake3Root ?? null,
+    blake3Root: transfer?.blake3Root ?? null,
+    verificationMode: transfer?.verificationMode ?? (outboard ? "range" : "root"),
     outboardUrl: outboard ? await g.presignGet(outboard.key) : null,
     manifestUrl: manifest ? await g.presignGet(manifest.key) : null,
     derivatives: await Promise.all(

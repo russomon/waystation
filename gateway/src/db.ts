@@ -16,7 +16,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // :memory: is the default so dev and the proof suite stay clean and isolated.
 // Production must set a real path on a persistent volume — and fails closed
@@ -46,6 +46,7 @@ function migrate(): void {
         transfer_id  TEXT PRIMARY KEY,
         object_key   TEXT NOT NULL,
         blake3_root  TEXT,
+        verification_mode TEXT NOT NULL DEFAULT 'range',
         -- NULL = the sender supplied no options. By the existing contract that
         -- means all services on. A JSON string = explicit selections. Keeping
         -- these distinct is what makes transfer-only survive a restart.
@@ -66,6 +67,7 @@ function migrate(): void {
         declared_size INTEGER,
         part_size     INTEGER,
         part_count    INTEGER,
+        verification_mode TEXT NOT NULL DEFAULT 'range',
         options_json  TEXT,
         state         TEXT NOT NULL DEFAULT 'active',
         created_at    TEXT NOT NULL,
@@ -86,6 +88,14 @@ function migrate(): void {
       CREATE INDEX IF NOT EXISTS idx_meter_transfer ON meter_events(transfer_id);
     `);
   }
+  if (current < 2) {
+    const cols = (table: string) =>
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols("transfers").includes("verification_mode"))
+      db.exec(`ALTER TABLE transfers ADD COLUMN verification_mode TEXT NOT NULL DEFAULT 'range'`);
+    if (!cols("uploads").includes("verification_mode"))
+      db.exec(`ALTER TABLE uploads ADD COLUMN verification_mode TEXT NOT NULL DEFAULT 'range'`);
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 migrate();
@@ -97,6 +107,7 @@ export const dbPathLabel = DB_PATH === ":memory:" ? "in-memory (ephemeral)" : DB
 export interface TransferRow {
   key: string;
   blake3Root?: string;
+  verificationMode?: "range" | "root";
   createdAt: number;
   options?: Record<string, boolean | string>;
   expiresAt?: number;
@@ -104,11 +115,12 @@ export interface TransferRow {
 }
 
 const insertTransfer = db.prepare(`
-  INSERT INTO transfers (transfer_id, object_key, blake3_root, options_json, created_at, expires_at)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(transfer_id) DO UPDATE SET
     object_key  = excluded.object_key,
     blake3_root = COALESCE(excluded.blake3_root, transfers.blake3_root),
+    verification_mode = excluded.verification_mode,
     -- Only overwrite options when the caller actually supplied them, so a
     -- later partial write cannot erase the sender's original selections.
     options_json = COALESCE(excluded.options_json, transfers.options_json)
@@ -120,6 +132,7 @@ export function saveTransfer(transferId: string, meta: TransferRow): void {
     transferId,
     meta.key,
     meta.blake3Root ?? null,
+    meta.verificationMode ?? "range",
     meta.options === undefined ? null : JSON.stringify(meta.options),
     new Date(meta.createdAt || Date.now()).toISOString(),
     meta.expiresAt ? new Date(meta.expiresAt).toISOString() : null,
@@ -167,6 +180,7 @@ export function getTransfer(transferId: string): TransferRow | undefined {
   return {
     key: row.object_key,
     blake3Root: row.blake3_root ?? undefined,
+    verificationMode: row.verification_mode ?? "range",
     createdAt: Date.parse(row.created_at),
     // Preserved distinction: SQL NULL -> undefined (all services on).
     options: row.options_json == null ? undefined : JSON.parse(row.options_json),
@@ -191,14 +205,15 @@ export interface UploadRow {
   declaredSize?: number;
   partSize?: number;
   partCount?: number;
+  verificationMode: "range" | "root";
   state: string;
   createdAt: number;
 }
 
 const insertUpload = db.prepare(`
   INSERT INTO uploads (object_key, upload_id, transfer_id, session_id, filename,
-                       content_type, declared_size, part_size, part_count, state, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                       content_type, declared_size, part_size, part_count, verification_mode, state, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
 `);
 const selectUpload = db.prepare(`SELECT * FROM uploads WHERE object_key = ? AND upload_id = ?`);
 const updateUploadState = db.prepare(
@@ -219,6 +234,7 @@ export function createUpload(u: Omit<UploadRow, "state" | "createdAt">): void {
     u.objectKey, u.uploadId, u.transferId, u.sessionId,
     u.filename ?? null, u.contentType ?? null,
     u.declaredSize ?? null, u.partSize ?? null, u.partCount ?? null,
+    u.verificationMode,
     new Date().toISOString(),
   );
 }
@@ -247,6 +263,7 @@ function rowToUpload(r: any): UploadRow {
     contentType: r.content_type ?? undefined,
     declaredSize: r.declared_size ?? undefined,
     partSize: r.part_size ?? undefined, partCount: r.part_count ?? undefined,
+    verificationMode: r.verification_mode ?? "range",
     state: r.state, createdAt: Date.parse(r.created_at),
   };
 }

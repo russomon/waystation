@@ -7,6 +7,18 @@ history.
 
 ## Now
 
+- **Deploy the 350 GiB large-file build.** Rebuild and restart the production
+  gateway/client images from `codex/hosted-waystation-mvp`, then verify the
+  startup policy banner reports `max=350.0GiB`, `verifiedRangeMax=16.0GiB`,
+  `rootOnly=true`, and `maxQC=100.0GiB`.
+
+- **Smoke test large-file mode before a 350 GiB attempt.** First upload a
+  normal >512 MiB file to prove the hosted path still works, then upload a
+  >16 GiB file and confirm the transfer records `verificationMode:"root"`,
+  has no `.obao` sidecar upload, and the delivery page presents direct download
+  only. Do not present >16 GiB downloads as verified-range until Phase 2
+  implements multipart/range-backed outboard generation.
+
 - **Record the baseline hackathon demo.** The hosted MVP is deployed, published
   and rehearsed — **14/14 production checks passed 2026-07-28** (record in
   `docs/DEPLOY.md`). Nothing infrastructural blocks recording.

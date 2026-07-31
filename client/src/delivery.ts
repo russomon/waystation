@@ -10,6 +10,7 @@ interface Transfer {
   transferId: string;
   original: Asset & { filename: string };
   blake3Root: string | null;
+  verificationMode?: "range" | "root";
   outboardUrl: string | null;
   manifestUrl: string | null;
   derivatives: Asset[];
@@ -55,7 +56,10 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   const h2 = el(`<h2></h2>`);
   h2.textContent = t.original.filename;
   card.append(h2);
-  card.append(el(`<p class="meta">${fmt(t.original.size)} · verified transfer</p>`));
+  const verificationLabel = t.verificationMode === "root"
+    ? "large transfer · BLAKE3 root recorded · verified-range unavailable"
+    : "verified-range transfer";
+  card.append(el(`<p class="meta">${fmt(t.original.size)} · ${verificationLabel}</p>`));
   card.append(el(summary
     ? `<p class="summary"></p>`
     : `<p class="summary muted">No AI summary — the sender didn't order one for this delivery.</p>`));
@@ -229,6 +233,8 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       vbtn.disabled = false;
     };
     card.append(vbtn);
+  } else if (t.blake3Root) {
+    card.append(el(`<p class="meta">Large-file mode: this transfer has a whole-file BLAKE3 root, but the range-verification sidecar was not generated.</p>`));
   }
 
   if (manifest) {

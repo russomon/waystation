@@ -3,6 +3,7 @@
 export interface ResumeState {
   fp: string; key: string; uploadId: string;
   partSize: number; partCount: number;
+  verificationMode: "range" | "root";
   done: Record<number, string>; // partNumber -> etag
 }
 
