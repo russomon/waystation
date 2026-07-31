@@ -103,6 +103,17 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     addSection("Deterministic instruments", deterministic.map((c: any) =>
       `${glyph(c.status)} ${c.tier ? `[${c.tier}] ` : ""}${c.name}${c.detail ? " - " + c.detail : ""}`));
 
+    const triage = qc.ai_triage;
+    if (triage) {
+      const reasons = (triage.reasons ?? []).slice(0, 4).map((r: string) => `reason: ${r}`);
+      addSection("Cost-aware AI triage", [
+        `${String(triage.status ?? "unknown").toUpperCase()} · AI QC ${triage.run_ai_qc ? "run" : "skipped"} · Synthetic QC ${triage.run_synthetic_qc ? "run" : "skipped"} · Typography ${triage.run_typography ? "run" : "skipped"} · Critic ${triage.run_critic ? "run" : "skipped"}`,
+        `synthetic likelihood: ${triage.synthetic_likelihood ?? "unknown"} · visible text: ${String(triage.visible_text ?? "unknown")}`,
+        `priority timecodes: ${(triage.priority_timecodes ?? []).map((t: number) => `${Number(t).toFixed(2)}s`).join(", ") || "none"}`,
+        ...reasons,
+      ]);
+    }
+
     const passes = qc.agentic?.passes ?? {};
     const finalPass = passes.critic?.status === "complete" ? passes.critic
       : passes.informed?.status === "complete" ? passes.informed : passes.independent;

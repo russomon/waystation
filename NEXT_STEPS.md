@@ -7,6 +7,10 @@ history.
 
 ## Now
 
+- **Deploy the cost-aware AI triage build with the next production restart.**
+  After pull/rebuild, verify a new upload report shows "Cost-aware AI triage"
+  and that skipped AI work is disclosed as a skip, not as clearance.
+
 - **Deploy the 350 GiB large-file build.** Rebuild and restart the production
   gateway/client images from `codex/hosted-waystation-mvp`, then verify the
   startup policy banner reports `max=350.0GiB`, `verifiedRangeMax=16.0GiB`,

@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-31 (350 GiB root-only large-file mode implemented)
+Updated: 2026-07-31 (350 GiB root-only mode + cost-aware AI triage implemented)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -43,6 +43,23 @@ switches and chat history gaps.
 - Validated: gateway build, client build, production compose config,
   access-proof, toggle-proof, and targeted root-only initiate/outboard-refusal
   integration.
+
+## Cost-aware AI triage checkpoint — 2026-07-31
+
+- A new `qc_ai_triage` router runs after deterministic QC and before expensive
+  GMI lanes when AI QC or Synthetic QC is requested.
+- Triage receives metadata, deterministic check summaries, caption excerpt, and
+  a few sampled frames. It may skip or narrow optional model spend for AI QC,
+  Synthetic QC, typography, and critic.
+- Triage is **not a verdict engine**: it never marks media clean or failed, and
+  every skip is disclosed in `qc_report.json` and the delivery page.
+- A source `.genblaze.json` manifest prevents triage from skipping requested
+  Synthetic QC; the recorded generation intent remains the stronger routing
+  signal.
+- If triage fails, returns invalid JSON, or GMI is unavailable, Waystation falls
+  back to the sender-requested AI behavior.
+- Validated: `scripts/triage-proof.sh`, `scripts/agentic-qc-proof.sh`, client
+  production build.
 
 ## Track A hosted MVP (2026-07-27)
 

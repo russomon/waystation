@@ -5,6 +5,31 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-07-31 - Cost-aware AI triage routes spend, never verdicts
+
+- Context: Running every GMI-assisted lane on every upload is expensive and
+  redundant. The user asked for progressive AI QC: cheap early analysis should
+  decide which deeper model passes are worth spending on, and later prompts
+  should inherit useful context instead of starting cold.
+- Decision: Add `qc_ai_triage` as a lightweight GMI router after deterministic
+  QC and sidecar discovery, before full AI QC and Synthetic QC. It receives
+  metadata, deterministic check summaries, caption excerpt, source-manifest
+  presence, and a small frame sample. It returns strict JSON decisions for
+  `run_ai_qc`, `run_synthetic_qc`, `run_typography`, `run_critic`, priority
+  timecodes, visible-text signal, synthetic likelihood, and short reasons.
+- Guardrails: Triage is not a verdict engine. It cannot clear, fail, suppress,
+  or rewrite deterministic QC. It may only skip or narrow optional model spend,
+  and every skip is recorded in `qc_report.json` and rendered on the recipient
+  page. Invalid JSON, GMI failure, or no triage result falls back to the
+  sender-requested behavior.
+- Synthetic rule: a source `.genblaze.json` manifest is stronger evidence than
+  triage, so requested Synthetic QC still runs when a generation manifest is
+  present even if triage says synthetic likelihood is low.
+- Consequence: The staged reliability architecture remains intact. Independent
+  sweep, adaptive evidence, critic, asset blueprint, continuity ledger, and
+  typography still exist as separate auditable passes, but the worker can avoid
+  obviously low-value spend before invoking them.
+
 ### 2026-07-31 - 350 GiB now uses root-only large-file mode
 
 - Context: The production scratch disk is mounted on `/mnt/waystation-scratch`
