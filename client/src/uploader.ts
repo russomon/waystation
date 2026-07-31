@@ -39,7 +39,29 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
     };
     await saveResume(st);
   }
-  st.verificationMode ??= "range";
+  // Legacy resume records (written before verification modes existed) carry no
+  // mode. Do NOT guess a default: the gateway is authoritative and BOTH guesses
+  // are wrong in one direction. "range" rebuilds a multi-GiB bao outboard for a
+  // huge file — that wedged a real 27 GiB upload, because finalize() is a
+  // synchronous wasm allocation that blocks the main thread and stalls the parts
+  // still in flight. "root" silently skips the sidecar for a small file, leaving
+  // a transfer the gateway has recorded as range-verified but which has no
+  // .obao, so the delivery page offers a verified download it cannot serve.
+  //
+  // Ask instead. /uploads/outboard-url answers 403 outboard_disabled when the
+  // gateway selected root-only, so a single call settles it against the server's
+  // own record. Only that specific refusal means "root"; anything else (404
+  // ownership, 401 expiry, network) must surface rather than be misread.
+  if (!st.verificationMode) {
+    try {
+      await post("/uploads/outboard-url", { key: st.key });
+      st.verificationMode = "range";
+    } catch (e) {
+      if ((e as { code?: string })?.code !== "outboard_disabled") throw e;
+      st.verificationMode = "root";
+    }
+    await saveResume(st);
+  }
 
   // 2. reconcile with B2's truth (parts that survived a crash/reload)
   const server: { partNumber: number; etag: string }[] =
