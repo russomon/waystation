@@ -66,6 +66,16 @@
       .qc-section { margin: .9rem 0 0; }
       .qc-section h3 { font-size: 13px; margin: 0 0 .25rem; }
       .qc-lines { white-space: pre-wrap; word-break: break-word; margin: 0; }
+      /* Download progress. A 26 GB transfer runs for tens of minutes, so the
+         page has to say how far along it is and roughly how long is left —
+         a spinner would be indistinguishable from a hang. */
+      .dlprog { margin-top: .7rem; }
+      .dlbar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+      .dlbar span { display: block; height: 100%; width: 0; background: var(--blue); transition: width .2s linear; }
+      .dlrow { display: flex; justify-content: space-between; gap: 1rem; margin-top: .35rem;
+               font: 12.5px/1.5 ui-monospace, monospace; color: var(--mut); }
+      .dlrow:first-of-type { color: var(--ink); }
+
       .verify { margin-top: .6rem; font: 13px/1.7 ui-monospace, monospace; }
       .verify .ok { color: #047857; }
       .verify .bad { color: #b91c1c; }

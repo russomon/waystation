@@ -24,6 +24,19 @@ const el = (html: string): HTMLElement => {
 const fmt = (n: number) =>
   n >= 1e9 ? (n / 1e9).toFixed(2) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : (n / 1e3).toFixed(0) + " KB";
 
+/** Duration as m:ss, or h:mm:ss past an hour. A 26 GB download runs for tens of
+ *  minutes, so "1847s" is not a useful thing to show a person. */
+const hms = (secs: number): string => {
+  if (!Number.isFinite(secs) || secs < 0) return "—";
+  const s = Math.round(secs);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`
+    : `${m}:${String(r).padStart(2, "0")}`;
+};
+
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   const h = await crypto.subtle.digest("SHA-256", buf);
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -238,6 +251,17 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   const canPick = typeof (window as any).showSaveFilePicker === "function";
   if (canPick) {
     const dl = el(`<button class="btn">Download original…</button>`) as HTMLButtonElement;
+    const prog = el(`<div class="dlprog" hidden>
+      <div class="dlbar"><span></span></div>
+      <div class="dlrow"><span class="dlbytes"></span><span class="dlrate"></span></div>
+      <div class="dlrow"><span class="dltime"></span><span class="dlpct"></span></div>
+    </div>`);
+    const bar = prog.querySelector(".dlbar span") as HTMLElement;
+    const elBytes = prog.querySelector(".dlbytes") as HTMLElement;
+    const elRate = prog.querySelector(".dlrate") as HTMLElement;
+    const elTime = prog.querySelector(".dltime") as HTMLElement;
+    const elPct = prog.querySelector(".dlpct") as HTMLElement;
+
     dl.onclick = async () => {
       let handle: any;
       try {
@@ -248,31 +272,65 @@ export async function renderDelivery(id: string, root: HTMLElement) {
         return; // user cancelled the dialog — not an error
       }
       dl.disabled = true;
+      dl.textContent = "Downloading…";
+      prog.hidden = false;
       let writable: any;
+      const total = t.original.size;
+      const started = performance.now();
+      let done = 0;
+      // Rolling window over the last few seconds. An ETA computed from the
+      // average-since-start reacts far too slowly to a rate change; one
+      // computed from the last chunk is unreadably jittery. A short window is
+      // the compromise that makes "remaining" worth showing at all.
+      const window_: { t: number; b: number }[] = [{ t: started, b: 0 }];
+      let painted = 0;
+
+      const paint = (force = false) => {
+        const now = performance.now();
+        if (!force && now - painted < 250) return;   // ≤4 fps; repaint is not free
+        painted = now;
+        while (window_.length > 1 && now - window_[0].t > 5000) window_.shift();
+        const span = (now - window_[0].t) / 1000;
+        const rate = span > 0.5 ? (done - window_[0].b) / span : 0;   // bytes/s
+        const pct = total ? done / total : 0;
+        bar.style.width = `${(pct * 100).toFixed(1)}%`;
+        elBytes.textContent = `${fmt(done)} of ${fmt(total)} · ${fmt(Math.max(0, total - done))} left`;
+        elRate.textContent = rate > 0 ? `${fmt(rate)}/s` : "";
+        elPct.textContent = `${(pct * 100).toFixed(1)}%`;
+        const elapsed = (now - started) / 1000;
+        const remain = rate > 0 ? (total - done) / rate : NaN;
+        elTime.textContent =
+          `elapsed ${hms(elapsed)}` + (Number.isFinite(remain) ? ` · remaining ~${hms(remain)}` : "");
+      };
+
       try {
         const res = await fetch(t.original.url);
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
         writable = await handle.createWritable();
-        const total = t.original.size;
-        let done = 0;
         const reader = res.body.getReader();
+        paint(true);
         for (;;) {
           const { value, done: end } = await reader.read();
           if (end) break;
           await writable.write(value);            // awaited → backpressure
           done += value.byteLength;
-          dl.textContent = `saving ${Math.floor((done / total) * 100)}%`;
+          window_.push({ t: performance.now(), b: done });
+          paint();
         }
         await writable.close();
+        paint(true);
         dl.textContent = "saved ✓";
+        elTime.textContent = `done in ${hms((performance.now() - started) / 1000)}`;
+        elRate.textContent = "";
       } catch (e) {
         // Abort so a partial file is not left looking complete.
         try { await writable?.abort(); } catch { /* nothing useful to do */ }
         dl.textContent = "✗ " + (e as Error).message;
+        elTime.textContent = "download failed — the partial file was discarded";
       }
       dl.disabled = false;
     };
-    card.append(dl);
+    card.append(dl, prog);
   } else {
     card.append(el(`<a class="btn" href="${t.original.url}" download="${t.original.filename}">Download original</a>`));
   }
