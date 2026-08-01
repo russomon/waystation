@@ -22,15 +22,51 @@ switches and chat history gaps.
   Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01`; transfer
   `d292c10b…`; end-to-end ~3 m 36 s. Local proof
   suite green at that commit (19 discovered, 19 passed).
-- **Deployed now:** gateway `7291c80`, portal pinned `ab15668`. The client is
-  intentionally one commit ahead; the delta is client-only and every gateway
-  path it calls was verified present at `7291c80`.
+- **Deployed now:** gateway `7291c80`, portal pinned `ab15668`, branch head
+  `ecb0ee2`. See "Deployment reconciliation" below — production and branch head
+  are **identical for every file that runs**; the only gap is a stale worker
+  image.
 - Immediate next action: **record the baseline demo**, then decide whether to
   build the narrow synthetic-origin feature before submission (design preserved
   in `docs/SYNTHETIC_ORIGIN_PLAN.md`; deliberately NOT implemented).
 - The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
+
+## Deployment reconciliation — 2026-08-01
+
+Branch head is 2 commits ahead of the deployed gateway commit, which **looks**
+like drift and is not. Verified by content, not by commit count:
+
+| Comparison | Result |
+|---|---|
+| `gateway/` `7291c80..ecb0ee2` | **0 files changed** |
+| `pipeline/` `7291c80..ecb0ee2` | **0 files changed** |
+| `crates/` `7291c80..ecb0ee2` | **0 files changed** |
+| `client/` `ab15668..ecb0ee2` | **0 files changed** (and `ab15668` is what is published) |
+
+So the two commits ahead are: one client commit that **is** published, and one
+docs-only commit. **Production matches branch head exactly for every file that
+runs.** Nothing to reconcile in git.
+
+**The one real gap is a stale worker IMAGE, not a git divergence.** `e89da62`
+(cost-aware AI triage) is an **ancestor** of `7291c80`, so the triage source is
+already on the VPS — but the worker container was never rebuilt after it landed:
+
+| | |
+|---|---|
+| gateway image built | 2026-08-01T02:28Z — current |
+| **worker image built** | **2026-07-28T03:25Z — 4 days stale** |
+| `qc_ai_triage` in **running** worker | **0** occurrences |
+| `qc_ai_triage` in source at deployed `HEAD` | 3 occurrences |
+
+A container runs the image it was built from, so this cannot be reconciled
+without `docker compose build worker && up -d worker`. Procedure, verification
+and the reasons for holding it back are in `NEXT_STEPS.md`.
+
+Useful distinction to carry forward: **"the VPS is at commit X" says nothing
+about what is running.** Check image build times and grep the running container,
+as above, rather than trusting `git rev-parse` on the host.
 
 ## Large-file mode PROVEN on real media — 2026-08-01
 

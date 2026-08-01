@@ -17,12 +17,43 @@ history.
   verified-download control. Download averaged 232 Mb/s in 16:09. Four defects
   found and fixed doing it — see `CURRENT_WORK.md`.
 
-- **Deploy the cost-aware AI triage build.** Still NOT deployed: the gateway
-  runs `7291c80`, and triage landed in `e89da62` on the branch. Rebuild the
-  **worker** (triage is a pipeline change), then verify a new upload report
-  shows "Cost-aware AI triage" and that skipped AI work is disclosed as a skip,
-  not as clearance. Deliberately held back during the large-file incident to
-  avoid changing worker behaviour mid-diagnosis.
+- **Reconcile the stale worker IMAGE (cost-aware AI triage).**
+
+  > Read this framing before acting — an earlier note in this file said triage
+  > "landed on the branch and is not deployed", which was **wrong**. `e89da62`
+  > is an **ancestor** of the deployed commit `7291c80`, so the triage **source
+  > is already on the VPS**. The gap is *source vs running binary*, not
+  > *branch vs production*.
+
+  Measured 2026-08-01:
+
+  | | |
+  |---|---|
+  | VPS source `HEAD` | `7291c80`, clean |
+  | gateway image built | 2026-08-01T02:28Z — current |
+  | **worker image built** | **2026-07-28T03:25Z — 4 days stale** |
+  | `qc_ai_triage` in **running** worker | **0** occurrences |
+  | `qc_ai_triage` in source at `HEAD` | 3 occurrences |
+
+  The worker container was never rebuilt after triage landed, so it is running
+  pre-triage code. Reconciling requires a rebuild — a container cannot pick up
+  source changes without one:
+
+  ```bash
+  docker compose -f docker-compose.prod.yml build worker
+  docker compose -f docker-compose.prod.yml up -d worker
+  ```
+
+  Then verify: `qc_ai_triage` present in the running worker, a new upload's
+  report shows "Cost-aware AI triage", and any skipped AI work is disclosed as
+  a **skip**, never as clearance.
+
+  **Held back deliberately.** The current worker runs the exact code that passed
+  the 14-check rehearsal on 2026-07-28. Triage is a cost optimisation, not a
+  fix, and rebuilding changes AI spend behaviour unrehearsed in production two
+  days before the deadline. Leaving it stale until the baseline demo is recorded
+  is a legitimate choice; if you leave it, record that as intentional rather
+  than letting it look like drift.
 
 - **Record the baseline hackathon demo.** The hosted MVP is deployed, published
   and rehearsed — **14/14 production checks passed 2026-07-28** (record in

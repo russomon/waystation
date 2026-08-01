@@ -5,6 +5,25 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-01 - "The VPS is at commit X" does not mean commit X is running
+
+- Context: branch head sat 2 commits ahead of the deployed gateway commit and
+  was reported as production drift. Comparing content rather than counting
+  commits showed `gateway/`, `pipeline/` and `crates/` were **identical**, and
+  the published client matched branch head exactly — the two commits were one
+  already-published client change and one docs change. There was no drift.
+- The real gap was the opposite of what the commit count suggested: the triage
+  commit `e89da62` is an **ancestor** of the deployed commit, so its source was
+  already on the VPS, but the worker **container** had not been rebuilt since
+  2026-07-28 and was running pre-triage code. Confirmed by grepping the running
+  container (`qc_ai_triage`: 0 occurrences) against the source (3).
+- Decision: deployment state is established by **image build time and container
+  contents**, never by `git rev-parse` on the host. A checkout updates source;
+  only a rebuild updates what runs. Record both when reporting what is deployed.
+- Corollary: rebuild services individually and say which. Rebuilding only the
+  gateway is a legitimate choice, but it leaves the worker on older code and
+  that must be stated rather than assumed away.
+
 ### 2026-08-01 - Client and gateway ship in lockstep; never guess a server-owned value
 
 - Context: A real 27 GiB upload wedged at 99.97%. The gateway had been rebuilt
