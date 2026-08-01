@@ -90,8 +90,32 @@ export const presignPut = (key: string) =>
 // Presigned direct GET (works in dev/MinIO and against B2). Used for the
 // delivery page's small assets; the big original can switch to the CDN URL
 // below in production.
-export const presignGet = (key: string, ttlSec = 3600) =>
-  getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: ttlSec });
+//
+// `downloadAs` forces a download instead of inline rendering. This matters more
+// than it looks: the delivery page's "Download original" is an <a download>
+// pointing at THIS url, and the `download` attribute is specified to apply only
+// to same-origin URLs — B2 is a different origin, so browsers silently ignore
+// it and simply navigate. B2 then answers `Content-Type: video/quicktime` with
+// no disposition, and the browser opens its media player and starts buffering
+// the object instead of saving it. On a 26 GiB master that reads as a hung
+// download eating memory.
+//
+// ResponseContentDisposition is a standard presigned-GET response override, so
+// the header is signed into the URL and B2 returns it verbatim.
+export const presignGet = (key: string, ttlSec = 3600, downloadAs?: string) =>
+  getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+      // Quote the filename and strip quotes/newlines: the value lands in a
+      // response header, so an unescaped one would break parsing.
+      ...(downloadAs
+        ? { ResponseContentDisposition: `attachment; filename="${downloadAs.replace(/["\r\n]/g, "_")}"` }
+        : {}),
+    }),
+    { expiresIn: ttlSec },
+  );
 
 export async function listKeys(prefix: string): Promise<{ key: string; size: number }[]> {
   const out: { key: string; size: number }[] = [];

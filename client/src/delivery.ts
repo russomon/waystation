@@ -220,7 +220,62 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     card.append(badge);
   }
 
-  card.append(el(`<a class="btn" href="${t.original.url}" download="${t.original.filename}">Download original</a>`));
+  // ── Download original ────────────────────────────────────────────────────
+  // The plain <a download> is the FALLBACK, not the primary path. Two reasons
+  // it is not enough on its own:
+  //   * `download` is specified to apply only to same-origin URLs. B2 is a
+  //     different origin, so browsers ignore it and just navigate — and a
+  //     `video/*` content type then opens the media player and buffers the
+  //     object instead of saving it. The gateway now signs the original with a
+  //     Content-Disposition override, which is what makes this fallback save.
+  //   * Even then the browser picks the destination; it only prompts if the
+  //     user has "ask where to save each file" enabled.
+  //
+  // Where the File System Access API exists we can do better: ask the user
+  // where to put it, then pipe the response body straight into that file.
+  // Nothing is buffered — bytes go network → disk, so a 26 GiB master costs
+  // no more memory than a small one.
+  const canPick = typeof (window as any).showSaveFilePicker === "function";
+  if (canPick) {
+    const dl = el(`<button class="btn">Download original…</button>`) as HTMLButtonElement;
+    dl.onclick = async () => {
+      let handle: any;
+      try {
+        // Must be called directly from the click — a picker opened after an
+        // await has lost the user activation and the browser refuses it.
+        handle = await (window as any).showSaveFilePicker({ suggestedName: t.original.filename });
+      } catch {
+        return; // user cancelled the dialog — not an error
+      }
+      dl.disabled = true;
+      let writable: any;
+      try {
+        const res = await fetch(t.original.url);
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+        writable = await handle.createWritable();
+        const total = t.original.size;
+        let done = 0;
+        const reader = res.body.getReader();
+        for (;;) {
+          const { value, done: end } = await reader.read();
+          if (end) break;
+          await writable.write(value);            // awaited → backpressure
+          done += value.byteLength;
+          dl.textContent = `saving ${Math.floor((done / total) * 100)}%`;
+        }
+        await writable.close();
+        dl.textContent = "saved ✓";
+      } catch (e) {
+        // Abort so a partial file is not left looking complete.
+        try { await writable?.abort(); } catch { /* nothing useful to do */ }
+        dl.textContent = "✗ " + (e as Error).message;
+      }
+      dl.disabled = false;
+    };
+    card.append(dl);
+  } else {
+    card.append(el(`<a class="btn" href="${t.original.url}" download="${t.original.filename}">Download original</a>`));
+  }
 
   // Verified download — pulls the object in ranges and checks each against the
   // bao outboard before accepting it. Only offered when the outboard exists.

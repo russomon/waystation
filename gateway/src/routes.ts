@@ -331,7 +331,15 @@ api.get("/transfers/:id", async (c) => {
   const transfer = getTransfer(id);
   return c.json({
     transferId: id,
-    original: { ...(await sign(orig.key, orig.size)), filename: orig.key.split("/").pop() },
+    // The original is signed with a Content-Disposition override so browsers
+    // SAVE it rather than opening it in the media player. Derivatives keep
+    // inline disposition — the page renders the thumbnail and fetches the QC
+    // JSON, neither of which should download.
+    original: {
+      ...(await sign(orig.key, orig.size)),
+      url: await g.presignGet(orig.key, 3600, orig.key.split("/").pop()),
+      filename: orig.key.split("/").pop(),
+    },
     // verified-range download material (present once an upload went through
     // `complete`, which records the root and the .obao sidecar lands).
     blake3Root: transfer?.blake3Root ?? null,
