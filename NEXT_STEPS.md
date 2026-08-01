@@ -7,21 +7,22 @@ history.
 
 ## Now
 
-- **Deploy the cost-aware AI triage build with the next production restart.**
-  After pull/rebuild, verify a new upload report shows "Cost-aware AI triage"
-  and that skipped AI work is disclosed as a skip, not as clearance.
+- ~~Deploy the 350 GiB large-file build~~ — **DONE 2026-08-01.** Gateway is at
+  `7291c80`, banner reports `max=350.0GiB verifiedRangeMax=16.0GiB
+  rootOnly=true maxQC=100.0GiB`.
 
-- **Deploy the 350 GiB large-file build.** Rebuild and restart the production
-  gateway/client images from `codex/hosted-waystation-mvp`, then verify the
-  startup policy banner reports `max=350.0GiB`, `verifiedRangeMax=16.0GiB`,
-  `rootOnly=true`, and `maxQC=100.0GiB`.
+- ~~Smoke test large-file mode~~ — **DONE 2026-08-01, on real media.** A
+  26.12 GiB `.mov` went through transfer-only end to end: `verificationMode:"root"`,
+  no `.obao`, delivery page disclosed the missing sidecar and withheld the
+  verified-download control. Download averaged 232 Mb/s in 16:09. Four defects
+  found and fixed doing it — see `CURRENT_WORK.md`.
 
-- **Smoke test large-file mode before a 350 GiB attempt.** First upload a
-  normal >512 MiB file to prove the hosted path still works, then upload a
-  >16 GiB file and confirm the transfer records `verificationMode:"root"`,
-  has no `.obao` sidecar upload, and the delivery page presents direct download
-  only. Do not present >16 GiB downloads as verified-range until Phase 2
-  implements multipart/range-backed outboard generation.
+- **Deploy the cost-aware AI triage build.** Still NOT deployed: the gateway
+  runs `7291c80`, and triage landed in `e89da62` on the branch. Rebuild the
+  **worker** (triage is a pipeline change), then verify a new upload report
+  shows "Cost-aware AI triage" and that skipped AI work is disclosed as a skip,
+  not as clearance. Deliberately held back during the large-file incident to
+  avoid changing worker behaviour mid-diagnosis.
 
 - **Record the baseline hackathon demo.** The hosted MVP is deployed, published
   and rehearsed — **14/14 production checks passed 2026-07-28** (record in
@@ -36,6 +37,28 @@ history.
   continuity; audio plus a caption sidecar where practical; enough intentional
   complexity to exercise synthetic QC, prompt adherence, evidence sampling and
   the Passport. Do not let a weak test fixture become the public demonstration.
+
+- **After the deadline: parallel ranged downloads.** Measured 2026-08-01 —
+  B2 throttles per-connection, not per-client. A single stream achieved
+  232 Mb/s; six parallel streams measured **3.3× aggregate**. The uploader
+  already uses `CONCURRENCY = 6`; downloads never got the same treatment.
+  Ranges can complete out of order because the File System Access writable
+  supports positional writes (`writable.write({ type: "write", position, data })`).
+  Projection puts a 28 GB download near the 800 Mb/s line limit — roughly
+  5 minutes instead of 16. **Re-measure on an idle link first**: the 3.3× ratio
+  was taken while a real download was competing for the same pipe, so the
+  absolute numbers are depressed and the right concurrency may not be 6.
+
+- **After the deadline: stream verified downloads to disk.** `downloadVerified`
+  still accumulates every verified range into an in-memory `Blob`
+  (`client/src/downloader.ts`). It is currently harmless only because it is
+  hidden for root-only transfers — but it is still reachable, and ungated, for
+  range-mode transfers up to 16 GiB, where a tab will die around 1–2 GiB. Reuse
+  the `DownloadSink` shape now proven in the "Download original…" path. The
+  same fix is needed for "Verify provenance", which does one
+  `arrayBuffer()` over the whole original; note WebCrypto has **no incremental
+  digest**, so that needs a streaming SHA-256 added to
+  `crates/blake3-outboard` (mirror the existing `Blake3Hasher`).
 
 - **Then decide on synthetic-origin QC.** Full design preserved in
   `docs/SYNTHETIC_ORIGIN_PLAN.md` — deliberately NOT implemented, so it cannot

@@ -5,6 +5,70 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-01 - Client and gateway ship in lockstep; never guess a server-owned value
+
+- Context: A real 27 GiB upload wedged at 99.97%. The gateway had been rebuilt
+  with large-file mode while the portal still served a client from three days
+  earlier that contained no `verificationMode` handling at all. The gateway
+  correctly answered `"root"`; the old client could not read the field, fell
+  back to `"range"`, and built a ~1.7 GiB bao outboard inside wasm. `finalize()`
+  is a synchronous allocation that blocks the main thread, so it also stalled
+  the parts still in flight — which is why it froze just short of complete
+  rather than at a random point.
+- Decision 1: **A gateway change that alters the client contract is not
+  deployed until the client is republished.** Where the pinned client is
+  deliberately ahead of the gateway, verify every gateway path the bundle calls
+  exists at the deployed commit before publishing, and record that in the commit
+  message.
+- Decision 2: **Never default a value the server owns.** `verificationMode` is
+  decided by `verificationModeForSize()`, stored in `uploads.verification_mode`,
+  enforced by `/uploads/outboard-url`, and carried onto the transfer at
+  `complete`. A client-side default was wrong in BOTH directions — `"range"`
+  wedges the tab on a huge file, `"root"` leaves a transfer the gateway recorded
+  as range-verified with no `.obao` behind it. The client now asks; only the
+  specific `403 outboard_disabled` means root, and any other error is rethrown
+  rather than misread as a mode.
+- Operational corollary: **a republished client does not reach an open tab.**
+  Anyone retrying after a publish must reload first, and for a long operation
+  the client version should be confirmed before committing hours to it. Two
+  attempts were burned on a stale tab because this was not said explicitly.
+
+### 2026-08-01 - Delivery must force a download and show real progress
+
+- Context: "Download original" on a 26 GiB `.mov` opened the browser's media
+  player and buffered the object instead of saving it.
+- Cause: `<a download>` is specified to apply only to same-origin URLs. B2 is a
+  different origin, so browsers ignore the attribute and simply navigate; B2
+  then answers `Content-Type: video/quicktime` with no disposition and the
+  browser renders it inline. This affected ANY video transfer at any size, and
+  survived the 14-check rehearsal because that only ever used a 765 KB fixture
+  and never clicked plain "Download original" on a video.
+- Decision: the gateway signs `ResponseContentDisposition: attachment` into the
+  **original's** presigned URL. Derivatives keep inline disposition — the page
+  renders the thumbnail and fetches the QC JSON, and neither should download.
+- Decision: where the File System Access API exists, the page asks where to save
+  and pipes `response.body` straight into the file; writes are awaited so
+  backpressure is natural and nothing is buffered. Elsewhere it falls back to
+  the anchor, which now saves correctly because of the gateway change.
+- Decision: a transfer that runs for tens of minutes must show bytes, rate and
+  ETA, not a spinner or a bare percentage. Finder's size column is NOT a
+  progress indicator here — the FSA writable commits through a swap file, so the
+  visible size barely moves while the transfer progresses. Rate is a rolling
+  5-second window: since-start reacts too slowly to be useful, per-chunk is too
+  jittery to read.
+
+### 2026-08-01 - B2 throttles per connection; parallelism is the lever
+
+- Context: a 26.12 GiB download averaged 232 Mb/s on an 800 Mb/s line.
+- Measured: one stream 232 Mb/s; six parallel streams **3.3× aggregate** from the
+  same machine at the same moment. The uploader already exploits this with
+  `CONCURRENCY = 6`; the download path is single-stream and never did.
+- Decision: parallel ranged download is worth roughly 3× and is DEFERRED until
+  after the 2026-08-03 deadline by explicit owner decision. Re-measure on an
+  idle link before building — the ratio above was taken while a real download
+  competed for the same pipe, so the absolutes are depressed and 6 may not be
+  the right concurrency.
+
 ### 2026-07-31 - Cost-aware AI triage routes spend, never verdicts
 
 - Context: Running every GMI-assisted lane on every upload is expensive and

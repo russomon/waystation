@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-07-31 (350 GiB root-only mode + cost-aware AI triage implemented)
+Updated: 2026-08-01 (large-file mode proven end to end on a real 28 GB transfer)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -22,12 +22,59 @@ switches and chat history gaps.
   Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01`; transfer
   `d292c10b…`; end-to-end ~3 m 36 s. Local proof
   suite green at that commit (19 discovered, 19 passed).
+- **Deployed now:** gateway `7291c80`, portal pinned `ab15668`. The client is
+  intentionally one commit ahead; the delta is client-only and every gateway
+  path it calls was verified present at `7291c80`.
 - Immediate next action: **record the baseline demo**, then decide whether to
   build the narrow synthetic-origin feature before submission (design preserved
   in `docs/SYNTHETIC_ORIGIN_PLAN.md`; deliberately NOT implemented).
 - The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
+
+## Large-file mode PROVEN on real media — 2026-08-01
+
+First real large transfer end to end: **`CrossroadsFestival_Doyle_Bramhall_WM.mov`,
+28,048,912,110 bytes (26.12 GiB), transfer-only, root-only mode.** Uploaded,
+delivered and downloaded successfully. Download averaged **232 Mb/s
+(28.95 MB/s) in 16:09**.
+
+The delivery page correctly disclosed *"whole-file BLAKE3 root, but the
+range-verification sidecar was not generated"* and correctly withheld the
+verified-download control. That is the verification-mode design working as
+intended on real media for the first time.
+
+Four defects were found and fixed by driving it for real. None had been caught
+by the 14-check rehearsal, because that only used a 765 KB fixture and never
+exercised plain "Download original" on a video:
+
+1. **Version skew wedged a 27 GiB upload.** The gateway had been rebuilt with
+   large-file mode while the portal still served `578d37c`, which contains no
+   `verificationMode` handling. The gateway answered `"root"`; the old client
+   could not read the field, fell back to `"range"`, and built a ~1.7 GiB bao
+   outboard in wasm. `finalize()` is a synchronous allocation that blocks the
+   main thread, which also stalled the last part in flight — hence a freeze at
+   28.97 of 28.98 GB rather than at a random point. Fixed by republishing.
+2. **Legacy resume records guessed the verification mode.** Both defaults are
+   wrong: `"range"` rebuilds a multi-GiB outboard and wedges the tab; `"root"`
+   skips the sidecar for a small file and leaves a transfer the gateway recorded
+   as range-verified with no `.obao` behind it. The client now ASKS —
+   `/uploads/outboard-url` already answers `403 outboard_disabled` for root-only
+   uploads, which settles it against the server's own record (`db78bfc`).
+3. **"Download original" opened the media player instead of saving.** `<a
+   download>` is same-origin-only and B2 is cross-origin, so the attribute was
+   ignored and a `video/quicktime` response rendered inline — a 26 GiB file
+   buffering into a browser tab. The gateway now signs
+   `Content-Disposition: attachment` into the original's presigned URL;
+   derivatives deliberately keep inline disposition (`7291c80`).
+4. **No download progress.** Fixed with bytes/rate/ETA and a rolling 5-second
+   window (`ab15668`).
+
+**Measured, for the parallel-download decision later:** B2 throttles
+per-connection, not per-client. One stream achieved 232 Mb/s; six parallel
+streams measured 3.3× aggregate. Projecting that forward puts a 28 GB download
+near the 800 Mb/s line limit — roughly 5 minutes instead of 16. Deferred until
+after the deadline by explicit decision.
 
 ## Large-file mode checkpoint — 2026-07-31
 
