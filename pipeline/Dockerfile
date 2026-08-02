@@ -1,5 +1,6 @@
 # Waystation pipeline worker — the waystation's compute, in one image:
-#   python 3.13 + ffmpeg/ffprobe + MediaInfo (deterministic QC reporting)
+#   python 3.13 + ffmpeg/ffprobe + MediaInfo + MediaConch + QCTools qcli
+#   (headless deterministic QC reporting and analytics plumbing)
 #   + a JRE + Netflix Photon 5.0.1 with its full dependency tree (Rule 4)
 #   + the Genblaze SDK (provenance manifests)
 # Stateless by design: everything durable lands back in B2. Deploy anywhere.
@@ -13,11 +14,56 @@ WORKDIR /build
 COPY photon-pom.xml pom.xml
 RUN mvn -q dependency:copy-dependencies -DoutputDirectory=/opt/photon -DincludeScope=runtime
 
-# ── stage 2: the worker ──
-FROM python:3.13-slim
+# ── stage 2: build only QCTools' headless qcli target ──
+# Debian does not package qcli. Build an exact upstream revision against the
+# same Debian/FFmpeg generation as the worker, then copy only the CLI binary.
+FROM python:3.13-slim AS qcli-build
+ARG QCTOOLS_VERSION=1.4+29bc627
+ARG QCTOOLS_COMMIT=29bc627d7a3b4048d3e2ac250ca20adb1ba39cd2
+ENV SOURCE_DATE_EPOCH=1783329476
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg mediainfo default-jre-headless \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates git build-essential qt5-qmake qtbase5-dev \
+      qtmultimedia5-dev pkg-config libavcodec-dev libavdevice-dev \
+      libavfilter-dev libavformat-dev libavutil-dev libpostproc-dev \
+      libswresample-dev libswscale-dev zlib1g-dev libbz2-dev \
+ && git init /src/qctools \
+ && git -C /src/qctools remote add origin https://github.com/bavc/qctools.git \
+ && git -C /src/qctools fetch --depth 1 origin "$QCTOOLS_COMMIT" \
+ && git -C /src/qctools checkout --detach FETCH_HEAD \
+ && test "$(git -C /src/qctools rev-parse HEAD)" = "$QCTOOLS_COMMIT" \
+ && git -C /src/qctools submodule update --init --depth 1 \
+ && printf '%s\n' \
+      '#ifndef VERSION_H' \
+      '#define VERSION_H' \
+      "const char* VERSION = \"$QCTOOLS_VERSION ($QCTOOLS_COMMIT)\";" \
+      '#endif // VERSION_H' \
+      > /src/qctools/Source/Cli/version.h \
+ && mkdir /src/qctools/Project/QtCreator/build \
+ && cd /src/qctools/Project/QtCreator/build \
+ && USE_BREW=true qmake .. DEFINES+=QT_AVPLAYER_MULTIMEDIA \
+ && make -j2 sub-qctools-cli \
+ && install -Dm755 qctools-cli/qcli /out/qcli
+
+# ── stage 3: the worker ──
+FROM python:3.13-slim
+ARG QCTOOLS_VERSION=1.4+29bc627
+ARG QCTOOLS_COMMIT=29bc627d7a3b4048d3e2ac250ca20adb1ba39cd2
+ARG MEDIACONCH_PACKAGE_VERSION=25.04-2
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ffmpeg mediainfo mediaconch="$MEDIACONCH_PACKAGE_VERSION" \
+      libqt5multimedia5 default-jre-headless \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=qcli-build /out/qcli /usr/local/bin/qcli
+RUN qcli -v >/dev/null \
+ && mediaconch --Version >/dev/null
+LABEL org.opencontainers.image.waystation.qctools.version="$QCTOOLS_VERSION" \
+      org.opencontainers.image.waystation.qctools.revision="$QCTOOLS_COMMIT" \
+      org.opencontainers.image.waystation.mediaconch.package-version="$MEDIACONCH_PACKAGE_VERSION"
+ENV QCTOOLS_VERSION="$QCTOOLS_VERSION" \
+    QCTOOLS_COMMIT="$QCTOOLS_COMMIT" \
+    MEDIACONCH_PACKAGE_VERSION="$MEDIACONCH_PACKAGE_VERSION"
 
 WORKDIR /app
 COPY requirements.txt .

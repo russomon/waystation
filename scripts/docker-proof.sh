@@ -3,8 +3,8 @@
 # Fly.io / Fargate run the full loop — gateway + worker + MinIO all in
 # containers, a signed b2:ObjectCreated event drives the pipeline, and the
 # derivatives + SDK-verified Genblaze manifest land in the bucket.
-# Also asserts ffmpeg, MediaInfo, and Netflix Photon are baked into the worker
-# image.
+# Also asserts ffmpeg, MediaInfo, headless QCTools/MediaConch, and Netflix
+# Photon are baked into the worker image.
 set -u
 export PATH="/opt/homebrew/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,8 +27,17 @@ for i in $(seq 1 60); do curl -sf -o /dev/null --max-time 2 http://localhost:900
 echo "✓ gateway + worker + minio containers up"
 
 echo "— toolchain baked into the worker image —"
-docker exec "$( "${COMPOSE[@]}" ps -q worker )" sh -c \
-  'ffmpeg -version 2>/dev/null | head -1; mediainfo --Version | head -1; java -version 2>&1 | head -1; ls /opt/photon/*.jar | wc -l | xargs echo photon jars:'
+docker exec "$( "${COMPOSE[@]}" ps -q worker )" sh -c '
+  set -eu
+  ffmpeg -version 2>/dev/null | head -1
+  mediainfo --Version | head -1
+  qcli -v 2>&1 | grep -F "29bc627d7a3b4048d3e2ac250ca20adb1ba39cd2"
+  mediaconch --Version 2>&1 | grep -F "25.04"
+  ! command -v qctools >/dev/null
+  ! command -v mediaconch-gui >/dev/null
+  java -version 2>&1 | head -1
+  test "$(find /opt/photon -name "*.jar" | wc -l)" -gt 0
+' || { echo "FAIL: worker toolchain assertion"; exit 1; }
 
 "$PY" - <<'PYEOF'
 import boto3; from botocore.config import Config

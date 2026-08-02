@@ -55,6 +55,20 @@ history.
   is a legitimate choice; if you leave it, record that as intentional rather
   than letting it look like drift.
 
+- **Phase 1 deterministic adapters after the CLI install.** The source worker
+  image now contains headless QCTools `qcli` and MediaConch, but both are
+  intentionally availability-only. Next, add representative preservation and
+  delivery fixtures, versioned MediaConch policies limited to MediaConch's
+  actual supported scope, and a bounded QCTools report extractor plus pure
+  reducers. Preserve raw reports and exact tool versions. Keep results FYI
+  until repeatable fixtures prove each rule; do not claim complete broadcast
+  MXF parity and do not give either tool rejection authority by installation
+  alone.
+
+  Production remains unchanged. Any future worker rebuild must be reviewed as
+  one runtime change because it would both install these CLIs and activate the
+  already-pending AI-triage source for subsequent uploads.
+
 - **Record the baseline hackathon demo.** The hosted MVP is deployed, published
   and rehearsed — **14/14 production checks passed 2026-07-28** (record in
   `docs/DEPLOY.md`). Nothing infrastructural blocks recording.

@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-01 (large-file mode proven end to end on a real 28 GB transfer)
+Updated: 2026-08-01 (Phase 1 headless deterministic-tool installation in source)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -70,6 +70,34 @@ and the reasons for holding it back are in `NEXT_STEPS.md`.
 Useful distinction to carry forward: **"the VPS is at commit X" says nothing
 about what is running.** Check image build times and grep the running container,
 as above, rather than trusting `git rev-parse` on the host.
+
+## Phase 1 deterministic-tool installation — 2026-08-01
+
+- `pipeline/Dockerfile` now builds only QCTools' headless `qcli` from pinned
+  official revision `29bc627d7a3b4048d3e2ac250ca20adb1ba39cd2` and installs pinned
+  Debian `mediaconch=25.04-2`. Image labels, environment, binary output, and the
+  report's `tool_provenance` retain version/source evidence. No QCTools or
+  MediaConch GUI application is installed.
+- This step is **plumbing only**. `pipeline/qc/archive_tools.py` does not run a QCTools
+  analysis or select a MediaConch policy. Present and absent tools both emit an
+  explicit FYI ending in **media not checked**; neither tool check is marked
+  pass or fail, and neither creates a composite score. Existing deterministic
+  instruments remain the only lane with policy-failure authority.
+- Validated locally: gateway typecheck, client production build, worker
+  compile/import, both Compose configs, shell syntax, missing/present adapter
+  proof, and a real Docker worker build with exact qcli/MediaConch versions,
+  actual qcli report generation, and no-GUI assertions
+  (`scripts/archive-tools-{proof,docker-proof}.sh`). The deterministic QC,
+  coverage, MediaInfo, agentic-authority, triage, and full containerized-loop
+  proofs also pass.
+- **Not deployed.** No VPS checkout, image, container, or service was touched.
+  Rebuilding production later would both install this toolchain and activate the
+  already-pending AI-triage source for future uploads; that remains a separate
+  demo/readiness decision.
+- Phase 1 next work: define versioned MediaConch policies for its supported
+  preservation scope and QCTools report extraction/reducers against fixtures.
+  Do not claim broadcast-MXF parity or add rejection rules before those outputs
+  are validated.
 
 ## Large-file mode PROVEN on real media — 2026-08-01
 
@@ -523,8 +551,8 @@ agentic contract proof and the MediaInfo proof (see
 ## Handoff
 
 - Safe stopping point: yes after this change is committed and pushed. Validation
-  at this handoff: gateway `tsc --noEmit`, production client build, `worker`
-  import, and every `scripts/*-proof.sh` green (discovered from the filesystem, not a fixed count).
+  for the Phase 1 install is recorded above; the prior full-suite result remains
+  historical and is not restated as having been rerun for this source-only task.
 - Exact next step: **record the demo video.** No code work is required first.
   **`docs/demo-script.md` is the authoritative hosted-production procedure** —
   shot list plus a "How to record" plan (silent screen captures + separate

@@ -44,6 +44,8 @@ bash scripts/qc-proof.sh           # deterministic AV + caption QC with exact de
 bash scripts/toggle-proof.sh       # sender toggles gate the pipeline; transfer-only = zero derivatives
 bash scripts/object-lock-proof.sh  # WORM manifest: locked version cannot be deleted
 bash scripts/phase2-loop-proof.sh  # signed event -> pipeline -> derivatives + manifest + SSE
+bash scripts/archive-tools-proof.sh # qcli/MediaConch availability + provenance; never silent pass
+bash scripts/archive-tools-docker-proof.sh # pinned headless CLIs in the worker image
 ```
 
 ## Layout
@@ -79,8 +81,9 @@ For real B2 webhooks in dev, expose the gateway: `cloudflared tunnel --url http:
 ## Deploy (anywhere)
 
 The waystation ships as two containers — gateway (control plane, tiny,
-always-on) and worker (the compute: python 3.13 + ffmpeg + **MediaInfo** +
-a JRE + **Netflix Photon baked in**, stateless, scale horizontally):
+always-on) and worker (the compute: python 3.13 + ffmpeg + **MediaInfo**,
+headless **QCTools qcli** + **MediaConch**, a JRE + **Netflix Photon baked
+in**, stateless, scale horizontally):
 
 ```bash
 docker compose up --build     # .env supplies B2/GMI config at runtime
@@ -97,7 +100,10 @@ excludes `.env`; config is injected at runtime).
 Proven by `scripts/docker-proof.sh`: the built containers + MinIO run the
 full loop — signed event → containerized pipeline → derivatives + an
 SDK-verified Genblaze manifest — and the worker image answers for ffmpeg,
-MediaInfo, Java, and 61 Photon jars.
+MediaInfo, pinned QCTools/MediaConch CLI versions, Java, and Photon. QCTools and
+MediaConch are currently **installed plumbing, not active conformance claims**:
+reports preserve their availability/version and say `FYI · not checked` until
+validated reducers and MediaConch policies are added.
 
 **Scaling the worker.** Two axes, with a plateau worth knowing:
 

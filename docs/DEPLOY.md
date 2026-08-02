@@ -258,6 +258,22 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs gateway | head -20
 ```
 
+The worker build compiles only QCTools' headless `qcli` target from pinned
+upstream revision `29bc627d7a3b4048d3e2ac250ca20adb1ba39cd2` and installs the
+Debian `mediaconch` CLI package at `25.04-2`. It installs no QCTools or
+MediaConch GUI application. Verify a newly built image before deployment with:
+
+```bash
+bash scripts/archive-tools-docker-proof.sh
+```
+
+This builds the worker and proves `qcli` can generate a QCTools report from a
+small fixture. It is still an installation/provenance check, not a
+media-conformance claim.
+Until a validated QCTools reducer and explicit MediaConch policies land, QC
+reports label both analyzers `FYI · not checked`; neither can reject or clear a
+delivery.
+
 If the worker fails with a bind-mount error naming `/mnt/waystation-scratch`,
 that is the guard working: the scratch path is missing or the disk is not
 mounted. Run the preflight above — do **not** "fix" it by creating the

@@ -5,6 +5,25 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-01 - Install preservation CLIs before activating their policies
+
+- Context: Phase 1 needs stronger deterministic analytics and preservation
+  policy plumbing, but package presence is not evidence that a file was checked
+  and neither QCTools nor MediaConch implies complete broadcast-MXF parity.
+- Decision: the Docker worker builds only QCTools' headless `qcli` from pinned
+  official revision `29bc627d7a3b4048d3e2ac250ca20adb1ba39cd2` and installs pinned
+  Debian `mediaconch=25.04-2`; image labels and report metadata expose those
+  exact inputs. No GUI applications ship.
+- Decision: this install step is availability/provenance plumbing only. Until
+  versioned policies, bounded report extraction, pure reducers, and fixture
+  proofs land, both tools emit `FYI · not checked` whether absent or installed.
+  Neither may clear or reject media. Existing deterministic policy instruments
+  retain sole rejection authority; AI remains advisory.
+- Deployment consequence: source/image readiness and production activation are
+  separate. This change does not rebuild the VPS worker. A later rebuild also
+  activates the already-pending cost-aware AI triage and therefore requires an
+  explicit demo/readiness decision.
+
 ### 2026-08-01 - "The VPS is at commit X" does not mean commit X is running
 
 - Context: branch head sat 2 commits ahead of the deployed gateway commit and

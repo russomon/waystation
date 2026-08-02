@@ -37,6 +37,7 @@ from genblaze_gmicloud import chat as gb_gmi_chat
 from pydantic import BaseModel
 
 from qc import agentic as qagentic
+from qc import archive_tools as qarchive_tools
 from qc import audio as qaudio
 from qc import avsync as qavsync
 from qc import foundry as qfoundry
@@ -171,6 +172,7 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
     the report. The semantic AI layer (run_ai_qc) appends afterwards."""
     profile = profile or qprofiles.get("standard")
     checks: list[dict] = []
+    tool_provenance: list[dict] = []
 
     def guarded(fn, *args, group=""):
         try:
@@ -195,6 +197,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
         guarded(qstructural.timecode_checks, src, group="timecode_continuity")
         guarded(qstructural.container_checks, meta, key, profile, group="container_metadata")
         guarded(qmediainfo.checks, src, profile, group="mediainfo_wrapper")
+        tool_provenance = qarchive_tools.inventory()
+        guarded(qarchive_tools.checks, tool_provenance, group="archive_tooling")
         if key.lower().endswith((".m3u8", ".mpd")):
             guarded(qstructural.abr_lint, src, group="abr_manifest")
         guarded(qimf.photon_checks, src, tmp, profile, group="imf_photon")
@@ -257,6 +261,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
                                         "usually require captions)", "text"))
 
     report = qreport.finalize({"checks": checks}, profile)
+    if check_av:
+        report["tool_provenance"] = tool_provenance
     # Flagged segment timecodes ride in the report: consumers see WHERE the
     # detections fired, and the AI escalation adjudicates those exact moments.
     if check_av and (segments["black"] or segments["freeze"]):
