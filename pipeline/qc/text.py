@@ -50,11 +50,19 @@ def load_caption_cues(src: str, captions_path: str | None, tmp: str) -> list:
 
 def load_caption_text(src: str, captions_path: str | None, tmp: str) -> str | None:
     if captions_path:
+        extension = os.path.splitext(captions_path)[1].lower()
+        if extension in {".scc", ".mcc", ".rcwt"}:
+            result = subprocess.run([
+                "ffmpeg", "-v", "error", "-t", "300", "-i", captions_path,
+                "-map", "0:s:0?", "-c:s", "srt", "-f", "srt", "-",
+            ], capture_output=True, text=True, timeout=360)
+            return result.stdout if result.returncode == 0 and result.stdout.strip() else None
         with open(captions_path, encoding="utf-8", errors="replace") as f:
             return f.read()
     extracted = os.path.join(tmp, "embedded_captions.srt")
-    r = subprocess.run(["ffmpeg", "-y", "-i", src, "-map", "0:s:0", "-c:s", "srt", extracted],
-                       capture_output=True)
+    r = subprocess.run(["ffmpeg", "-y", "-t", "300", "-i", src,
+                        "-map", "0:s:0", "-c:s", "srt", extracted],
+                       capture_output=True, timeout=360)
     if r.returncode == 0 and os.path.exists(extracted):
         with open(extracted, encoding="utf-8", errors="replace") as f:
             return f.read()

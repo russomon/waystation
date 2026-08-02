@@ -79,7 +79,7 @@ if (tid) {
   };
   capIn.onchange = () => {
     const f = capIn.files?.[0];
-    capname.textContent = f ? f.name : ".srt or .vtt — rides along for caption QC";
+    capname.textContent = f ? f.name : "SRT, VTT, SCC, MCC, or RCWT";
     capIn.closest(".pick")!.classList.toggle("has-file", !!f);
   };
   const genIn = $<HTMLInputElement>("#genfile");

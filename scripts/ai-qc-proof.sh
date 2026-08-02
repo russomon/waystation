@@ -202,7 +202,11 @@ acc = ck(a, "ai_caption_accuracy")
 print(f"  A ai_caption_accuracy: {acc['status']} — {acc['detail']}")
 if acc["status"] != "pass" or "100" not in acc["detail"]: print("  FAIL: matching captions should pass at 100%"); ok = False
 if not ck(a, "captions_valid"): print("  FAIL: deterministic checks missing from merged report"); ok = False
-if a["status"] != "warn": print("  FAIL: overall should be warn (vision finding)"); ok = False
+if a["status"] != "pass": print("  FAIL: AI finding must not change deterministic delivery status"); ok = False
+if a.get("advisory_status") != "warn" or a.get("advisory_tiers", {}).get("ISSUE", 0) < 1:
+    print("  FAIL: AI concern must remain visible in advisory accounting"); ok = False
+if any(c.get("tier") == "BLOCKER" for c in a["checks"] if c.get("source") != "deterministic"):
+    print("  FAIL: AI-origin check became BLOCKER"); ok = False
 if a.get("ai", {}).get("model") != "mock-multimodal": print("  FAIL: ai provenance block missing"); ok = False
 agent = a.get("agentic", {})
 if set(agent.get("passes", {})) != {"independent", "informed", "critic"}:

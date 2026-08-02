@@ -75,7 +75,7 @@ export function validatePartNumbers(raw: unknown, partCount: number): Invalid | 
 
 /** Sidecars that may ride alongside a master. Anything else is refused — an
  *  arbitrary filename here would be a write primitive into the transfer prefix. */
-export const SIDECAR_PATTERN = /(\.(srt|vtt)|\.ref\.(mp4|mov|mxf)|\.genblaze\.json)$/i;
+export const SIDECAR_PATTERN = /(\.(srt|vtt|scc|mcc|rcwt)|\.ref\.(mp4|mov|mxf)|\.genblaze\.json)$/i;
 const REFERENCE_SIDECAR = /\.ref\.(mp4|mov|mxf)$/i;
 
 export function validateSidecarName(raw: unknown): Invalid | { filename: string } {
@@ -83,7 +83,7 @@ export function validateSidecarName(raw: unknown): Invalid | { filename: string 
   if ("error" in base) return base;
   if (!SIDECAR_PATTERN.test(base.filename))
     return {
-      error: "Only .srt/.vtt captions, .ref.* mezzanine, or .genblaze.json manifest sidecars are accepted.",
+      error: "Only .srt/.vtt/.scc/.mcc/.rcwt captions, .ref.* mezzanine, or .genblaze.json manifest sidecars are accepted.",
       code: "bad_sidecar",
       status: 400,
     };

@@ -119,6 +119,9 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/
   -H 'content-type: application/json' --data "{\"key\":\"$SCKEY\",\"filename\":\"evil.txt\"}")
 [ "$CODE" = "400" ] && echo "✓ .txt sidecar rejected (400)" || { echo "FAIL: expected 400, got $CODE"; exit 1; }
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
+  -H 'content-type: application/json' --data "{\"key\":\"$SCKEY\",\"filename\":\"subs.scc\"}")
+[ "$CODE" = "200" ] && echo "✓ .scc caption sidecar accepted (200)" || { echo "FAIL: expected 200, got $CODE"; exit 1; }
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/uploads/sidecar-url \
   -H 'content-type: application/json' --data '{"key":"transfers/x/a.mp4","filename":"subs.srt"}')
 [ "$CODE" = "404" ] && echo "✓ sidecar for an unowned key refused (404)" || { echo "FAIL: expected 404, got $CODE"; exit 1; }
 

@@ -1,7 +1,7 @@
 # U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline
 
 Policy ID: `us_broadcast_xdcam_hd_422_baseline`
-Version: `1.2.0`
+Version: `1.3.0`
 Profile: `us_broadcast_xdcam_hd_422_v1`
 Source: `pipeline/policies/us_broadcast_xdcam_hd_422_v1.json`
 
@@ -22,7 +22,7 @@ The v1 assumptions are:
 - square pixels, 16:9 display aspect, and declared `tv`/`bt709` range/matrix;
 - one 24-bit, 48 kHz PCM stereo programme track;
 - material-package UMID and SMPTE drop-frame start timecode;
-- captions embedded or supplied as an SRT/VTT sidecar;
+- captions embedded or supplied as an SRT/VTT/SCC/MCC/RCWT sidecar;
 - 1 to 5 seconds of black at the head and tail;
 - programme loudness -24 LKFS +/-2 LU and true peak no higher than -2 dBTP.
 
@@ -36,9 +36,9 @@ Hard policy decisions use deterministic evidence only:
 | Wrapper | ffprobe MXF format and exact OP1a operational-pattern UL; MediaInfo and MediaConch metadata cross-checks |
 | Video essence | codec/profile, exact rational frame rate, raster/aspect, field order, bit depth, chroma, bitrate, and range/matrix metadata |
 | Timeline | bounded 1,800-frame GOP/key-frame and timestamp scan spread across the programme; wrapper/stream duration agreement; A/V programme-start alignment |
-| Audio | track/channel layout, PCM/sample rate/bit depth, full-program EBU R128 loudness and true peak |
+| Audio | declared track order/count/channel map, PCM/sample rate/bit depth, full-program EBU R128 loudness and true peak |
 | Metadata | material-package UMID and start timecode presence |
-| Captions | embedded-stream or SRT/VTT sidecar presence; existing caption timing/readability/coverage checks then run |
+| Captions | embedded-stream or SRT/VTT/SCC/MCC/RCWT sidecar visibility; bounded text decode and timing/coverage checks where supported |
 | Boundaries | measured black head/tail duration |
 
 The following deterministic screens are active but advisory because they have
@@ -54,6 +54,7 @@ not been calibrated against a representative network-accepted/rejected corpus:
   level/dead-channel candidates;
 - SRT/VTT cue continuity and timeline coverage;
 - cross-tool metadata contradictions across ffprobe, MediaInfo, and MediaConch.
+- the bounded YDIF luma-transition PSE/flash candidate screen.
 
 They may produce `ISSUE` findings but do not hard-reject this baseline. The
 policy contains no composite quality or trust score. Each event carries start,
@@ -96,11 +97,26 @@ programme region after intended head/tail black is excluded. Color bars use
 only two downscaled boundary frames. Event lists are capped by policy. A failed
 or unavailable measurement is `not_checked`; it cannot become a clean pass.
 
-Caption continuity currently applies only where Waystation can parse SRT or
-WebVTT text cues. Runtime coverage means the union of cue intervals, not proof
-that dialogue was captioned. Persistent programme silence remains the existing
-`broadcast_silence_runs` advisory; short silence candidates are separately
-reported as dropouts.
+SCC, MCC, and RCWT sidecars can be bounded-demuxed by FFmpeg into canonical cue
+text. Waystation reports transport visibility, decode/parse integrity,
+ordering, overlap, invalid timing, long-gap candidates, and bounded coverage.
+FFmpeg's text reduction does not preserve every CEA-708 service/window or prove
+SMPTE 436 ANC structure, so service-level and full CEA-608/708 conformance are
+explicitly `not_checked` pending qualified tooling and authoritative fixtures.
+SRT/VTT behavior is unchanged. Runtime coverage means the union of cue
+intervals, not proof that dialogue was captioned.
+
+The `pse_flash_risk` result is a sampled FFmpeg `signalstats` YDIF heuristic,
+not a compliance analyzer. It cites ITU-R BT.1702-3 (11/2023) only as guidance,
+emits `ISSUE` candidates or FYI evidence, and can never create a BLOCKER. Full
+PSE/flash compliance remains deferred to a qualified analyzer with
+authoritative test vectors.
+
+Policy v1.3 also declares one stereo program track by ordinal, channel count,
+and layout. Language, title, role, disposition, or stream index are enforced
+only when an effective profile explicitly declares them and ffprobe exposes
+the corresponding metadata. Semantic L/R or stem interpretation remains
+advisory unless authoritative reference metadata exists.
 
 See `docs/QC_CALIBRATION.md` and `calibration/intake.schema.json` for the
 accepted/rejected corpus workflow. Synthetic fixtures establish reducer
@@ -110,8 +126,9 @@ Unresolved deterministic timeline findings compile into versioned, bounded AI
 review packets containing only the relevant finding, evidence, timestamp range,
 review question, and requested still/audio excerpt. The optional AI
 Interpretive Pass is shadow-only (`AI_INTERPRETIVE_SHADOW=false` by default),
-records model/prompt/input provenance and uncertainty, and cannot alter the
-deterministic verdict or tier counts.
+records model/prompt/input provenance and uncertainty, receives detached packet
+copies, and emits `advisory_observations` outside canonical checks. It cannot
+alter deterministic status, tier counts, packets, or delivery outcome.
 
 ## Overrides
 
@@ -119,7 +136,7 @@ Set `WAYSTATION_BROADCAST_POLICY_OVERRIDES` to a JSON object containing nested
 rule values, for example:
 
 ```text
-WAYSTATION_BROADCAST_POLICY_OVERRIDES={"audio":{"total_channels":8}}
+WAYSTATION_BROADCAST_POLICY_OVERRIDES={"audio":{"total_channels":8,"track_map":{"tracks":[{"ordinal":0,"channels":8,"channel_layout":"7.1"}]}}}
 ```
 
 Unknown keys fail closed. Overrides do not change the policy ID or source-pack
@@ -136,6 +153,9 @@ bash scripts/qctools-analysis-proof.sh
 bash scripts/phase2-quality-proof.sh
 bash scripts/qc-calibration-proof.sh
 bash scripts/interpretive-shadow-proof.sh
+bash scripts/authority-boundary-proof.sh
+bash scripts/caption-transport-proof.sh
+bash scripts/audio-map-proof.sh
 ```
 
 The first constructs an actual passing MXF and failing MP4, then exercises

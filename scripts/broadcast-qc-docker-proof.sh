@@ -33,7 +33,7 @@ import subprocess
 
 from qc import broadcast, phase2, profiles
 p = profiles.get("us_broadcast_xdcam_hd_422_v1")
-assert p["policy_pack"]["version"] == "1.2.0", p["policy_pack"]
+assert p["policy_pack"]["version"] == "1.3.0", p["policy_pack"]
 good = broadcast.mediaconch_policy_checks("/tmp/good.mxf", p)[0]
 bad = broadcast.mediaconch_policy_checks("/tmp/bad.mp4", p)[0]
 assert good["status"] == "pass", good

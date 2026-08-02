@@ -12,6 +12,7 @@ Run:  uvicorn worker:app --port 8000 --reload
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -41,6 +42,7 @@ from qc import archive_tools as qarchive_tools
 from qc import audio as qaudio
 from qc import avsync as qavsync
 from qc import broadcast as qbroadcast
+from qc import caption_transport as qcaption_transport
 from qc import foundry as qfoundry
 from qc import generated as qgenerated
 from qc import jury as qjury
@@ -268,6 +270,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
     # ── Task 4: captions, subtitles & text ──
     if check_captions:
         sub_streams = [s for s in streams if s.get("codec_type") == "subtitle"]
+        embedded_caption_data = any(int(stream.get("closed_captions", 0) or 0) > 0
+                                    for stream in streams if stream.get("codec_type") == "video")
         cap_text = None
         caption_cues = None
         caption_source = "none"
@@ -275,10 +279,11 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             cap_text = load_caption_text(src, captions_path, tmp)
         except Exception:
             pass
-        if captions_path or sub_streams:
+        if captions_path or sub_streams or embedded_caption_data:
             detail = " + ".join(filter(None, [
                 "sidecar file" if captions_path else None,
-                f"{len(sub_streams)} embedded track(s)" if sub_streams else None]))
+                f"{len(sub_streams)} embedded track(s)" if sub_streams else None,
+                "embedded A53 caption data" if embedded_caption_data else None]))
             checks.append(qreport.check("captions_present", "pass", detail, "text"))
             if cap_text is not None:
                 source = ("sidecar " + os.path.basename(captions_path)) if captions_path else "embedded track"
@@ -300,12 +305,16 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
         if qbroadcast.active(profile):
             guarded(qphase2.caption_quality_checks, caption_cues or [], duration,
                     caption_source, profile, group="broadcast_caption_continuity")
+        guarded(qcaption_transport.checks, meta, captions_path, cap_text, duration, profile,
+                group="caption_cea_transport")
 
     if qbroadcast.active(profile):
         caption_sources = []
         if captions_path:
             caption_sources.append("sidecar")
-        if any(s.get("codec_type") == "subtitle" for s in streams):
+        if (any(s.get("codec_type") == "subtitle" for s in streams)
+                or any(int(s.get("closed_captions", 0) or 0) > 0
+                       for s in streams if s.get("codec_type") == "video")):
             caption_sources.append("embedded")
         guarded(qbroadcast.caption_presence_check, bool(caption_sources),
                 "+".join(caption_sources), profile, check_captions,
@@ -585,7 +594,7 @@ def _audio_evidence(src: str, tmp: str, evidence_id: str, start: float,
 
 def run_interpretive_shadow(src: str, tmp: str, packets: list[dict]) -> tuple[dict, list[dict], dict]:
     """One bounded GMI call over targeted deterministic-review packets."""
-    selected = packets[:max(0, AI_INTERPRETIVE_SHADOW_MAX_PACKETS)]
+    selected = copy.deepcopy(packets[:max(0, AI_INTERPRETIVE_SHADOW_MAX_PACKETS)])
     parts: list[dict] = []
     evidence: list[dict] = []
     for packet in selected:
@@ -618,11 +627,11 @@ def run_interpretive_shadow(src: str, tmp: str, packets: list[dict]) -> tuple[di
     )
     prompt_sha = hashlib.sha256(prompt.encode()).hexdigest()
     data = _json_from(_gmi_chat([{"type": "text", "text": prompt}] + parts, max_tokens=3000))
-    report, checks = qinterpretive.normalize(
+    report, observations = qinterpretive.normalize(
         data, selected, model=GMI_MULTIMODAL_MODEL,
         prompt_sha256=prompt_sha, evidence=evidence,
     )
-    return report, checks, {"model_passes": 1, "packets": len(selected),
+    return report, observations, {"model_passes": 1, "packets": len(selected),
                             "frames": len([x for x in evidence if x["type"] == "frame"]),
                             "audio_seconds": round(sum(x.get("duration_seconds", 0)
                                                        for x in evidence if x["type"] == "audio_window"), 3)}
@@ -1159,7 +1168,7 @@ def run_ai_qc(src: str, meta: dict, captions_path: str | None, tmp: str,
     for check in agentic_checks:
         if re.search(r"censor|mosaic|blur patch|bleep", str(check.get("detail", "")), re.I):
             check["name"] = "ai_censorship"
-            check["status"] = "fail" if profile["censorship"]["escalate"] else "warn"
+            check["status"] = "warn"
     checks.extend(agentic_checks)
     frames = int(agentic_units["frames"])
     if any(s.get("codec_type") == "video" for s in meta.get("streams", [])):
@@ -1817,7 +1826,7 @@ def run_pipeline(job: Job) -> None:
                 k = obj["Key"]
                 if k == job.key:
                     continue
-                if k.lower().endswith((".srt", ".vtt")) and not captions_path:
+                if k.lower().endswith((".srt", ".vtt", ".scc", ".mcc", ".rcwt")) and not captions_path:
                     captions_path = os.path.join(tmp, os.path.basename(k))
                     s3.download_file(job.bucket, k, captions_path)
                 elif k.lower().endswith(".genblaze.json") and not gen_manifest_path:
@@ -1855,7 +1864,7 @@ def run_pipeline(job: Job) -> None:
         # the broadcast QC adapter. Shadow interpretation is a separate,
         # explicit runtime opt-in and never appends to the delivery checks.
         if qc_report is not None:
-            packets = qc_report.get("ai_review_packets") or []
+            packets = copy.deepcopy(qc_report.get("ai_review_packets") or [])
             qc_report["ai_interpretive_shadow"] = {
                 "schema_version": qinterpretive.SCHEMA_VERSION,
                 "state": "disabled",
@@ -1866,19 +1875,14 @@ def run_pipeline(job: Job) -> None:
             }
             if AI_INTERPRETIVE_SHADOW and opts["qc_ai"] and packets and GMI_API_KEY:
                 progress(job, {"type": "step_started", "step": "qc_ai_interpretive_shadow"})
-                deterministic_status = qc_report.get("status")
-                deterministic_tiers = dict(qc_report.get("tiers") or {})
                 try:
-                    shadow_report, shadow_checks, shadow_units = run_interpretive_shadow(
+                    shadow_report, shadow_observations, shadow_units = run_interpretive_shadow(
                         src, tmp, packets)
-                    shadow_report["checks"] = shadow_checks
+                    shadow_report["advisory_observations"] = shadow_observations
                     qc_report["ai_interpretive_shadow"] = shadow_report
-                    # Assert the shadow path cannot mutate delivery disposition.
-                    qc_report["status"] = deterministic_status
-                    qc_report["tiers"] = deterministic_tiers
                     progress(job, {"type": "step_done", "step": "qc_ai_interpretive_shadow",
                                    "state": shadow_report["state"],
-                                   "advisory_findings": len(shadow_checks),
+                                   "advisory_findings": len(shadow_observations),
                                    "billable": {"unit": "run", "units": shadow_units["model_passes"]}})
                 except Exception as exc:
                     qc_report["ai_interpretive_shadow"].update({

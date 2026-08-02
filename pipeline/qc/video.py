@@ -1,7 +1,7 @@
 """Task 2 — Signal Video Quality.
 Decode integrity, black/freeze detection, picture boundaries, EBU-R103-style
 legal range (signalstats), letterbox/pillarbox mattes (cropdetect), aspect
-ratio sanity, PSE flash-risk (BT.1702-informed heuristic on the YDIF series),
+ratio sanity, advisory PSE/flash candidates (bounded YDIF heuristic),
 upconversion screening, reference SSIM/PSNR/VMAF (MOS), and operational
 metadata detection (CEA-608/A53, AFD, Dolby Vision RPU presence)."""
 from __future__ import annotations
@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import os
 import re
+from functools import lru_cache
 
-from .report import check, violation
+from .report import check, policy_check, violation
 from .util import metadata_print, metadata_print_tiled, run, tag_values
 
 ANALYSIS_WINDOW_S = 60.0   # legacy single-window size (still used by matte sampling)
@@ -19,6 +20,12 @@ ANALYSIS_WINDOW_S = 60.0   # legacy single-window size (still used by matte samp
 # bounded to keep runtime flat on long masters.
 SIGNAL_TILE_WINDOW_S = float(os.environ.get("SIGNAL_TILE_WINDOW_S", "20"))
 SIGNAL_TILE_MAX_TOTAL_S = float(os.environ.get("SIGNAL_TILE_MAX_TOTAL_S", "240"))
+
+
+@lru_cache(maxsize=1)
+def _ffmpeg_version() -> str:
+    result = run(["ffmpeg", "-version"], timeout=10)
+    return (result.stdout.splitlines() or ["ffmpeg version unavailable"])[0][:160]
 
 
 def decode_and_detections(src: str, has_video: bool, has_audio: bool,
@@ -92,8 +99,8 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
     """One signalstats pass powers two checks:
     - video_legal_range: Y outside 16–235 / chroma outside 16–240 (R103-style
       overshoot policing at the YUV level, ±2 code-value tolerance)
-    - pse_flash_risk: BT.1702-informed heuristic — count of alternating
-      high-luma-delta transitions per second window (>=5/s flags)."""
+    - pse_flash_risk: bounded YDIF candidate screen. It is not a qualified
+      photosensitive-epilepsy analyzer and never has delivery authority."""
     checks = []
     scale = 1 << (bit_depth - 8)
     lines, windows, analyzed = metadata_print_tiled(
@@ -102,7 +109,18 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
     span_note = (f"; {len(windows)} windows across the timeline (~{analyzed:.0f}s sampled)"
                  if not covers_all else "")
     if not lines:
-        return [check("video_legal_range", "info", "signalstats produced no frames", )]
+        checks.append(check("video_legal_range", "info", "signalstats produced no frames"))
+        if profile["pse"]["enabled"]:
+            checks.append(policy_check(
+                "pse_flash_risk", "info", "YDIF measurements unavailable; PSE screen not checked",
+                "signal", policy={"id": "pse_candidate_screen", "version": "1.0"},
+                expectation={"candidate_transitions_per_second": 5,
+                             "authority": "advisory_heuristic"},
+                observation={"state": "not_checked", "reason": "signalstats produced no frames"},
+                evidence=[], provenance={"tool": "ffmpeg", "version": _ffmpeg_version(),
+                                           "method": "signalstats YDIF"},
+                authority="deterministic_advisory"))
+        return checks
 
     ymin = min(tag_values(lines, "lavfi.signalstats.YMIN") or [16 * scale])
     ymax = max(tag_values(lines, "lavfi.signalstats.YMAX") or [235 * scale])
@@ -159,16 +177,50 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
         # fps from the true analyzed span (tiled), not an assumed single window
         fps = max(round(len(ydif) / max(analyzed, 0.1)), 1)
         worst = 0
-        for i in range(0, max(len(ydif) - fps, 1), max(fps // 2, 1)):
-            window = ydif[i:i + fps]
-            worst = max(worst, sum(1 for d in window if d > 40 * scale))
-        if worst >= 5:
-            checks.append(violation("pse_flash_risk", profile["pse"]["escalate"],
-                                    f"up to {worst} high-luma flashes/second — photosensitivity risk "
-                                    f"(BT.1702-informed screen){span_note}", ))
-        else:
-            checks.append(check("pse_flash_risk", "pass",
-                                f"max {worst} luma flash(es)/second{span_note or ' (whole clip)'}"))
+        cursor = 0
+        candidate_events = []
+        for window_index, (window_start, window_length) in enumerate(windows):
+            expected_samples = max(1, round(fps * window_length))
+            end = len(ydif) if window_index == len(windows) - 1 else cursor + expected_samples
+            values = ydif[cursor:end]
+            cursor = end
+            for offset in range(0, max(len(values) - fps + 1, 1), max(fps // 2, 1)):
+                transitions = sum(1 for value in values[offset:offset + fps]
+                                  if value > 40 * scale)
+                worst = max(worst, transitions)
+                if transitions >= 5:
+                    start_seconds = window_start + offset / fps
+                    candidate_events.append({
+                        "start_seconds": round(start_seconds, 3),
+                        "end_seconds": round(min(start_seconds + 1.0,
+                                                 window_start + window_length), 3),
+                        "transitions": transitions,
+                        "sample_window": window_index + 1,
+                    })
+        flagged = worst >= 5
+        state = "candidate_detected" if flagged else "no_candidate_in_bounded_screen"
+        checks.append(policy_check(
+            "pse_flash_risk", "warn" if flagged else "info",
+            (f"up to {worst} high-luma transitions/second; "
+             f"{'candidate requires qualified review' if flagged else 'no candidate in bounded screen; not a compliance clearance'}"
+             f"{span_note}"),
+            "signal", policy={"id": "pse_candidate_screen", "version": "1.0",
+                               "guidance_reference": "ITU-R BT.1702-3 (11/2023)"},
+            expectation={"candidate_transitions_per_second": 5,
+                         "authority": "advisory_heuristic", "compliance_grade": False},
+            observation={"state": state, "worst_transitions_per_second": worst,
+                         "sampled_seconds": analyzed, "sampled_windows": len(windows),
+                         "candidate_events": candidate_events[:100],
+                         "candidate_event_count": len(candidate_events)},
+            evidence=[{"id": "ffmpeg:signalstats-ydif", "kind": "bounded_timeline_measurement",
+                       "windows": windows, "sampled_seconds": analyzed,
+                       "events": candidate_events[:100]}],
+            provenance={"tool": "ffmpeg", "version": _ffmpeg_version(),
+                        "method": "signalstats YDIF luma-difference heuristic",
+                        "measurement": "bounded sampled timeline"},
+            time_range={"start_seconds": windows[0][0],
+                        "end_seconds": windows[-1][0] + windows[-1][1]} if windows else None,
+            authority="deterministic_advisory"))
     return checks
 
 

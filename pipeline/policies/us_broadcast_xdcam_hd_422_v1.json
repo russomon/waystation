@@ -1,8 +1,8 @@
 {
   "policy_id": "us_broadcast_xdcam_hd_422_baseline",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "profile_name": "us_broadcast_xdcam_hd_422_v1",
-  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.2",
+  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.3",
   "scope": "A Waystation house baseline for one common U.S. HD broadcast delivery shape. It is not a universal network specification or evidence of acceptance by any broadcaster.",
   "assumptions": [
     "single-file MXF OP1a delivery",
@@ -10,7 +10,7 @@
     "1920x1080, 30000/1001 interlaced top-field-first, 8-bit 4:2:2",
     "one 24-bit 48 kHz PCM stereo programme track",
     "SMPTE drop-frame start timecode and material-package UMID present",
-    "captions supplied as an embedded stream or SRT/VTT sidecar",
+    "captions supplied as an embedded stream or SRT/VTT/SCC/MCC/RCWT sidecar",
     "1 to 5 seconds of black at head and tail",
     "programme loudness -24 LKFS +/-2 LU and true peak at or below -2 dBTP",
     "BT.709 colour metadata, 16:9 display aspect, square pixels, and aligned programme starts",
@@ -48,11 +48,24 @@
       "codecs": ["pcm_s24le"],
       "sample_rate": 48000,
       "bit_depth": 24,
+      "track_map": {
+        "enabled": true,
+        "authority": "deterministic_policy",
+        "tracks": [
+          {"ordinal": 0, "channels": 2, "channel_layout": "stereo"}
+        ]
+      },
       "max_video_start_offset_seconds": 0.034,
       "loudness": {"target_lkfs": -24.0, "tolerance_lu": 2.0},
       "true_peak": {"max_dbtp": -2.0}
     },
     "captions": {"required": true},
+    "caption_transport": {
+      "max_decode_seconds": 300.0,
+      "long_gap_advisory_seconds": 15.0,
+      "max_reported_events": 100,
+      "authority": "advisory"
+    },
     "signal": {
       "black_head": {"min_seconds": 1.0, "max_seconds": 5.0},
       "black_tail": {"min_seconds": 1.0, "max_seconds": 5.0},

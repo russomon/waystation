@@ -79,7 +79,7 @@ you may not omit a registered applicable risk from the requested dispositions.
 
 
 RISK_REGISTRY: tuple[dict[str, Any], ...] = (
-    {"id": "certified_pse", "label": "Certified photosensitive-epilepsy compliance",
+    {"id": "certified_pse", "label": "Photosensitive-epilepsy screen (qualified analyzer required)",
      "category": "picture", "applies": "video", "checks": ["pse_flash_risk"],
      "scope": "certification", "limit": "Waystation screening is not a certified Harding/FPA result."},
     {"id": "dolby_vision_rpu_canvas", "label": "Dolby Vision RPU, profile, level, and canvas",
@@ -430,10 +430,8 @@ def checks_from_findings(agentic: dict | None) -> list[dict]:
         #
         # Genuine model-only defects are NOT lost: they stay prominent as ISSUE,
         # coverage still marks the risk SUSPECTED/CONFIRMED, and they appear in
-        # residual human review. Profile-governed escalation is unaffected —
-        # worker.run_ai_qc re-escalates censorship to `fail` after this point
-        # when the profile says so, which is an explicit policy decision rather
-        # than the model grading its own severity.
+        # residual human review. No profile may turn model output into a
+        # delivery-policy failure.
         if status == "fail":
             status = "warn"
         where = ", ".join(f"{t:.2f}s" for t in finding.get("timecodes", [])[:4])

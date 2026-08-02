@@ -5,7 +5,7 @@ import hashlib
 import json
 
 
-SCHEMA_VERSION = "waystation-ai-interpretive-shadow/1.0"
+SCHEMA_VERSION = "waystation-ai-interpretive-shadow/1.1"
 
 
 def input_hash(packets: list[dict]) -> str:
@@ -22,7 +22,7 @@ def normalize(data: dict | None, packets: list[dict], *, model: str,
     rows_by_id = {row.get("packet_id"): row for row in rows
                   if isinstance(row, dict) and row.get("packet_id") in by_id}
     findings = []
-    checks = []
+    observations = []
     for packet_id in by_id:
         row = rows_by_id.get(packet_id) or {
             "outcome": "not_checked", "confidence": 0,
@@ -48,10 +48,10 @@ def normalize(data: dict | None, packets: list[dict], *, model: str,
         }
         findings.append(finding)
         status = "warn" if outcome == "concern" else "info"
-        checks.append({
-            "name": "ai_interpretive_shadow",
-            "status": status,
-            "tier": "ISSUE" if status == "warn" else "FYI",
+        observations.append({
+            "observation_type": "ai_interpretive_shadow",
+            "advisory_state": "concern" if status == "warn" else "informational",
+            "review_priority": "review" if status == "warn" else "fyi",
             "category": by_id[packet_id]["finding"].get("category") or "signal",
             "source": "ai_interpretive_shadow",
             "detail": f"{packet_id}: {finding['detail']}",
@@ -77,4 +77,4 @@ def normalize(data: dict | None, packets: list[dict], *, model: str,
         "evidence": evidence,
         "findings": findings,
     }
-    return report, checks
+    return report, observations

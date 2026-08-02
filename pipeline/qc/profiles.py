@@ -29,7 +29,7 @@ NETFLIX_CONSTRAINTS = {
         "target_integrated_loudness_lkfs": -24.0,
         "loudness_tolerance_lkfs": 1.0,
         "max_true_peak_dbtp": -2.0,
-        "pse_compliance_standard": "ITU-R_BT_1702-2_2023",
+        "pse_screen_reference": "ITU-R_BT_1702-3_(11/2023)_guidance",
     },
 }
 
@@ -62,8 +62,9 @@ PROFILES = {
         "allow_interlaced": False,   # allowed list is progressive-only
         "allow_multipart": False,    # Rule 1: single long-play asset
         "video_range": {"escalate": True},
-        "pse": {"enabled": True, "escalate": True},   # Rule 7
-        "censorship": {"escalate": True},             # Rule 3
+        "pse": {"enabled": True, "escalate": False,
+                "authority": "advisory_heuristic"},
+        "censorship": {"escalate": False, "authority": "ai_advisory"},
         "photon_required": True,                      # Rule 4
     },
 }

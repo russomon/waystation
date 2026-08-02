@@ -8,7 +8,7 @@ PYTHONPATH="$ROOT/pipeline" "$PY" - <<'PYEOF'
 from qc import phase2, profiles, prompt_compiler
 
 profile = profiles.get("broadcast_xdcam")
-assert profile["policy_pack"]["version"] == "1.2.0"
+assert profile["policy_pack"]["version"] == "1.3.0"
 
 
 def stat(value):

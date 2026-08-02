@@ -56,6 +56,17 @@ history.
   version. Production remains on worker policy v1.1.0 and
   `AI_INTERPRETIVE_SHADOW=false`; deployment requires a separate decision.
 
+- ~~**Authority, calibration, captions, and audio-map correction package.**~~
+  **DONE in source 2026-08-02; not deployed.** Policy v1.3.0 removes every
+  AI-to-BLOCKER path (including the former Netflix censorship exception),
+  makes canonical delivery status/tiers deterministic-only, relabels the YDIF
+  PSE screen as non-blocking guidance, structurally isolates interpretive
+  shadow observations, adds independent stratified holdout/Wilson calibration
+  gates, accepts bounded SCC/MCC/RCWT caption transports with honest service
+  limits, and enforces explicitly declared audio track maps. Next: review the
+  source/demo behavior, then make a separate production deployment decision.
+  Production and AI shadow remain unchanged.
+
 - **Record the baseline hackathon demo.** The hosted MVP is deployed, published
   and rehearsed — **14/14 production checks passed 2026-07-28** (record in
   `docs/DEPLOY.md`). Nothing infrastructural blocks recording.

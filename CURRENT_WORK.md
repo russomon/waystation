@@ -176,9 +176,43 @@ as above, rather than trusting `git rev-parse` on the host.
   explicitly `false`, so the new interpretive shadow path creates no production
   model spend and cannot alter deterministic delivery outcomes.
 
+## Deterministic-authority and conformance source milestone — 2026-08-02
+
+- Source policy `us_broadcast_xdcam_hd_422_baseline` is now v1.3.0. This is a
+  source-only milestone; production remains on the previously recorded worker
+  image/policy v1.1.0 and `AI_INTERPRETIVE_SHADOW=false`.
+- Canonical `status` and `tiers` now derive only from deterministic checks.
+  Agentic, support, hybrid, triage, synthetic, and shadow observations are
+  centrally capped at advisory authority and counted separately under
+  `advisory_status` / `advisory_tiers`. The former Netflix model-censorship
+  escalation to BLOCKER was removed.
+- The Netflix PSE path is now an explicit bounded YDIF candidate heuristic,
+  cites ITU-R BT.1702-3 (11/2023) only as guidance, and cannot block. A missing
+  measurement is FYI / `not_checked`; full compliance analysis is deferred.
+- AI Interpretive Shadow receives deep-copied bounded packets and emits fresh
+  `advisory_observations` outside canonical checks. Adversarial mutation proofs
+  show packets, checks, status, tiers, and delivery outcome remain unchanged.
+- Calibration schema/helper v2 enforces unique asset hashes and independent
+  source groups, training/holdout separation, content/codec/cadence/audio-layout
+  strata, Wilson 95% false-positive/false-negative bounds, and asymmetric 5% /
+  10% limits. It never promotes a policy automatically.
+- SCC, MCC, and RCWT sidecars are accepted and bounded-demuxed when FFmpeg
+  supports them. Reports expose transport/decode/continuity evidence and
+  explicit service/CEA-708/SMPTE-436 `not_checked` limits. SRT/VTT behavior is
+  preserved. Policy v1.3 also enforces its declared one-track stereo map;
+  language/title/role/index fields are checked only when explicitly declared.
+- Focused authority/shadow/calibration/caption/audio-map proofs passed, along
+  with Phase 2, broadcast, QCTools, coverage, archive-tool, MediaInfo,
+  triage/agentic/AI/synthetic/Netflix/Standard, hybrid, jury, proficiency,
+  AV-sync, Photon, and toggle regressions. Python compile, policy/schema JSON,
+  gateway/client builds, and development/production Compose validation passed.
+  A local Docker worker build proved policy v1.3.0 and the pinned tools; the
+  complete containerized gateway-worker-MinIO event/delivery loop wrote and
+  SDK-verified its manifest. No production host/container was accessed.
+
 ## Phase 2 delivery-quality source milestone — 2026-08-02
 
-- Source policy `us_broadcast_xdcam_hd_422_baseline` is now v1.2.0. The new
+- Phase 2 introduced policy `us_broadcast_xdcam_hd_422_baseline` v1.2.0. The
   broadcast-only adapters add bounded visual, audio, caption, QCTools, and
   cross-tool metadata evidence without changing Standard/Netflix behavior.
 - Visual candidates: blockiness, blur, banding/contouring, temporal outliers,
@@ -195,10 +229,9 @@ as above, rather than trusting `git rev-parse` on the host.
 - Cross-validation compares already-collected ffprobe, MediaInfo, and
   MediaConch facts using field-aware normalization and report hashes. It is
   contradiction evidence, not a second MXF policy engine.
-- `calibration/intake.schema.json` and `qc.calibration` define a privacy-aware
-  intake and a 20-per-class minimum candidate gate. Synthetic fixtures are
-  explicitly barred from claiming network acceptance; candidates cannot edit
-  policy or acquire authority automatically.
+- This milestone initially added a 20-per-class calibration intake floor. The
+  v1.3 milestone above supersedes it with independence, strata, holdout, and
+  Wilson error-bound gates; synthetic fixtures remain behavior tests only.
 - Focused Phase 2/QCTools/calibration/broadcast proofs, archive-tool and
   MediaInfo proofs, triage/agentic/synthetic/Netflix/Standard regressions,
   Python compile, gateway/client builds, both Compose configs, pinned-tool and

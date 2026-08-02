@@ -94,8 +94,9 @@ Object Lock - so what arrives is not a file, but a *delivery*.
   independently reproduced by the blind juror.
 - **Netflix strict profile** - one toggle swaps thresholds for a
   zero-tolerance delivery spec (−24 LKFS ±1, −2 dBTP, native frame rates
-  only, no pulldown, PSE hard-fail). Findings tier into
-  **BLOCKER / ISSUE / FYI**.
+  only, no pulldown). Deterministic policy findings tier into
+  **BLOCKER / ISSUE / FYI**. The bounded PSE/flash heuristic and AI censorship
+  observations are advisory and cannot change the delivery verdict.
 - **No silent gaps** - the final report separates QC verdict from coverage.
   A deterministic validator accounts for 18 risk families even if the model
   omits one: certified PSE, Dolby/HDR internals, lip sync, dead pixels, subtle

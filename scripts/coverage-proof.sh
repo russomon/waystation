@@ -60,7 +60,9 @@ wins = analysis_windows(dur, 20.0, max_total=240.0)
 need(dur > 70 and any(s >= 60 for s, _ in wins), f"windows must cover the clip end: {wins}")
 pse = [c for c in video.range_and_pse(src, dur, profiles.get("netflix")) if c["name"] == "pse_flash_risk"][0]
 print(f"  #1 pse_flash_risk on 80s clip (flash at 70-80s): {pse['status']}")
-need(pse["status"] == "fail", "tiled PSE must catch a flash in the final window")
+need(pse["status"] == "warn", "tiled PSE must flag an advisory candidate in the final window")
+need(pse.get("decision", {}).get("authority") == "deterministic_advisory",
+     "PSE screen must not have delivery authority")
 # a first-60s-only window would analyze ~5-65s and miss the 70-80s flash:
 old_lines = video.metadata_print(src, "signalstats", min(60.0, dur), min(dur*0.1, 5.0))
 ydif = video.tag_values(old_lines, "lavfi.signalstats.YDIF")

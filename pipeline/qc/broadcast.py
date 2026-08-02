@@ -81,6 +81,83 @@ def policy_disclosure(profile: dict) -> list[dict]:
     )]
 
 
+def declared_audio_map_check(meta: dict, profile: dict) -> list[dict]:
+    """Compare observable audio metadata to an explicitly declared track map."""
+    track_map = (profile.get("broadcast_policy") or {}).get("audio", {}).get("track_map")
+    if not track_map or not track_map.get("enabled"):
+        return []
+    expected_tracks = track_map.get("tracks") or []
+    audios = [stream for stream in (meta.get("streams") or [])
+              if stream.get("codec_type") == "audio"]
+    observed_tracks = []
+    mismatches = []
+    unavailable = []
+    for ordinal, stream in enumerate(audios):
+        tags = {str(key).lower(): value for key, value in (stream.get("tags") or {}).items()}
+        dispositions = sorted(str(key) for key, value in (stream.get("disposition") or {}).items()
+                              if value and key != "default")
+        observed_tracks.append({
+            "ordinal": ordinal,
+            "stream_index": stream.get("index"),
+            "channels": int(stream["channels"]) if stream.get("channels") is not None else None,
+            "channel_layout": stream.get("channel_layout"),
+            "language": tags.get("language"),
+            "title": tags.get("title"),
+            "role": tags.get("role") or tags.get("handler_name"),
+            "dispositions": dispositions,
+        })
+    if len(observed_tracks) != len(expected_tracks):
+        mismatches.append({"field": "track_count", "expected": len(expected_tracks),
+                           "observed": len(observed_tracks)})
+    for expected in expected_tracks:
+        ordinal = int(expected.get("ordinal", -1))
+        if ordinal < 0 or ordinal >= len(observed_tracks):
+            mismatches.append({"ordinal": ordinal, "field": "track", "expected": expected,
+                               "observed": None})
+            continue
+        observed = observed_tracks[ordinal]
+        for field in ("stream_index", "channels", "language", "title", "role"):
+            if field in expected and observed.get(field) is None:
+                unavailable.append({"ordinal": ordinal, "field": field,
+                                    "expected": expected[field], "observed": None})
+            elif field in expected and observed.get(field) != expected[field]:
+                mismatches.append({"ordinal": ordinal, "field": field,
+                                   "expected": expected[field], "observed": observed.get(field)})
+        if "channel_layout" in expected:
+            allowed = expected["channel_layout"]
+            allowed = allowed if isinstance(allowed, list) else [allowed]
+            if observed.get("channel_layout") is None:
+                unavailable.append({"ordinal": ordinal, "field": "channel_layout",
+                                    "expected": allowed, "observed": None})
+            elif observed.get("channel_layout") not in allowed:
+                mismatches.append({"ordinal": ordinal, "field": "channel_layout",
+                                   "expected": allowed, "observed": observed.get("channel_layout")})
+        if "dispositions" in expected:
+            expected_dispositions = sorted(str(value) for value in expected["dispositions"])
+            if observed["dispositions"] != expected_dispositions:
+                mismatches.append({"ordinal": ordinal, "field": "dispositions",
+                                   "expected": expected_dispositions,
+                                   "observed": observed["dispositions"]})
+    policy_authority = track_map.get("authority") == "deterministic_policy"
+    status = ("fail" if mismatches and policy_authority else "warn" if mismatches
+              else "info" if unavailable else "pass")
+    return [_finding(
+        "broadcast_declared_audio_map", status,
+        f"{len(observed_tracks)} observed track(s); {len(mismatches)} mismatch(es); "
+        f"{len(unavailable)} declared field(s) not reported",
+        "audio", profile, expected={"tracks": expected_tracks,
+                                     "authority": track_map.get("authority")},
+        observed={"tracks": observed_tracks, "mismatches": mismatches,
+                  "unavailable": unavailable},
+        evidence=[{"id": "ffprobe:declared-audio-map", "kind": "probe_fields",
+                   "fields": ["streams[audio].index", "channels", "channel_layout",
+                              "tags.language", "tags.title", "tags.role", "disposition"]}],
+        provenance=_prov("ffprobe", "ordered audio-stream metadata map"),
+        advisory=not policy_authority,
+        not_checked=bool(unavailable and not mismatches),
+    )]
+
+
 def metadata_checks(meta: dict, profile: dict) -> list[dict]:
     """Pure reducers over the ffprobe document: wrapper, streams, and metadata."""
     rules = profile["broadcast_policy"]
@@ -299,6 +376,8 @@ def metadata_checks(meta: dict, profile: dict) -> list[dict]:
                 evidence=[{"id": "ffprobe:stream-starts", "kind": "probe_fields",
                            "fields": ["streams[].start_time"]}], provenance=probe,
             ))
+
+    out.extend(declared_audio_map_check(meta, profile))
 
     required = rules["wrapper"]["required_metadata_tags"]
     observed_metadata = {key: tags.get(key) for key in required}
@@ -638,7 +717,7 @@ def caption_presence_check(present: bool, source: str, profile: dict,
     ok = present or not required
     return [_finding(
         "broadcast_captions_present", "pass" if ok else "fail",
-        f"caption source: {source}" if present else "no embedded caption stream or SRT/VTT sidecar",
+        f"caption source: {source}" if present else "no embedded caption stream or supported caption sidecar",
         "text", profile, expected={"required": required},
         observed={"present": present, "source": source if present else None},
         evidence=[{"id": "delivery:caption-discovery", "kind": "sidecar_or_stream_inventory"}],

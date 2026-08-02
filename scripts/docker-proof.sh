@@ -37,6 +37,12 @@ docker exec "$( "${COMPOSE[@]}" ps -q worker )" sh -c '
   ! command -v mediaconch-gui >/dev/null
   java -version 2>&1 | head -1
   test "$(find /opt/photon -name "*.jar" | wc -l)" -gt 0
+  python - <<"PY"
+from qc import caption_transport, profiles
+assert profiles.get("us_broadcast_xdcam_hd_422_v1")["policy_pack"]["version"] == "1.3.0"
+assert caption_transport.SCHEMA_VERSION == "waystation-caption-transport/1.0"
+print("policy 1.3.0 + caption transport adapter")
+PY
 ' || { echo "FAIL: worker toolchain assertion"; exit 1; }
 
 "$PY" - <<'PYEOF'
@@ -89,5 +95,9 @@ assert gb.verify_hash(), "genblaze manifest failed SDK verification"
 print(f"  genblaze manifest v{gb.schema_version}, SDK verify_hash: {gb.verify_hash()}")
 qc = json.loads(s3.get_object(Bucket="waystation-test", Key=f"derivatives/{tid}/qc_report.json")["Body"].read())
 print(f"  qc: {qc['status']} tiers={qc['tiers']} ({len(qc['checks'])} checks)")
+assert qc["delivery_authority"] == "deterministic_policy_only"
+assert qc["advisory_tiers"]["BLOCKER"] == 0
+assert qc["ai_interpretive_shadow"]["enabled"] is False
+assert any(item["name"] == "caption_cea_transport_visibility" for item in qc["checks"])
 print("PASS ✓  the shipped containers run the full waystation loop")
 PYEOF

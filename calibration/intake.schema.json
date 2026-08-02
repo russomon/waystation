@@ -1,15 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://waystation.invalid/schemas/qc-calibration-intake-1.0.json",
+  "$id": "https://waystation.invalid/schemas/qc-calibration-intake-2.0.json",
   "title": "Waystation QC calibration intake",
   "type": "object",
   "additionalProperties": false,
-  "required": ["asset_id", "asset_sha256", "label", "source_kind", "metrics", "decision_provenance"],
+  "required": ["asset_id", "asset_sha256", "label", "source_kind", "metrics", "decision_provenance", "independence_group", "split", "strata"],
   "properties": {
     "asset_id": {"type": "string", "minLength": 1},
     "asset_sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
     "label": {"enum": ["accepted", "rejected"]},
     "source_kind": {"enum": ["real_delivery", "synthetic_fixture"]},
+    "independence_group": {"type": "string", "minLength": 1},
+    "split": {"enum": ["training", "holdout"]},
+    "strata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["content_class", "codec_generation", "cadence", "audio_layout"],
+      "properties": {
+        "content_class": {"type": "string", "minLength": 1},
+        "codec_generation": {"type": "string", "minLength": 1},
+        "cadence": {"type": "string", "minLength": 1},
+        "audio_layout": {"type": "string", "minLength": 1}
+      }
+    },
     "network_acceptance_evidence": {"type": "boolean", "default": false},
     "decision_provenance": {
       "type": "object",

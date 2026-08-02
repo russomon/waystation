@@ -5,6 +5,36 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - Deterministic-only delivery authority is enforced centrally
+
+- Decision: canonical delivery `status` and `tiers` are computed from
+  deterministic checks only. Every AI-origin source (agentic, support, hybrid,
+  triage, synthetic, or interpretive shadow) is capped at advisory severity and
+  reported separately. The former Netflix model-censorship escalation to
+  `fail`/`BLOCKER` is removed; model evidence cannot become policy authority.
+- Decision: the current PSE implementation is a bounded luma-difference
+  candidate heuristic, not a compliance engine. It is non-blocking in every
+  profile and references ITU-R BT.1702-3 (11/2023) as guidance only. Full PSE
+  conformance is deferred to qualified tooling, authoritative rules, and test
+  vectors.
+- Decision: AI Interpretive Shadow receives detached packet copies and emits
+  fresh `advisory_observations`, not delivery-shaped checks. It remains
+  disabled by default and cannot mutate canonical checks, packets, status,
+  tiers, or outcome.
+- Decision: calibration promotion review requires independent deduplicated
+  source masters, explicit training/holdout splits, required content/codec/
+  cadence/audio-layout strata, Wilson 95% error bounds, and asymmetric false-
+  positive/false-negative targets. Passing does not automatically promote a
+  rule; an explicit versioned policy decision is still required.
+- Decision: policy v1.3.0 adds bounded SCC/MCC/RCWT transport visibility,
+  decode/continuity evidence, and an explicit declared audio-track map. It does
+  not claim complete CEA-608/708 or SMPTE 436 ANC conformance. Service metadata
+  that FFmpeg cannot preserve is `not_checked`; semantic channel assignment
+  remains advisory without authoritative reference metadata.
+- Deployment consequence: source/tests/docs only. Production was not accessed,
+  rebuilt, restarted, or deployed, and `AI_INTERPRETIVE_SHADOW=false` remains
+  the production setting.
+
 ### 2026-08-02 - Phase 2 perceptual metrics remain corpus-gated advisories
 
 - Decision: policy v1.2.0 adds bounded broadcast-only visual, audio, caption,
@@ -17,9 +47,10 @@ chat threads.
   advisory when enabled, and unable to change deterministic status or tiers.
 - Decision: synthetic fixtures prove code behavior, not network acceptance.
   Threshold promotion requires real decision-backed accepted/rejected records,
-  documented review, a new policy version, and regression proof. The helper's
-  20-per-class gate is a workflow minimum, not statistical certification, and
-  cannot update policy automatically. No composite score is permitted.
+  documented review, a new policy version, and regression proof. The initial
+  20-per-class floor was superseded later that day by the v2 independence,
+  stratified holdout, and Wilson error-bound gates recorded above. Neither
+  helper can update policy automatically. No composite score is permitted.
 - Deployment consequence: this milestone is source-only. Production remains on
   the previously recorded v1.1.0 worker image with
   `AI_INTERPRETIVE_SHADOW=false` until separately approved.

@@ -183,7 +183,7 @@ api.post("/uploads/outboard-url", requireSession, enforceOrigin, limiter("sign",
   return c.json({ url: await g.presignPut(`${owned.row.objectKey}.obao`) });
 });
 
-// Sidecars uploaded alongside the master: captions (.srt/.vtt) ride into the
+// Sidecars uploaded alongside the master: supported caption transports ride into the
 // caption QC; a source mezzanine (*.ref.mp4/.mov/.mxf) powers the reference
 // SSIM/PSNR/VMAF lane. Neither triggers its own pipeline run (event filter).
 // The name is allowlisted — an arbitrary filename here would be a write
@@ -305,6 +305,7 @@ api.get("/transfers/:id/download", async (c) => {
 const mimeOf = (k: string) =>
   k.endsWith(".jpg") || k.endsWith(".jpeg") ? "image/jpeg"
   : k.endsWith(".vtt") ? "text/vtt"
+  : /\.(srt|scc|mcc)$/i.test(k) ? "text/plain"
   : k.endsWith(".txt") ? "text/plain"
   : k.endsWith(".json") ? "application/json"
   : k.endsWith(".mp4") ? "video/mp4"
@@ -316,10 +317,10 @@ api.get("/transfers/:id", async (c) => {
   // a recipient link must never reveal that it once existed.
   if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
   const all = await g.listKeys(`transfers/${id}/`);
-  // The master is whatever ISN'T a sidecar — captions (.srt/.vtt), the bao
+  // The master is whatever ISN'T a sidecar — caption transports, the bao
   // outboard, and reference mezzanines ride along under the same prefix and
   // can sort ahead of the master alphabetically.
-  const SIDECAR_RE = /\.(obao|srt|vtt)$|\.ref\.[^./]+$/i;
+  const SIDECAR_RE = /\.(obao|srt|vtt|scc|mcc|rcwt)$|\.ref\.[^./]+$|\.genblaze\.json$/i;
   const originals = all.filter((o) => !SIDECAR_RE.test(o.key));
   if (originals.length === 0) return c.json({ error: "not found" }, 404);
   const orig = originals[0];

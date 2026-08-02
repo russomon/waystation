@@ -9,6 +9,7 @@ B2_KEY_ID=proof B2_APP_KEY=proof GMI_API_KEY=mock \
 PYTHONPATH="$ROOT/pipeline" "$PY" - <<'PYEOF'
 import json
 import tempfile
+from copy import deepcopy
 
 import worker
 from qc import interpretive, prompt_compiler, profiles, report as qreport
@@ -43,26 +44,47 @@ worker._gmi_chat = lambda *_args, **_kwargs: json.dumps({"findings": [{
     "evidence_ids": [f"{packet['packet_id']}-frame-1"],
 }]})
 with tempfile.TemporaryDirectory() as tmp:
-    report, checks, units = worker.run_interpretive_shadow("unused", tmp, packets)
-assert report["state"] == "complete" and report["shadow"] is True
-assert report["deterministic_verdict_unchanged"] is True
-assert checks[0]["decision"]["authority"] == "ai_advisory"
-assert checks[0]["status"] == "warn"
-assert report["input_sha256"] == interpretive.input_hash(packets)
+    shadow_report, observations, units = worker.run_interpretive_shadow("unused", tmp, packets)
+assert shadow_report["state"] == "complete" and shadow_report["shadow"] is True
+assert shadow_report["deterministic_verdict_unchanged"] is True
+assert observations[0]["decision"]["authority"] == "ai_advisory"
+assert observations[0]["advisory_state"] == "concern"
+assert not ({"name", "status", "tier"} & observations[0].keys())
+assert shadow_report["input_sha256"] == interpretive.input_hash(packets)
 assert units == {"model_passes": 1, "packets": 1, "frames": 1, "audio_seconds": 0}
 
 canonical = qreport.finalize({"checks": [{"name": "proof", "status": "pass"}]},
                              profiles.get("standard"))
-before = (canonical["status"], dict(canonical["tiers"]))
-canonical["ai_interpretive_shadow"] = {**report, "checks": checks}
+before = deepcopy(canonical)
+canonical["ai_interpretive_shadow"] = {**shadow_report,
+                                        "advisory_observations": observations}
 canonical = qreport.finalize(canonical, profiles.get("standard"))
-assert (canonical["status"], canonical["tiers"]) == before
+assert canonical["status"] == before["status"] and canonical["tiers"] == before["tiers"]
+
+# A hostile reducer may mutate its inputs, but it only receives the detached
+# packet snapshot created inside run_interpretive_shadow.
+packet_before = deepcopy(packets)
+real_normalize = worker.qinterpretive.normalize
+def hostile_normalize(data, selected, **kwargs):
+    selected[0]["finding"]["status"] = "fail"
+    selected[0]["finding"]["tier"] = "BLOCKER"
+    selected.clear()
+    return ({"schema_version": interpretive.SCHEMA_VERSION, "state": "complete",
+             "shadow": True, "advisory_only": True,
+             "deterministic_verdict_unchanged": True}, [])
+worker.qinterpretive.normalize = hostile_normalize
+with tempfile.TemporaryDirectory() as tmp:
+    worker.run_interpretive_shadow("unused", tmp, packets)
+worker.qinterpretive.normalize = real_normalize
+assert packets == packet_before
+assert canonical["checks"] == before["checks"]
+assert canonical["status"] == "pass" and canonical["tiers"]["BLOCKER"] == 0
 
 not_checked, empty_checks = interpretive.normalize(
     {"findings": [{"packet_id": "unknown", "outcome": "concern"}]}, packets,
     model="proof", prompt_sha256="abc", evidence=[])
 assert not_checked["state"] == "not_checked"
-assert len(empty_checks) == 1 and empty_checks[0]["status"] == "info"
+assert len(empty_checks) == 1 and empty_checks[0]["advisory_state"] == "informational"
 assert empty_checks[0]["observation"]["outcome"] == "not_checked"
 print("PASS versioned targeted prompt compiler + advisory shadow reducer")
 PYEOF

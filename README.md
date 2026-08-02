@@ -234,7 +234,8 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
     out-of-range pixel fraction; codec ringing doesn't false-flag),
     letterbox/pillarbox mattes, aspect/anamorphic sanity, field order +
     3:2 pulldown cadence (idet), picture boundaries, upconversion screen,
-    **PSE flash-risk scanner** (BT.1702-informed YDIF analysis),
+    **advisory PSE/flash candidate screen** (bounded YDIF heuristic; not a
+    compliance analyzer and never a BLOCKER),
     CEA-608/A53 + AFD + Dolby Vision side-data detection, and a
     **reference lane** vs an uploaded `*.ref.*` mezzanine: SSIM, PSNR, and
     **VMAF as the PVQ model (reported as 1–5 MOS)**.
@@ -246,12 +247,13 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
     density, encoding/markup validation, and a speech-alignment analyzer
     that estimates sync drift by sliding cues against silencedetect speech
     activity. AI lane adds profanity/compliance NLP + spoken-language-vs-tag
-    verification + censorship-artifact screening (Rule 3).
+    verification + advisory censorship-artifact screening.
 - ✅ **Netflix strict profile** — single toggle in the sender UI. Enforces
   the delivery constraints wherever the toolchain can measure them:
   −24 LKFS ±1.0 / −2.0 dBTP hard limits, allowed native framerates only,
-  no VFR / pulldown / interlace, single-asset rule, censorship elements
-  blocked, PSE hard-fail, R103 escalation. Report carries
+  no VFR / pulldown / interlace, single-asset rule, and R103 escalation.
+  Censorship model observations and the PSE YDIF heuristic remain advisory;
+  neither can hard-reject a delivery. Report carries
   `profile_label: Netflix_Delivery_Specification_Strict` + tier counts,
   rendered as chips on the delivery page.
 - ✅ **U.S. broadcast XDCAM HD 4:2:2 baseline** — a versioned Waystation
@@ -265,8 +267,10 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   defects compile into targeted, versioned AI review packets; optional model
   interpretation is shadow-only and spend-off by default. Visual artifact and
   legal-range screens remain advisory. Phase 2 adds bounded visual/audio defect,
-  SRT/VTT continuity, and metadata-contradiction evidence plus a corpus intake
-  gate. This is explicitly not universal U.S. network compliance. See
+  caption transport/continuity, explicit declared audio-map enforcement, and
+  metadata-contradiction evidence plus an independent stratified holdout gate
+  with Wilson error bounds. This is explicitly not universal U.S. network
+  compliance. See
   `docs/US_BROADCAST_BASELINE.md` and `docs/QC_CALIBRATION.md`.
 - ✅ **Read-only reporting contract and mandatory risk coverage.** Waystation
   never repairs or rewrites the master. `qc_report.json` separates the QC

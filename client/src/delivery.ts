@@ -78,7 +78,8 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     : `<p class="summary muted">No AI summary — the sender didn't order one for this delivery.</p>`));
   if (summary) (card.querySelector(".summary") as HTMLElement).textContent = summary;
 
-  // QC badge — deterministic + AI lanes, tiered BLOCKER / ISSUE / FYI.
+  // QC badge — canonical delivery disposition is deterministic-only. AI lane
+  // observations are rendered separately and never counted as BLOCKERs.
   if (qc) {
     const cls = qc.status === "pass" ? "ok" : qc.status === "warn" ? "warnc" : "bad";
     const label = qc.status === "pass" ? "✓ QC passed" : qc.status === "warn" ? "⚠ QC warnings" : "✗ QC failed";
@@ -95,6 +96,12 @@ export async function renderDelivery(id: string, root: HTMLElement) {
         chips.append(chip);
       }
       badge.append(chips);
+    }
+    const advisoryTiers = qc.advisory_tiers ?? {};
+    if (advisoryTiers.ISSUE || advisoryTiers.FYI) {
+      const advisory = el(`<p class="meta"></p>`);
+      advisory.textContent = `AI advisory: ${Number(advisoryTiers.ISSUE ?? 0)} review · ${Number(advisoryTiers.FYI ?? 0)} FYI · no delivery authority`;
+      badge.append(advisory);
     }
     const glyph = (s: string) => s === "pass" ? "✓" : s === "warn" ? "⚠" : s === "info" ? "ⓘ" : "✗";
     const addSection = (title: string, lines: string[]) => {

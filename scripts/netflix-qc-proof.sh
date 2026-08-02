@@ -9,8 +9,8 @@
 #                    and MUST NOT create or meter a repaired derivative
 #   C  bad30.mp4   — same file, STANDARD profile → zero blockers (review-level
 #                    ISSUEs only): the toggle IS the strictness
-#   D  strobe.mp4  — alternating black/white frames → netflix PSE scanner
-#                    hard-fails (photosensitivity risk)
+#   D  strobe.mp4  — alternating black/white frames → advisory PSE candidate;
+#                    never a delivery blocker
 # Plus: .ref sidecar accepted by /uploads/sidecar-url, .exe rejected, and a
 # signed B2 event for the .ref key does NOT trigger a second pipeline run.
 set -u
@@ -154,11 +154,15 @@ need(a["profile"] == "netflix" and a["profile_label"] == "Netflix_Delivery_Speci
 need(a["tiers"]["BLOCKER"] == 0 and a["tiers"]["ISSUE"] == 0, "A must have zero blockers/issues")
 for name, frag in [("framerate", "24p"), ("loudness", "-24"), ("true_peak", ""),
                    ("timecode_continuity", "monotonic"), ("multipart_delivery", "single"),
-                   ("pse_flash_risk", ""), ("video_legal_range", ""), ("reference_ssim", "SSIM"),
+                   ("video_legal_range", ""), ("reference_ssim", "SSIM"),
                    ("caption_sync", ""), ("caption_encoding", "")]:
     chk = ck(a, name)
     need(chk and chk["status"] == "pass", f"A {name} should pass ({chk})")
     if chk and frag: need(frag in chk["detail"], f"A {name} detail missing '{frag}': {chk['detail']}")
+pse_clear = ck(a, "pse_flash_risk")
+need(pse_clear and pse_clear["status"] == "info"
+     and pse_clear["decision"]["authority"] == "deterministic_advisory",
+     "A PSE screen must disclose bounded no-candidate evidence without claiming pass")
 vmaf = ck(a, "reference_vmaf")
 if vmaf: print(f"    reference_vmaf: {vmaf['detail']}")
 need(vmaf and vmaf["status"] == "pass" and "MOS" in vmaf["detail"], "A VMAF/MOS vs identical mezzanine")
@@ -188,8 +192,10 @@ need(ck(c, "framerate")["status"] == "pass", "C framerate unrestricted under sta
 print(f"  D (netflix, strobe): status={d['status']} tiers={d['tiers']}")
 pse = ck(d, "pse_flash_risk")
 print(f"    pse_flash_risk: {pse['status']} [{pse.get('tier')}] — {pse['detail']}")
-need(pse and pse["status"] == "fail" and pse.get("tier") == "BLOCKER", "D PSE scanner must hard-fail (Rule 7)")
+need(pse and pse["status"] == "warn" and pse.get("tier") == "ISSUE",
+     "D PSE heuristic must remain advisory")
+need(d["tiers"]["BLOCKER"] == 0, "D PSE heuristic must never create a BLOCKER")
 
-print("PASS ✓  Netflix profile + tiers + reporter-only mode + reference lane + PSE" if ok else "FAIL")
+print("PASS ✓  Netflix profile + tiers + reporter-only mode + reference lane + advisory PSE" if ok else "FAIL")
 sys.exit(0 if ok else 1)
 PYEOF
