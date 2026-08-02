@@ -22,10 +22,10 @@ switches and chat history gaps.
   Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01`; transfer
   `d292c10b…`; end-to-end ~3 m 36 s. Local proof
   suite green at that commit (19 discovered, 19 passed).
-- **Deployed now:** gateway `7291c80`, portal pinned `ab15668`, branch head
-  `ecb0ee2`. See "Deployment reconciliation" below — production and branch head
-  are **identical for every file that runs**; the only gap is a stale worker
-  image.
+- **Deployed now:** gateway `7291c80`, portal pinned `ab15668`. See
+  "Deployment reconciliation" below — at the recorded reconciliation baseline,
+  production and branch runtime source were **identical for every file that
+  runs**; the only known gap was a stale worker image.
 - Immediate next action: **record the baseline demo**, then decide whether to
   build the narrow synthetic-origin feature before submission (design preserved
   in `docs/SYNTHETIC_ORIGIN_PLAN.md`; deliberately NOT implemented).
@@ -35,19 +35,22 @@ switches and chat history gaps.
 
 ## Deployment reconciliation — 2026-08-01
 
-Branch head is 2 commits ahead of the deployed gateway commit, which **looks**
-like drift and is not. Verified by content, not by commit count:
+At reconciliation baseline `c94cffb`, the branch contains three commits after
+the deployed gateway commit: the published client change `ab15668` and two
+documentation-only commits (`ecb0ee2`, `c94cffb`). That **looks** like drift by
+commit count and is not. Verified by content:
 
 | Comparison | Result |
 |---|---|
-| `gateway/` `7291c80..ecb0ee2` | **0 files changed** |
-| `pipeline/` `7291c80..ecb0ee2` | **0 files changed** |
-| `crates/` `7291c80..ecb0ee2` | **0 files changed** |
-| `client/` `ab15668..ecb0ee2` | **0 files changed** (and `ab15668` is what is published) |
+| `gateway/` `7291c80..c94cffb` | **0 files changed** |
+| `pipeline/` `7291c80..c94cffb` | **0 files changed** |
+| `crates/` `7291c80..c94cffb` | **0 files changed** |
+| `client/` `ab15668..c94cffb` | **0 files changed** (and `ab15668` is what is published) |
 
-So the two commits ahead are: one client commit that **is** published, and one
-docs-only commit. **Production matches branch head exactly for every file that
-runs.** Nothing to reconcile in git.
+At that baseline, **production matches the branch's runtime source exactly for
+every file that runs.** Nothing needs reconciling in git. Later changes must be
+checked by content again; this statement deliberately does not call a mutable
+branch tip a deployment identifier.
 
 **The one real gap is a stale worker IMAGE, not a git divergence.** `e89da62`
 (cost-aware AI triage) is an **ancestor** of `7291c80`, so the triage source is
