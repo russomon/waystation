@@ -18,6 +18,7 @@ ffmpeg -y -v error \
   -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1:a=0,setfield=tff[v];[3:a]volume=0.7[a]" \
   -map "[v]" -map "[a]" \
   -c:v mpeg2video -profile:v 0 -level:v 2 -pix_fmt yuv422p \
+  -color_range tv -colorspace bt709 -color_trc bt709 -color_primaries bt709 \
   -flags +ildct+ilme -top 1 -b:v 50M -minrate 50M -maxrate 50M \
   -bufsize 17825792 -g 15 -bf 2 -sc_threshold 1000000000 \
   -c:a pcm_s24le -ar 48000 -ac 2 -timecode "01:00:00;00" \
@@ -41,7 +42,7 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.getcwd(), "pipeline"))
 import worker
-from qc import broadcast, profiles
+from qc import broadcast, profiles, prompt_compiler as qprompt_compiler
 
 ok = True
 
@@ -55,7 +56,7 @@ def by_name(checks):
     return {item["name"]: item for item in checks}
 
 profile = profiles.get("us_broadcast_xdcam_hd_422_v1")
-need(profile["policy_pack"]["version"] == "1.0.0", "policy pack version")
+need(profile["policy_pack"]["version"] == "1.1.0", "policy pack version")
 need("not a universal network" in profile["policy_pack"]["scope"].lower(),
      "scope must reject universal-network claim")
 
@@ -84,6 +85,7 @@ for name in (
     "broadcast_video_codec_profile", "broadcast_frame_rate", "broadcast_raster",
     "broadcast_scan_field_order", "broadcast_bit_depth_chroma",
     "broadcast_video_bitrate", "broadcast_audio_layout", "broadcast_audio_format",
+    "broadcast_picture_aspect", "broadcast_colorimetry", "broadcast_program_start_alignment",
     "broadcast_required_metadata", "broadcast_duration_consistency",
     "broadcast_timestamp_continuity", "broadcast_gop", "broadcast_black_head",
     "broadcast_black_tail", "broadcast_program_black", "broadcast_freeze_runs",
@@ -104,6 +106,7 @@ for name in (
     "broadcast_frame_rate", "broadcast_raster", "broadcast_scan_field_order",
     "broadcast_bit_depth_chroma", "broadcast_video_bitrate",
     "broadcast_audio_format", "broadcast_required_metadata",
+    "broadcast_colorimetry",
     "broadcast_captions_present",
 ):
     need(bad_checks.get(name, {}).get("status") == "fail", f"bad {name} must fail")
@@ -147,6 +150,16 @@ for name in ("broadcast_program_black", "broadcast_freeze_runs", "broadcast_sile
     need(bad_signal[name]["status"] == "warn", f"{name} must remain advisory")
     need(bad_signal[name]["decision"]["authority"] == "deterministic_advisory",
          f"{name} authority")
+    events = bad_signal[name]["observation"]["value"]["events"]
+    need(events and all("duration_seconds" in event for event in events),
+         f"{name} must carry per-event duration")
+
+# Explicit policy overrides may promote calibrated timeline events to hard
+# delivery failures; the baseline deliberately leaves them advisory.
+strict_timeline = profiles.get("broadcast_xdcam", {"signal": {"freeze_authority": "policy"}})
+strict_freeze = by_name(broadcast.signal_segment_checks(bad_segments, 10.0, strict_timeline))
+need(strict_freeze["broadcast_freeze_runs"]["status"] == "fail",
+     "explicit freeze policy authority must hard-fail")
 
 good_audio = by_name(broadcast.audio_measurement_checks({"i": -24.0, "tp": -3.0}, profile))
 bad_audio = by_name(broadcast.audio_measurement_checks({"i": -18.0, "tp": -0.5}, profile))
@@ -192,6 +205,27 @@ finally:
     broadcast._tool_version.cache_clear()
 need(missing["status"] == "info" and missing["decision"]["outcome"] == "not_checked",
      "missing MediaConch must be FYI/not_checked")
+
+# Advanced deterministic metadata classes use targeted known-bad facts instead
+# of pretending the generic MP4 violates every independent requirement.
+advanced_meta = worker.ffprobe(os.environ["GOOD"])
+advanced_video = next(s for s in advanced_meta["streams"] if s.get("codec_type") == "video")
+advanced_audio = next(s for s in advanced_meta["streams"] if s.get("codec_type") == "audio")
+advanced_video["sample_aspect_ratio"] = "4:3"
+advanced_video["color_space"] = "smpte170m"
+advanced_audio["start_time"] = str(float(advanced_video.get("start_time", 0) or 0) + 0.5)
+advanced_bad = by_name(broadcast.metadata_checks(advanced_meta, profile))
+for name in ("broadcast_picture_aspect", "broadcast_colorimetry",
+             "broadcast_program_start_alignment"):
+    need(advanced_bad[name]["status"] == "fail", f"targeted bad {name}")
+
+# Targeted review packets compile only unresolved deterministic findings and
+# retain the no-override constraint. They do not compile clean passes.
+packets = qprompt_compiler.compile_packets({"checks": list(bad_signal.values())})
+need(packets, "bad integration must compile targeted AI review packets")
+need(all("Do not change, clear, or override" in " ".join(p["constraints"]) for p in packets),
+     "review packets must preserve deterministic authority")
+need(not (good.get("ai_review_packets") or []), "good integration must not create review payload")
 
 print("PASS ✓  versioned U.S. broadcast XDCAM baseline + evidence fixtures" if ok else "FAIL")
 sys.exit(0 if ok else 1)

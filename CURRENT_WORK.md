@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-02 (deterministic QC milestone 1, source only)
+Updated: 2026-08-02 (deterministic QC milestones 1-2, deployment pending)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -26,9 +26,8 @@ switches and chat history gaps.
   "Deployment reconciliation" below — at the recorded reconciliation baseline,
   production and branch runtime source were **identical for every file that
   runs**; the only known gap was a stale worker image.
-- Immediate next action: **record the baseline demo**, then decide whether to
-  build the narrow synthetic-origin feature before submission (design preserved
-  in `docs/SYNTHETIC_ORIGIN_PLAN.md`; deliberately NOT implemented).
+- Immediate engineering action: finish validation, commit/push, then perform
+  the explicitly authorized worker-only production rebuild recorded below.
 - The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
@@ -78,9 +77,9 @@ as above, rather than trusting `git rev-parse` on the host.
   Debian `mediaconch=25.04-2`. Image labels, environment, binary output, and the
   report's `tool_provenance` retain version/source evidence. No QCTools or
   MediaConch GUI application is installed.
-- At that commit this step was **plumbing only**. Milestone 1 below now activates
-  a bounded MediaConch metadata-policy adapter for one versioned broadcast
-  baseline. QCTools remains availability-only and explicitly not checked.
+- At that commit this step was **plumbing only**. The milestones below now
+  activate a bounded MediaConch metadata-policy adapter and bounded advisory
+  QCTools evidence extraction for one versioned broadcast baseline.
 - Validated locally: gateway typecheck, client production build, worker
   compile/import, both Compose configs, shell syntax, missing/present adapter
   proof, and a real Docker worker build with exact qcli/MediaConch versions,
@@ -92,8 +91,8 @@ as above, rather than trusting `git rev-parse` on the host.
   Rebuilding production later would both install this toolchain and activate the
   already-pending AI-triage source for future uploads; that remains a separate
   demo/readiness decision.
-- The no-universal-parity boundary remains: QCTools extraction and any wider
-  customer/network policy packs still require their own fixtures and proofs.
+- The no-universal-parity boundary remains: QCTools threshold calibration and
+  any wider customer/network policy packs require real corpus fixtures.
 
 ## Deterministic QC milestone 1, steps 1-3 — 2026-08-02
 
@@ -110,7 +109,8 @@ as above, rather than trusting `git rev-parse` on the host.
   true peak; timecode/material UMID; captions; black head/tail. MediaConch 25.04
   supplies an independent MAXML metadata fact set to a pure versioned reducer.
 - Programme black, freeze runs, silence runs, and legal-range evidence are
-  active advisories only. QCTools remains FYI/not checked. Missing tools or
+  active advisories only. At this milestone QCTools was FYI/not checked; the
+  next milestone supersedes that state. Missing tools or
   measurements cannot become a pass. Every baseline finding carries separate
   expectation, observation, evidence/time range, tool provenance, policy hash,
   and decision authority; no AI pass or composite score was added.
@@ -126,6 +126,37 @@ as above, rather than trusting `git rev-parse` on the host.
 - Next milestone: bounded QCTools report extraction/reducers and real
   customer/network acceptance-fixture calibration. Do not broaden hard policy
   authority before those proofs exist.
+
+## Deterministic QC milestone 2, steps 4-9 — 2026-08-02
+
+- Policy pack `us_broadcast_xdcam_hd_422_baseline` is now v1.1.0. It adds
+  square-pixel/16:9 aspect, declared `tv`/`bt709` range/matrix, multi-window
+  timestamp/GOP coverage, and A/V programme-start alignment. It remains a
+  documented house baseline, not universal U.S. network parity.
+- Timeline findings now carry bounded event lists with start/end/duration,
+  expected threshold, observed count, truncation state, policy hash, tool
+  provenance, and explicit authority. Intended head/tail black is excluded
+  from programme-black events. Programme black, freeze/repeated-frame runs,
+  silence, legal-range, and QCTools measurements remain advisory by default;
+  only an explicit policy override can promote a calibrated timeline rule.
+- QCTools `qcli` now analyzes at most three eight-second excerpts across the
+  programme, reduces a validated signalstats allowlist, and retains raw gzip
+  XML SHA-256/size/time-range plus exact binary/source provenance. Missing,
+  failed, timed-out, or malformed analysis is `not_checked`, never pass.
+- A versioned prompt compiler emits only unresolved deterministic targets with
+  relevant evidence/time ranges and at most two requested still/audio assets.
+  The AI Interpretive Pass is opt-in shadow mode, one bounded GMI call, with
+  model/prompt/input provenance and uncertainty. Its findings live outside the
+  canonical delivery checks and cannot alter deterministic status or tiers.
+  Production compose explicitly sets `AI_INTERPRETIVE_SHADOW=false`, so the
+  worker rebuild does not enable this new spend path.
+- Focused local and Docker proofs cover good/bad timeline events, advanced
+  metadata, policy overrides, QCTools present/missing/malformed behavior,
+  packet minimization, and advisory shadow normalization. Full regression and
+  production deployment evidence will be recorded after those phases finish.
+- Production is still unchanged at this line in history. The final authorized
+  action is a worker-only rebuild after source is committed/pushed and live
+  checkout/scratch/Compose safety checks pass.
 
 ## Large-file mode PROVEN on real media — 2026-08-01
 

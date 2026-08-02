@@ -25,6 +25,18 @@ docker run --rm --entrypoint sh "$IMAGE" -c '
   test -s probe.mkv.qctools.mkv
   cd /app
   python -c "from qc import archive_tools as a; i=a.inventory(); c=a.checks(i); assert all(x[\"available\"] and x[\"state\"] == \"available_not_active\" for x in i); assert all(x[\"status\"] == \"info\" and \"not checked\" in x[\"detail\"].lower() for x in c)"
+  mkdir -p /tmp/qctools-proof
+  python - <<"PY"
+from qc import profiles, qctools
+p = profiles.get("broadcast_xdcam")
+checks, report = qctools.analyze("/tmp/probe.mkv", "/tmp/qctools-proof", 1.0, p)
+assert checks[0]["status"] == "info", checks
+assert checks[0]["decision"]["authority"] == "deterministic_advisory", checks
+assert report["state"] == "measured_advisory", report
+assert report["artifacts"][0]["sha256"], report
+assert report["windows"][0]["metrics"]["lavfi.signalstats.YAVG"], report
+print("  bounded qcli reducer:", checks[0]["detail"])
+PY
   ! command -v qctools >/dev/null
   ! command -v mediaconch-gui >/dev/null
 '

@@ -258,7 +258,10 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   material-package UMID, captions, black head/tail, loudness and true peak.
   Every baseline finding separates policy expectation, observed fact,
   evidence/time range, tool version, and deterministic decision authority.
-  MediaConch independently supplies MAXML metadata facts; visual artifact and
+  MediaConch independently supplies MAXML metadata facts; bounded QCTools
+  signalstats reports retain raw-report hashes and remain advisory. Timeline
+  defects compile into targeted, versioned AI review packets; optional model
+  interpretation is shadow-only and spend-off by default. Visual artifact and
   legal-range screens remain advisory. This is explicitly not universal U.S.
   network compliance. See `docs/US_BROADCAST_BASELINE.md` and the two
   `scripts/broadcast-qc-*-proof.sh` proofs.

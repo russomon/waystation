@@ -39,10 +39,14 @@ def decode_and_detections(src: str, has_video: bool, has_audio: bool,
                             f"{len(errs)} error line(s)" + (f"; first: {errs[0][:120]}" if errs else "")))
 
     cmd = ["ffmpeg", "-hide_banner", "-i", src]
+    signal = (profile or {}).get("broadcast_policy", {}).get("signal", {})
+    black_min = float(signal.get("unexpected_black_min_seconds", 0.5))
+    freeze_min = float(signal.get("freeze_min_seconds", 2.0))
+    silence_min = float(signal.get("silence_min_seconds", 2.0))
     if has_video:
-        cmd += ["-vf", "blackdetect=d=0.5:pix_th=0.10,freezedetect=n=-60dB:d=2"]
+        cmd += ["-vf", f"blackdetect=d={black_min}:pix_th=0.10,freezedetect=n=-60dB:d={freeze_min}"]
     if has_audio:
-        cmd += ["-af", "silencedetect=noise=-50dB:d=2"]
+        cmd += ["-af", f"silencedetect=noise=-50dB:d={silence_min}"]
     cmd += ["-f", "null", "-"]
     log = run(cmd).stderr
 

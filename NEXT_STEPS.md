@@ -17,7 +17,7 @@ history.
   verified-download control. Download averaged 232 Mb/s in 16:09. Four defects
   found and fixed doing it — see `CURRENT_WORK.md`.
 
-- **Reconcile the stale worker IMAGE (cost-aware AI triage).**
+- **Reconcile the stale worker IMAGE after the current source commit is pushed.**
 
   > Read this framing before acting — an earlier note in this file said triage
   > "landed on the branch and is not deployed", which was **wrong**. `e89da62`
@@ -48,12 +48,12 @@ history.
   report shows "Cost-aware AI triage", and any skipped AI work is disclosed as
   a **skip**, never as clearance.
 
-  **Held back deliberately.** The current worker runs the exact code that passed
-  the 14-check rehearsal on 2026-07-28. Triage is a cost optimisation, not a
-  fix, and rebuilding changes AI spend behaviour unrehearsed in production two
-  days before the deadline. Leaving it stale until the baseline demo is recorded
-  is a legitimate choice; if you leave it, record that as intentional rather
-  than letting it look like drift.
+  The user explicitly authorized this worker-only rebuild for the current task.
+  Before mutation, independently verify the live checkout/ref, clean tree,
+  scratch preflight, Compose config and existing container/image state. Rebuild
+  and restart only `worker`; do not touch gateway, cloudflared, the control
+  volume, historical uploads, or scratch data. Prove source/tools/triage in the
+  running container and record that interpretive shadow remains false.
 
 - ~~**Phase 1 deterministic milestone 1, steps 1-3.**~~ **DONE in source
   2026-08-02.** The versioned U.S. broadcast XDCAM baseline, active ffprobe /
@@ -61,15 +61,15 @@ history.
   known-good/known-bad proofs are present. It is a house baseline, not complete
   broadcast-MXF or universal network parity.
 
-  Next: add a bounded QCTools report extractor and pure reducers, then calibrate
-  advisory black/freeze/silence/legal-range thresholds against representative
-  customer/network accepted and rejected masters. Preserve raw report hashes,
-  exact versions and time ranges. Do not broaden hard-rejection authority from
-  synthetic fixture behavior alone.
+  ~~Next: bounded QCTools extraction and timeline/prompt/shadow plumbing.~~
+  **DONE in source 2026-08-02.** QCTools runs bounded advisory signalstats
+  excerpts with raw report hashes; timeline events are evidence-rich; targeted
+  review packets and spend-off shadow execution are proven; scoped aspect,
+  color-matrix/range and programme-start rules are in policy v1.1.0.
 
-  **Production remains unchanged.** Any future worker rebuild must be reviewed as
-  one runtime change because it would both install these CLIs and activate the
-  already-pending AI-triage source for subsequent uploads.
+  Remaining calibration: representative customer/network accepted and rejected
+  masters. Do not broaden advisory QCTools, black/freeze/silence/legal-range
+  authority from synthetic fixtures alone.
 
 - **Record the baseline hackathon demo.** The hosted MVP is deployed, published
   and rehearsed — **14/14 production checks passed 2026-07-28** (record in

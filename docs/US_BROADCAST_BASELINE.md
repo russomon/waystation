@@ -1,7 +1,7 @@
 # U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline
 
 Policy ID: `us_broadcast_xdcam_hd_422_baseline`
-Version: `1.0.0`
+Version: `1.1.0`
 Profile: `us_broadcast_xdcam_hd_422_v1`
 Source: `pipeline/policies/us_broadcast_xdcam_hd_422_v1.json`
 
@@ -19,6 +19,7 @@ The v1 assumptions are:
 - XDCAM HD 4:2:2 MPEG-2, nominal 50 Mb/s;
 - 1920x1080, exact `30000/1001`, interlaced top-field-first;
 - 8-bit `yuv422p` picture essence;
+- square pixels, 16:9 display aspect, and declared `tv`/`bt709` range/matrix;
 - one 24-bit, 48 kHz PCM stereo programme track;
 - material-package UMID and SMPTE drop-frame start timecode;
 - captions embedded or supplied as an SRT/VTT sidecar;
@@ -33,8 +34,8 @@ Hard policy decisions use deterministic evidence only:
 |---|---|
 | Decode/streams | FFmpeg full decode; ffprobe video/audio stream inventory |
 | Wrapper | ffprobe MXF format and exact OP1a operational-pattern UL; MediaInfo and MediaConch metadata cross-checks |
-| Video essence | codec/profile, exact rational frame rate, raster, field order, bit depth, chroma, and bitrate |
-| Timeline | bounded 1,800-frame GOP/key-frame and timestamp scan; wrapper/stream duration agreement |
+| Video essence | codec/profile, exact rational frame rate, raster/aspect, field order, bit depth, chroma, bitrate, and range/matrix metadata |
+| Timeline | bounded 1,800-frame GOP/key-frame and timestamp scan spread across the programme; wrapper/stream duration agreement; A/V programme-start alignment |
 | Audio | track/channel layout, PCM/sample rate/bit depth, full-program EBU R128 loudness and true peak |
 | Metadata | material-package UMID and start timecode presence |
 | Captions | embedded-stream or SRT/VTT sidecar presence; existing caption timing/readability/coverage checks then run |
@@ -44,12 +45,14 @@ The following deterministic screens are active but advisory because they have
 not been calibrated against a representative network-accepted/rejected corpus:
 
 - unexpected programme black;
-- freeze/duplicate-frame runs;
+- freeze/repeated-frame runs;
 - prolonged silence;
 - tiled legal-range amplitude/area evidence.
 
 They may produce `ISSUE` findings but do not hard-reject this baseline. The
-policy contains no composite quality or trust score.
+policy contains no composite quality or trust score. Each event carries start,
+end, duration, threshold, authority, and truncation state. Head/tail black that
+satisfies the boundary rule is excluded from the programme-black finding.
 
 ## Evidence Contract
 
@@ -69,9 +72,22 @@ The report also includes the full `policy_pack` descriptor and
 MediaConch is used only for its supported MediaInfo/MAXML metadata reporting on
 MXF. Waystation applies the versioned pure reducer to those facts and retains
 the MAXML SHA-256 plus all expected/actual assertions. This is not a claim that
-MediaConch's implementation checker certifies MXF essence. QCTools `qcli`
-remains installed and provenance-visible but is not active until a bounded,
-validated report extractor exists.
+MediaConch's implementation checker certifies MXF essence.
+
+QCTools `qcli` analyzes at most three eight-second excerpts spread across the
+timeline. Waystation reduces only the validated `signalstats` fields, records
+the exact qcli version/source revision and SHA-256/size/time range of every raw
+compressed XML report, and labels the result advisory. Missing binaries,
+timeouts, failed excerpts, and malformed XML are `FYI / not_checked`, never a
+pass. These measurements do not make a broadcast-compliance decision and stay
+advisory until calibrated against representative accepted/rejected masters.
+
+Unresolved deterministic timeline findings compile into versioned, bounded AI
+review packets containing only the relevant finding, evidence, timestamp range,
+review question, and requested still/audio excerpt. The optional AI
+Interpretive Pass is shadow-only (`AI_INTERPRETIVE_SHADOW=false` by default),
+records model/prompt/input provenance and uncertainty, and cannot alter the
+deterministic verdict or tier counts.
 
 ## Overrides
 
@@ -92,6 +108,8 @@ when overrides are active, rather than applying mismatched assumptions.
 ```bash
 bash scripts/broadcast-qc-proof.sh
 bash scripts/broadcast-qc-docker-proof.sh
+bash scripts/qctools-analysis-proof.sh
+bash scripts/interpretive-shadow-proof.sh
 ```
 
 The first constructs an actual passing MXF and failing MP4, then exercises

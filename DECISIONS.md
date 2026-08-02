@@ -11,7 +11,7 @@ chat threads.
   Network/customer requirements differ, while wrapper facts, measurements and
   policy decisions are different kinds of evidence.
 - Decision: milestone 1 ships profile `us_broadcast_xdcam_hd_422_v1`, backed by
-  immutable policy pack `us_broadcast_xdcam_hd_422_baseline` v1.0.0. It states
+  immutable policy pack `us_broadcast_xdcam_hd_422_baseline` v1.1.0. It states
   its exact MXF OP1a/XDCAM assumptions and accepts only explicit nested JSON
   overrides. Unknown override keys fail closed; reports retain both source and
   effective policy hashes plus the override object.
@@ -19,19 +19,27 @@ chat threads.
   `evidence`, `provenance`, `decision`, and policy identity. Full decode,
   wrapper/essence/timing/audio/metadata/caption/boundary rules may reject from
   deterministic evidence. Black/freeze/silence and legal-range screens remain
-  advisory until calibrated. There is no composite score and AI gains no
-  policy authority.
+  advisory until calibrated. Event authority is an explicit overrideable policy
+  value; baseline defaults remain advisory. There is no composite score and AI
+  gains no policy authority.
 - MediaConch boundary: use its supported MAXML/MediaInfo metadata output for an
   independent fact set, then apply a pure Waystation reducer. Do not claim its
-  implementation checker certifies MXF. QCTools stays FYI/not checked until a
-  bounded extractor is proven.
-- Deployment consequence: this is source/image readiness only. Production was
-  not rebuilt or restarted; activation remains a separate explicit decision.
+  implementation checker certifies MXF.
+- QCTools boundary: run only bounded timeline excerpts, reduce only validated
+  signalstats fields, retain raw XML hashes and exact qcli provenance, and keep
+  all measurements advisory pending real accepted/rejected corpus calibration.
+  Unavailable, failed, timed-out, or malformed analysis is `not_checked`.
+- AI boundary: compile targeted deterministic-review packets locally. The AI
+  Interpretive Pass is an explicit runtime opt-in, executes in shadow mode,
+  records model/prompt/input provenance and uncertainty, and is stored outside
+  canonical delivery checks so it cannot alter deterministic status or tiers.
+- Deployment consequence: source/image readiness and production activation are
+  recorded separately; see CURRENT_WORK.md for the current runtime state.
 
 ### 2026-08-01 - Install preservation CLIs before activating their policies
 
-- Status: superseded for MediaConch by the 2026-08-02 baseline decision above;
-  QCTools remains availability-only.
+- Status: superseded for MediaConch and QCTools by the 2026-08-02 baseline
+  decision above.
 
 - Context: Phase 1 needs stronger deterministic analytics and preservation
   policy plumbing, but package presence is not evidence that a file was checked

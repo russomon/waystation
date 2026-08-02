@@ -1,8 +1,8 @@
 {
   "policy_id": "us_broadcast_xdcam_hd_422_baseline",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "profile_name": "us_broadcast_xdcam_hd_422_v1",
-  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.0",
+  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.1",
   "scope": "A Waystation house baseline for one common U.S. HD broadcast delivery shape. It is not a universal network specification or evidence of acceptance by any broadcaster.",
   "assumptions": [
     "single-file MXF OP1a delivery",
@@ -12,7 +12,8 @@
     "SMPTE drop-frame start timecode and material-package UMID present",
     "captions supplied as an embedded stream or SRT/VTT sidecar",
     "1 to 5 seconds of black at head and tail",
-    "programme loudness -24 LKFS +/-2 LU and true peak at or below -2 dBTP"
+    "programme loudness -24 LKFS +/-2 LU and true peak at or below -2 dBTP",
+    "BT.709 colour metadata, 16:9 display aspect, square pixels, and aligned programme starts"
   ],
   "rules": {
     "wrapper": {
@@ -29,8 +30,14 @@
       "field_orders": ["tt"],
       "bit_depth": 8,
       "pixel_formats": ["yuv422p"],
+      "sample_aspect_ratio": "1:1",
+      "display_aspect_ratio": "16:9",
+      "colorimetry": {
+        "color_range": ["tv"],
+        "color_space": ["bt709"]
+      },
       "bit_rate": {"target": 50000000, "tolerance": 5000000},
-      "gop": {"max_frames": 15, "scan_frames": 1800},
+      "gop": {"max_frames": 15, "scan_frames": 1800, "scan_windows": 3},
       "timestamp_gap_multiplier": 2.5,
       "duration_tolerance_seconds": 0.5
     },
@@ -40,6 +47,7 @@
       "codecs": ["pcm_s24le"],
       "sample_rate": 48000,
       "bit_depth": 24,
+      "max_video_start_offset_seconds": 0.034,
       "loudness": {"target_lkfs": -24.0, "tolerance_lu": 2.0},
       "true_peak": {"max_dbtp": -2.0}
     },
@@ -51,8 +59,18 @@
       "unexpected_black_min_seconds": 0.5,
       "freeze_min_seconds": 2.0,
       "silence_min_seconds": 2.0,
+      "max_reported_events": 100,
+      "program_black_authority": "advisory",
+      "freeze_authority": "advisory",
+      "silence_authority": "advisory",
       "visual_artifact_authority": "advisory",
       "legal_range_authority": "advisory"
+    },
+    "qctools": {
+      "window_seconds": 8.0,
+      "max_windows": 3,
+      "authority": "advisory",
+      "calibration_state": "pending_real_accepted_rejected_corpus"
     }
   }
 }

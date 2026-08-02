@@ -111,6 +111,10 @@ services:
       AI_QC_AUDIO_WINDOWS: "2"
       AI_QC_SYNTH_COARSE_FRAMES: "8"
       AI_QC_SYNTH_FINE_MAX: "6"
+      # Review packets are local. Shadow GMI interpretation stays spend-off
+      # until an operator explicitly changes this runtime setting.
+      AI_INTERPRETIVE_SHADOW: "false"
+      AI_INTERPRETIVE_SHADOW_MAX_PACKETS: "4"
 
       # ── scratch: every heavy write lands on the 390 GB data disk ──
       # The worker's real scratch usage is two tempfile.TemporaryDirectory()

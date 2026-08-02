@@ -273,7 +273,22 @@ generation. The broadcast proof verifies that MediaConch 25.04 emits MAXML
 facts and Waystation's v1 U.S. XDCAM baseline reducer passes/fails known media
 shapes. This metadata-policy adapter is active only when profile
 `us_broadcast_xdcam_hd_422_v1` is selected; it is not a universal network or
-MXF implementation-conformance claim. QCTools remains `FYI · not checked`.
+MXF implementation-conformance claim. QCTools is active for this profile as a
+bounded advisory evidence collector: up to three eight-second excerpts,
+validated signalstats only, with raw XML report hashes. It never makes a
+broadcast-compliance decision; unavailable/failed/malformed analysis is
+explicitly `FYI · not_checked`.
+
+The worker also compiles targeted deterministic-review packets. Model execution
+is spend-disabled by default and must remain explicit:
+
+```text
+AI_INTERPRETIVE_SHADOW=false
+AI_INTERPRETIVE_SHADOW_MAX_PACKETS=4
+```
+
+When enabled, the AI Interpretive Pass is shadow/advisory and cannot change the
+deterministic delivery status or tier counts.
 
 Customer-specific baseline values can be overridden with
 `WAYSTATION_BROADCAST_POLICY_OVERRIDES` JSON. Unknown keys fail closed, and

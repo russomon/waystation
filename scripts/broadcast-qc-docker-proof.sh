@@ -18,6 +18,7 @@ docker run --rm --entrypoint sh "$IMAGE" -c '
     -f lavfi -i "sine=frequency=1000:sample_rate=48000:duration=2" \
     -vf setfield=tff -c:v mpeg2video -profile:v 0 -level:v 2 \
     -pix_fmt yuv422p -flags +ildct+ilme -top 1 \
+    -color_range tv -colorspace bt709 -color_trc bt709 -color_primaries bt709 \
     -b:v 50M -minrate 50M -maxrate 50M -bufsize 17825792 \
     -g 15 -bf 2 -sc_threshold 1000000000 \
     -c:a pcm_s24le -ar 48000 -ac 2 -timecode "01:00:00;00" \

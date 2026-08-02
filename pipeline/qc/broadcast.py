@@ -197,6 +197,33 @@ def metadata_checks(meta: dict, profile: dict) -> list[dict]:
             provenance=probe,
         ))
 
+        aspect_expected = {"sample_aspect_ratio": vrules["sample_aspect_ratio"],
+                           "display_aspect_ratio": vrules["display_aspect_ratio"]}
+        aspect_observed = {"sample_aspect_ratio": video.get("sample_aspect_ratio"),
+                           "display_aspect_ratio": video.get("display_aspect_ratio")}
+        aspect_ok = aspect_observed == aspect_expected
+        out.append(_finding(
+            "broadcast_picture_aspect", "pass" if aspect_ok else "fail",
+            f"SAR {aspect_observed['sample_aspect_ratio'] or 'missing'}, "
+            f"DAR {aspect_observed['display_aspect_ratio'] or 'missing'}",
+            "structural", profile, expected=aspect_expected, observed=aspect_observed,
+            evidence=[{"id": "ffprobe:video-0-aspect", "kind": "probe_fields",
+                       "fields": ["sample_aspect_ratio", "display_aspect_ratio"]}],
+            provenance=probe,
+        ))
+
+        color_expected = vrules["colorimetry"]
+        color_observed = {field: video.get(field) for field in color_expected}
+        color_ok = all(color_observed[field] in allowed
+                       for field, allowed in color_expected.items())
+        out.append(_finding(
+            "broadcast_colorimetry", "pass" if color_ok else "fail",
+            ", ".join(f"{key}={value or 'missing'}" for key, value in color_observed.items()),
+            "signal", profile, expected=color_expected, observed=color_observed,
+            evidence=[{"id": "ffprobe:video-0-color", "kind": "probe_fields",
+                       "fields": list(color_expected)}], provenance=probe,
+        ))
+
         rate_value = int(video.get("bit_rate", 0) or 0)
         target = int(vrules["bit_rate"]["target"])
         tolerance = int(vrules["bit_rate"]["tolerance"])
@@ -248,6 +275,31 @@ def metadata_checks(meta: dict, profile: dict) -> list[dict]:
                        "fields": ["codec_name", "sample_rate", "bits_per_raw_sample"]}], provenance=probe,
         ))
 
+        video_start = _float(videos[0].get("start_time")) if videos else None
+        audio_starts = [_float(audio.get("start_time")) for audio in audios]
+        if video_start is None or any(value is None for value in audio_starts):
+            out.append(_finding(
+                "broadcast_program_start_alignment", "info",
+                "stream start timestamps unavailable; programme alignment not checked", "structural", profile,
+                expected={"max_offset_seconds": arules["max_video_start_offset_seconds"]},
+                observed={"video": video_start, "audio": audio_starts},
+                evidence=[{"id": "ffprobe:stream-starts", "kind": "probe_fields",
+                           "fields": ["streams[].start_time"]}], provenance=probe, not_checked=True,
+            ))
+        else:
+            offsets = [abs(float(value) - video_start) for value in audio_starts]
+            max_offset = max(offsets, default=0.0)
+            limit = float(arules["max_video_start_offset_seconds"])
+            out.append(_finding(
+                "broadcast_program_start_alignment", "pass" if max_offset <= limit else "fail",
+                f"maximum audio/video start offset {max_offset:.6f}s; limit {limit:.6f}s",
+                "structural", profile, expected={"max_offset_seconds": limit},
+                observed={"video": video_start, "audio": audio_starts,
+                          "offsets_seconds": offsets, "maximum_offset_seconds": max_offset},
+                evidence=[{"id": "ffprobe:stream-starts", "kind": "probe_fields",
+                           "fields": ["streams[].start_time"]}], provenance=probe,
+            ))
+
     required = rules["wrapper"]["required_metadata_tags"]
     observed_metadata = {key: tags.get(key) for key in required}
     missing = [key for key, value in observed_metadata.items() if not value]
@@ -296,49 +348,79 @@ def _float(value: object) -> float | None:
 def timestamp_gop_from_frames(frames: list[dict], profile: dict) -> list[dict]:
     """Pure timestamp/GOP reducers; ffprobe collection is kept separate."""
     vrules = profile["broadcast_policy"]["video"]
-    timestamps = []
-    key_indices = []
+    timestamps: list[tuple[int, float, int]] = []
+    key_indices: dict[int, list[tuple[int, float | None]]] = {}
     for index, frame in enumerate(frames):
+        window = int(frame.get("_window", 0) or 0)
         value = frame.get("best_effort_timestamp_time", frame.get("pkt_dts_time"))
         parsed = _float(value)
         if parsed is not None:
-            timestamps.append(parsed)
+            timestamps.append((window, parsed, index))
         if int(frame.get("key_frame", 0) or 0) == 1 or frame.get("pict_type") == "I":
-            key_indices.append(index)
+            key_indices.setdefault(window, []).append((index, parsed))
     probe = _prov("ffprobe", "bounded frame timestamp/key-frame scan")
+    scan_windows = len(set(window for window, _timestamp, _index in timestamps))
     evidence = [{"id": "ffprobe:frame-scan", "kind": "frame_probe",
-                 "sampled_frames": len(frames), "configured_limit": vrules["gop"]["scan_frames"]}]
+                 "sampled_frames": len(frames), "sampled_windows": scan_windows,
+                 "configured_limit": vrules["gop"]["scan_frames"]}]
     out = []
     if len(timestamps) < 2:
         out.append(_finding(
             "broadcast_timestamp_continuity", "info", "fewer than two timestamps; not checked",
             "structural", profile, expected="monotonic timestamps without large gaps",
-            observed=timestamps, evidence=evidence, provenance=probe, not_checked=True,
+            observed=[value for _window, value, _index in timestamps],
+            evidence=evidence, provenance=probe, not_checked=True,
         ))
     else:
-        deltas = [b - a for a, b in zip(timestamps, timestamps[1:])]
+        pairs = [(left, right) for left, right in zip(timestamps, timestamps[1:])
+                 if left[0] == right[0]]
+        deltas = [right[1] - left[1] for left, right in pairs]
         positives = [d for d in deltas if d > 0]
         median = statistics.median(positives) if positives else 0.0
-        backwards = sum(1 for d in deltas if d < 0)
+        expected_delta = (int(vrules["frame_rate"]["denominator"])
+                          / int(vrules["frame_rate"]["numerator"]))
         gap_mult = float(vrules["timestamp_gap_multiplier"])
-        gaps = sum(1 for d in deltas if median and d > gap_mult * median)
-        ok = backwards == 0 and gaps == 0
+        events = []
+        for left, right in pairs:
+            delta = right[1] - left[1]
+            kind = None
+            if delta < 0:
+                kind = "backwards"
+            elif abs(delta) < expected_delta * 0.1:
+                kind = "repeated_timestamp"
+            elif delta > gap_mult * (median or expected_delta):
+                kind = "gap"
+            if kind:
+                events.append({"kind": kind, "window": left[0],
+                               "start_seconds": round(left[1], 6),
+                               "end_seconds": round(right[1], 6),
+                               "delta_seconds": round(delta, 9)})
+        ok = not events
         out.append(_finding(
             "broadcast_timestamp_continuity", "pass" if ok else "fail",
-            f"{len(timestamps)} timestamps; {backwards} backwards, {gaps} gap(s)",
+            f"{len(timestamps)} timestamps across {scan_windows} window(s); "
+            f"{len(events)} discontinuity event(s)",
             "structural", profile,
-            expected={"backwards": 0, "gaps": 0, "gap_multiplier": gap_mult},
-            observed={"count": len(timestamps), "backwards": backwards, "gaps": gaps,
-                      "median_delta": median}, evidence=evidence, provenance=probe,
-            time_range={"start_seconds": timestamps[0], "end_seconds": timestamps[-1]},
+            expected={"events": 0, "gap_multiplier": gap_mult,
+                      "frame_interval_seconds": expected_delta},
+            observed={"count": len(timestamps), "sampled_windows": scan_windows,
+                      "events": events[:100], "event_count": len(events),
+                      "median_delta_seconds": median},
+            evidence=[*evidence, {"id": "ffprobe:timestamp-events", "kind": "timeline_events",
+                                  "events": events[:100]}], provenance=probe,
+            time_range={"start_seconds": timestamps[0][1], "end_seconds": timestamps[-1][1]},
         ))
-    distances = [b - a for a, b in zip(key_indices, key_indices[1:])]
+    distances = []
+    for values in key_indices.values():
+        distances.extend(b[0] - a[0] for a, b in zip(values, values[1:]))
     max_allowed = int(vrules["gop"]["max_frames"])
     if not distances:
         out.append(_finding(
             "broadcast_gop", "info", "fewer than two key frames in bounded scan; not checked",
             "structural", profile, expected={"max_frames": max_allowed},
-            observed={"key_frame_indices": key_indices}, evidence=evidence, provenance=probe,
+            observed={"key_frame_indices": {str(k): [x[0] for x in v]
+                                             for k, v in key_indices.items()}},
+            evidence=evidence, provenance=probe,
             not_checked=True,
         ))
     else:
@@ -349,35 +431,49 @@ def timestamp_gop_from_frames(frames: list[dict], profile: dict) -> list[dict]:
             "structural", profile, expected={"max_frames": max_allowed},
             observed={"max_frames": max_observed, "distances": distances[:120]},
             evidence=evidence, provenance=probe,
-            time_range={"start_seconds": timestamps[0], "end_seconds": timestamps[-1]}
+            time_range={"start_seconds": timestamps[0][1], "end_seconds": timestamps[-1][1]}
             if timestamps else None,
         ))
     return out
 
 
-def timestamp_gop_checks(src: str, profile: dict) -> list[dict]:
+def timestamp_gop_checks(src: str, profile: dict, duration: float = 0.0) -> list[dict]:
     limit = int(profile["broadcast_policy"]["video"]["gop"]["scan_frames"])
-    result = run([
-        "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "frame=key_frame,pict_type,best_effort_timestamp_time,pkt_dts_time",
-        "-of", "json", "-read_intervals", f"%+#{limit}", src,
-    ])
-    if result.returncode != 0:
-        return [_finding(
-            "broadcast_timestamp_gop_probe", "warn",
-            f"ffprobe frame scan failed: {(result.stderr or 'unknown error').strip()[:160]}",
-            "engine", profile, expected="bounded frame scan", observed={"returncode": result.returncode},
-            evidence=[], provenance=_prov("ffprobe", "bounded frame timestamp/key-frame scan"),
-            advisory=True,
-        )]
-    try:
-        frames = json.loads(result.stdout or "{}").get("frames") or []
-    except json.JSONDecodeError as exc:
-        return [_finding(
-            "broadcast_timestamp_gop_probe", "warn", f"ffprobe JSON parse failed: {exc}",
-            "engine", profile, expected="valid frame JSON", observed=None, evidence=[],
-            provenance=_prov("ffprobe", "bounded frame timestamp/key-frame scan"), advisory=True,
-        )]
+    windows = int(profile["broadcast_policy"]["video"]["gop"].get("scan_windows", 1))
+    per_window = max(2, limit // max(windows, 1))
+    starts = [0.0]
+    rate = profile["broadcast_policy"]["video"]["frame_rate"]
+    scan_seconds = per_window * int(rate["denominator"]) / int(rate["numerator"])
+    if duration > scan_seconds and windows > 1:
+        starts = [i * (duration - scan_seconds) / (windows - 1) for i in range(windows)]
+    frames = []
+    for window, start in enumerate(starts):
+        interval = f"{start:.6f}%+#{per_window}" if start else f"%+#{per_window}"
+        result = run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "frame=key_frame,pict_type,best_effort_timestamp_time,pkt_dts_time",
+            "-of", "json", "-read_intervals", interval, src,
+        ])
+        if result.returncode != 0:
+            return [_finding(
+                "broadcast_timestamp_gop_probe", "warn",
+                f"ffprobe frame scan failed: {(result.stderr or 'unknown error').strip()[:160]}",
+                "engine", profile, expected="bounded timeline frame scans",
+                observed={"returncode": result.returncode, "window": window},
+                evidence=[], provenance=_prov("ffprobe", "bounded frame timestamp/key-frame scan"),
+                advisory=True,
+            )]
+        try:
+            batch = json.loads(result.stdout or "{}").get("frames") or []
+        except json.JSONDecodeError as exc:
+            return [_finding(
+                "broadcast_timestamp_gop_probe", "warn", f"ffprobe JSON parse failed: {exc}",
+                "engine", profile, expected="valid frame JSON", observed=None, evidence=[],
+                provenance=_prov("ffprobe", "bounded frame timestamp/key-frame scan"), advisory=True,
+            )]
+        for frame in batch:
+            frame["_window"] = window
+        frames.extend(batch)
     return timestamp_gop_from_frames(frames, profile)
 
 
@@ -408,33 +504,61 @@ def signal_segment_checks(segments: dict, duration: float, profile: dict) -> lis
                        "time_range": list(segment) if segment else None}], provenance=prov,
             time_range={"start_seconds": segment[0], "end_seconds": segment[1]} if segment else None,
         ))
+    cap = int(rules.get("max_reported_events", 100))
     boundary_ids = {head, tail}
     unexpected = [(a, b) for a, b in blacks if (a, b) not in boundary_ids
                   and b - a >= float(rules["unexpected_black_min_seconds"])]
+    unexpected_events = [{"start_seconds": a, "end_seconds": b,
+                          "duration_seconds": round(b - a, 6), "kind": "program_black"}
+                         for a, b in unexpected]
+    black_hard = rules.get("program_black_authority") == "policy"
     out.append(_finding(
-        "broadcast_program_black", "warn" if unexpected else "pass",
+        "broadcast_program_black", ("fail" if black_hard else "warn") if unexpected else "pass",
         f"{len(unexpected)} unexpected programme black segment(s)", "signal", profile,
-        expected={"unexpected_segments": 0}, observed=[list(x) for x in unexpected],
+        expected={"unexpected_segments": 0,
+                  "minimum_reported_seconds": rules["unexpected_black_min_seconds"],
+                  "boundary_black_excluded": True,
+                  "authority": rules.get("program_black_authority", "advisory")},
+        observed={"events": unexpected_events[:cap], "event_count": len(unexpected_events),
+                  "truncated": len(unexpected_events) > cap},
         evidence=[{"id": "ffmpeg:blackdetect", "kind": "detected_segments",
-                   "time_ranges": [list(x) for x in unexpected]}], provenance=prov, advisory=True,
+                   "events": unexpected_events[:cap],
+                   "time_ranges": [list(x) for x in unexpected[:cap]]}], provenance=prov,
+        advisory=not black_hard,
     ))
     long_freezes = [(a, b) for a, b in freezes if b - a >= float(rules["freeze_min_seconds"])]
+    freeze_events = [{"start_seconds": a, "end_seconds": b,
+                      "duration_seconds": round(b - a, 6), "kind": "freeze_or_repeated_frames"}
+                     for a, b in long_freezes]
+    freeze_hard = rules.get("freeze_authority") == "policy"
     out.append(_finding(
-        "broadcast_freeze_runs", "warn" if long_freezes else "pass",
+        "broadcast_freeze_runs", ("fail" if freeze_hard else "warn") if long_freezes else "pass",
         f"{len(long_freezes)} freeze run(s) at least {rules['freeze_min_seconds']}s", "signal", profile,
-        expected={"runs": 0, "minimum_reported_seconds": rules["freeze_min_seconds"]},
-        observed=[list(x) for x in long_freezes],
+        expected={"runs": 0, "minimum_reported_seconds": rules["freeze_min_seconds"],
+                  "authority": rules.get("freeze_authority", "advisory")},
+        observed={"events": freeze_events[:cap], "event_count": len(freeze_events),
+                  "truncated": len(freeze_events) > cap},
         evidence=[{"id": "ffmpeg:freezedetect", "kind": "detected_segments",
-                   "time_ranges": [list(x) for x in long_freezes]}], provenance=prov, advisory=True,
+                   "events": freeze_events[:cap],
+                   "time_ranges": [list(x) for x in long_freezes[:cap]]}], provenance=prov,
+        advisory=not freeze_hard,
     ))
     long_silences = [(a, b) for a, b in silences if b - a >= float(rules["silence_min_seconds"])]
+    silence_events = [{"start_seconds": a, "end_seconds": b,
+                       "duration_seconds": round(b - a, 6), "kind": "programme_silence"}
+                      for a, b in long_silences]
+    silence_hard = rules.get("silence_authority") == "policy"
     out.append(_finding(
-        "broadcast_silence_runs", "warn" if long_silences else "pass",
+        "broadcast_silence_runs", ("fail" if silence_hard else "warn") if long_silences else "pass",
         f"{len(long_silences)} silence run(s) at least {rules['silence_min_seconds']}s", "audio", profile,
-        expected={"runs": 0, "minimum_reported_seconds": rules["silence_min_seconds"]},
-        observed=[list(x) for x in long_silences],
+        expected={"runs": 0, "minimum_reported_seconds": rules["silence_min_seconds"],
+                  "authority": rules.get("silence_authority", "advisory")},
+        observed={"events": silence_events[:cap], "event_count": len(silence_events),
+                  "truncated": len(silence_events) > cap},
         evidence=[{"id": "ffmpeg:silencedetect", "kind": "detected_segments",
-                   "time_ranges": [list(x) for x in long_silences]}], provenance=prov, advisory=True,
+                   "events": silence_events[:cap],
+                   "time_ranges": [list(x) for x in long_silences[:cap]]}], provenance=prov,
+        advisory=not silence_hard,
     ))
     return out
 
