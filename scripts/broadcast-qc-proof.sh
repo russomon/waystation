@@ -56,7 +56,7 @@ def by_name(checks):
     return {item["name"]: item for item in checks}
 
 profile = profiles.get("us_broadcast_xdcam_hd_422_v1")
-need(profile["policy_pack"]["version"] == "1.3.0", "policy pack version")
+need(profile["policy_pack"]["version"] == "1.4.0", "policy pack version")
 need("not a universal network" in profile["policy_pack"]["scope"].lower(),
      "scope must reject universal-network claim")
 

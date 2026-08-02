@@ -73,6 +73,9 @@ _BROADCAST_POLICY_PATH = (
     Path(__file__).resolve().parent.parent
     / "policies" / "us_broadcast_xdcam_hd_422_v1.json"
 )
+_DELIVERY_TEMPLATE_DIR = (
+    Path(__file__).resolve().parent.parent / "policies" / "delivery_templates"
+)
 
 
 def _deep_merge(base: dict, override: dict, *, strict: bool = False,
@@ -134,8 +137,44 @@ def _broadcast_profile(overrides: dict | None = None) -> dict:
     return profile
 
 
+def _template_profile(template_id: str, overrides: dict | None = None) -> dict:
+    if not template_id.replace("_", "").isalnum():
+        raise ValueError("invalid delivery template id")
+    path = _DELIVERY_TEMPLATE_DIR / f"{template_id}.json"
+    template = json.loads(path.read_text(encoding="utf-8"))
+    if template.get("template_id") != template_id:
+        raise ValueError("delivery template id does not match its filename")
+    if template.get("kind") != "house_profile":
+        raise ValueError("only documented house_profile templates are supported")
+    if template.get("base_profile") != "us_broadcast_xdcam_hd_422_v1":
+        raise ValueError("unsupported delivery template base profile")
+    if overrides is not None and not isinstance(overrides, dict):
+        raise ValueError("delivery template overrides must be a JSON object")
+    template_overrides = template.get("policy_overrides") or {}
+    if not isinstance(template_overrides, dict):
+        raise ValueError("delivery template policy_overrides must be an object")
+    merged = _deep_merge(copy.deepcopy(template_overrides), overrides or {})
+    profile = _broadcast_profile(merged)
+    profile["delivery_template"] = {
+        "schema_version": template.get("schema_version"),
+        "id": template_id,
+        "version": template.get("version"),
+        "kind": template.get("kind"),
+        "label": template.get("label"),
+        "scope": template.get("scope"),
+        "source": f"pipeline/policies/delivery_templates/{path.name}",
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "effective_policy_sha256": profile["policy_pack"]["effective_sha256"],
+        "overrides": merged,
+    }
+    profile["label"] = str(template.get("label") or profile["label"])
+    return profile
+
+
 def get(name: str, overrides: dict | None = None) -> dict:
     key = str(name or "standard").lower()
+    if key == "waystation_house_xdcam_hd_422_v1":
+        return _template_profile(key, overrides)
     if key in ("us_broadcast_xdcam_hd_422_v1", "broadcast_xdcam"):
         return _broadcast_profile(overrides)
     return copy.deepcopy(PROFILES.get(key, PROFILES["standard"]))

@@ -67,6 +67,17 @@ history.
   source/demo behavior, then make a separate production deployment decision.
   Production and AI shadow remain unchanged.
 
+- ~~**Phase 3-4 deep package and AI-evaluation source milestone.**~~ **DONE in
+  source 2026-08-02; not deployed.** Policy v1.4.0 adds bounded advisory MXF,
+  IMF, HDR/Dolby metadata evidence, one provenance-carrying Waystation house
+  template, side-by-side human/commercial benchmark intake, hash-validated
+  shadow packets, evidence citation constraints, reviewer dispositions, and
+  offline Wilson evaluation. It does not claim AS/IMF/HDR/Dolby conformance,
+  commercial parity, or network acceptance. Next: collect retained real
+  customer decisions, qualified analyzer outputs, commercial comparisons, and
+  human shadow reviews. Production remains policy v1.1.0 and shadow remains
+  disabled; deployment requires a separate explicit decision.
+
 - **Record the baseline hackathon demo.** The hosted MVP is deployed, published
   and rehearsed — **14/14 production checks passed 2026-07-28** (record in
   `docs/DEPLOY.md`). Nothing infrastructural blocks recording.

@@ -1,0 +1,10 @@
+{
+  "schema_version": "waystation-delivery-template/1.0",
+  "template_id": "waystation_house_xdcam_hd_422_v1",
+  "version": "1.0.0",
+  "kind": "house_profile",
+  "label": "Waystation House XDCAM HD 4:2:2",
+  "base_profile": "us_broadcast_xdcam_hd_422_v1",
+  "scope": "A selectable Waystation house template built from the public, documented Waystation U.S. broadcast baseline. It is not a broadcaster specification and does not claim acceptance by any network.",
+  "policy_overrides": {}
+}

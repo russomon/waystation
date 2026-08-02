@@ -13,7 +13,7 @@ good = {"streams": [{"index": 1, "codec_type": "audio", "codec_name": "pcm_s24le
                      "bits_per_raw_sample": "24", "tags": {}}]}
 item = broadcast.declared_audio_map_check(good, profile)[0]
 assert item["status"] == "pass" and not item["observation"]["value"]["mismatches"]
-assert item["policy"]["version"] == "1.3.0"
+assert item["policy"]["version"] == "1.4.0"
 
 missing = {"streams": [{"index": 1, "codec_type": "audio", "channels": 2, "tags": {}}]}
 item = broadcast.declared_audio_map_check(missing, profile)[0]

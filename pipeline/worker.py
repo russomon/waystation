@@ -43,6 +43,7 @@ from qc import audio as qaudio
 from qc import avsync as qavsync
 from qc import broadcast as qbroadcast
 from qc import caption_transport as qcaption_transport
+from qc import deep_package as qdeep_package
 from qc import foundry as qfoundry
 from qc import generated as qgenerated
 from qc import jury as qjury
@@ -208,6 +209,7 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
         guarded(qstructural.timecode_checks, src, group="timecode_continuity")
         guarded(qstructural.container_checks, meta, key, profile, group="container_metadata")
         guarded(qmediainfo.checks, src, profile, group="mediainfo_wrapper")
+        guarded(qdeep_package.template_check, profile, group="delivery_template_provenance")
         if qbroadcast.active(profile):
             guarded(qbroadcast.metadata_checks, meta, profile, group="broadcast_metadata")
             guarded(qbroadcast.mediaconch_policy_checks, src, profile,
@@ -217,12 +219,16 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             guarded(qbroadcast.timestamp_gop_checks, src, profile,
                     duration,
                     group="broadcast_timestamp_gop")
+        guarded(qdeep_package.mxf_checks, meta, checks, profile, group="mxf_deep_fact_inventory")
+        guarded(qdeep_package.metadata_checks, meta, checks, profile,
+                group="hdr_metadata_discovery")
         tool_provenance = qarchive_tools.inventory()
         active_archive_tools = {"mediaconch", "qcli"} if qbroadcast.active(profile) else set()
         guarded(qarchive_tools.checks, tool_provenance, active_archive_tools,
                 group="archive_tooling")
         if key.lower().endswith((".m3u8", ".mpd")):
             guarded(qstructural.abr_lint, src, group="abr_manifest")
+        guarded(qimf.package_checks, src, profile, group="imf_package_structure")
         guarded(qimf.photon_checks, src, tmp, profile, group="imf_photon")
 
         # ── Task 2: signal video quality ──
@@ -323,6 +329,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
     report = qreport.finalize({"checks": checks}, profile)
     if qbroadcast.active(profile):
         report["policy_pack"] = profile["policy_pack"]
+        if profile.get("delivery_template"):
+            report["delivery_template"] = profile["delivery_template"]
         try:
             qctools_checks, qctools_report = qqctools.analyze(src, tmp, duration, profile)
             report["checks"].extend(qctools_checks)
@@ -338,6 +346,7 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             "profile": profile["name"],
             "policy": {k: profile["policy_pack"].get(k)
                        for k in ("id", "version", "effective_sha256")},
+            "delivery_template": profile.get("delivery_template"),
             "duration_seconds": duration,
             "source_key": key,
         })
@@ -594,7 +603,9 @@ def _audio_evidence(src: str, tmp: str, evidence_id: str, start: float,
 
 def run_interpretive_shadow(src: str, tmp: str, packets: list[dict]) -> tuple[dict, list[dict], dict]:
     """One bounded GMI call over targeted deterministic-review packets."""
-    selected = copy.deepcopy(packets[:max(0, AI_INTERPRETIVE_SHADOW_MAX_PACKETS)])
+    selected = [copy.deepcopy(packet) for packet in
+                packets[:max(0, AI_INTERPRETIVE_SHADOW_MAX_PACKETS)]
+                if qprompt_compiler.validate_packet(packet)]
     parts: list[dict] = []
     evidence: list[dict] = []
     for packet in selected:
@@ -615,6 +626,12 @@ def run_interpretive_shadow(src: str, tmp: str, packets: list[dict]) -> tuple[di
                     public["packet_id"] = packet["packet_id"]
                     parts.extend([{"type": "text", "text": f"{evidence_id}:"}, model])
                     evidence.append(public)
+    if not selected:
+        report, observations = qinterpretive.normalize(
+            None, [], model=GMI_MULTIMODAL_MODEL, prompt_sha256="", evidence=[])
+        report["reason"] = "no valid, hash-matching review packets"
+        return report, observations, {"model_passes": 0, "packets": 0,
+                                     "frames": 0, "audio_seconds": 0}
     prompt = (
         "You are Waystation's AI INTERPRETIVE PASS running in SHADOW MODE. "
         "Review only the supplied deterministic findings and targeted evidence. "
@@ -631,6 +648,11 @@ def run_interpretive_shadow(src: str, tmp: str, packets: list[dict]) -> tuple[di
         data, selected, model=GMI_MULTIMODAL_MODEL,
         prompt_sha256=prompt_sha, evidence=evidence,
     )
+    report["spend_accounting"] = {
+        "shadow_model_passes": 1,
+        "triage_model_passes": "metered separately when triage is enabled",
+        "combined_or_hidden_spend": False,
+    }
     return report, observations, {"model_passes": 1, "packets": len(selected),
                             "frames": len([x for x in evidence if x["type"] == "frame"]),
                             "audio_seconds": round(sum(x.get("duration_seconds", 0)

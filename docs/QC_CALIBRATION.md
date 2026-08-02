@@ -4,7 +4,7 @@ Waystation's no-reference visual/audio measurements are useful evidence, but a
 threshold is not delivery-grade merely because it is repeatable on synthetic
 media. Blockiness, blur, banding, temporal-outlier, phase, click/pop, dropout,
 and channel-consistency findings therefore remain deterministic advisories in
-policy `us_broadcast_xdcam_hd_422_baseline` v1.3.0.
+policy `us_broadcast_xdcam_hd_422_baseline` v1.4.0.
 
 ## Corpus intake
 
@@ -49,3 +49,16 @@ policy-pack version, known-good/known-bad regression fixtures, and explicit
 deployment approval. Passing the statistical gate is necessary, not automatic
 promotion. AI cannot promote or override a deterministic rule. Waystation
 never combines these metrics into a quality or trust score.
+
+## Benchmark and AI-review datasets
+
+Use `calibration/commercial-qc-benchmark.schema.json` for retained
+side-by-side Waystation versus human/commercial-QC records. It preserves the
+reference evidence location, tool/policy versions, per-category outcomes, and
+disagreement taxonomy. It does not compute or authorize a parity claim.
+
+Use `calibration/ai-shadow-review.schema.json` for human dispositions on AI
+shadow observations. The offline evaluator reports confusion, precision,
+recall, false-positive rate, and Wilson 95% intervals. These records can expose
+model failure modes and guide later packet/prompt work, but they never grant AI
+delivery authority or update policy automatically.

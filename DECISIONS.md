@@ -5,6 +5,28 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - Deep package facts and AI evaluation do not imply conformance or authority
+
+- Decision: policy v1.4.0 adds bounded MXF fact inventory, safe IMF manifest /
+  reference / small-asset-hash inspection, and HDR/Dolby metadata discovery.
+  These are advisory evidence slices. Unsupported MXF partition/index/ANC and
+  AS-profile facts, complete IMF application profiles, and HDR/Dolby bitstream
+  conformance remain `not_checked` without qualified analyzers and fixtures.
+- Decision: network-template infrastructure ships one selectable Waystation
+  house template only. It retains source/effective hashes and overrides but is
+  not a broadcaster specification; private network rules must never be
+  invented.
+- Decision: commercial-QC benchmarking records retained side-by-side outcomes,
+  versions, evidence references, and disagreement taxonomy. It emits no parity,
+  acceptance, quality, or trust score and cannot update policy.
+- Decision: AI review packets are bounded and hash-validated before extraction
+  or spend. Shadow citations are allowlisted to packet evidence. Reviewer
+  dispositions feed an offline holdout evaluator with precision/recall and
+  Wilson intervals; they never promote AI to delivery authority.
+- Deployment consequence: source/tests/docs only. Production remains on the
+  previously recorded worker image/policy v1.1.0; no production host or
+  container was accessed. `AI_INTERPRETIVE_SHADOW=false` remains unchanged.
+
 ### 2026-08-02 - Deterministic-only delivery authority is enforced centrally
 
 - Decision: canonical delivery `status` and `tiers` are computed from

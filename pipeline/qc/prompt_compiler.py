@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 
 
-COMPILER_VERSION = "waystation-ai-review-packet/1.0"
+COMPILER_VERSION = "waystation-ai-review-packet/1.1"
 MAX_PACKETS = 8
 MAX_EVIDENCE = 8
+MAX_PACKET_BYTES = 16_000
 
 _QUESTIONS = {
     "broadcast_program_black": "Does the cited in-program interval appear unintentionally black?",
@@ -29,6 +31,7 @@ _QUESTIONS = {
     "broadcast_audio_channel_consistency": "Does the cited audio show an unintended missing or imbalanced channel?",
     "broadcast_caption_continuity": "Do the cited caption events represent unintended overlaps, ordering errors, or long gaps?",
     "broadcast_metadata_cross_validation": "Does the cited cross-tool metadata contradiction require delivery review?",
+    "hdr_metadata_cross_validation": "Does the cited HDR/color metadata contradiction indicate a visible presentation risk?",
 }
 
 _AUDIO_FINDINGS = {
@@ -37,11 +40,55 @@ _AUDIO_FINDINGS = {
     "broadcast_audio_channel_consistency",
 }
 
-_NO_MEDIA_FINDINGS = {"broadcast_metadata_cross_validation"}
+_NO_MEDIA_FINDINGS = {"broadcast_metadata_cross_validation", "hdr_metadata_cross_validation"}
 
 
 def _canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
+
+
+def _packet_payload(packet: dict) -> dict:
+    return {key: value for key, value in packet.items()
+            if key not in {"packet_id", "input_sha256"}}
+
+
+def packet_hash(packet: dict) -> str:
+    return hashlib.sha256(_canonical(_packet_payload(packet))).hexdigest()
+
+
+def validate_packet(packet: object) -> bool:
+    if not isinstance(packet, dict) or packet.get("compiler_version") != COMPILER_VERSION:
+        return False
+    digest = packet.get("input_sha256")
+    if not isinstance(digest, str) or digest != packet_hash(packet):
+        return False
+    if packet.get("packet_id") != f"review-{digest[:16]}":
+        return False
+    if len(_canonical(packet)) > MAX_PACKET_BYTES:
+        return False
+    finding = packet.get("finding")
+    if not isinstance(finding, dict) or finding.get("name") not in _QUESTIONS:
+        return False
+    requests = packet.get("media_requests")
+    if not isinstance(requests, list) or len(requests) > 2:
+        return False
+    for request in requests:
+        if not isinstance(request, dict) or request.get("type") not in {"still", "audio_clip"}:
+            return False
+        try:
+            if request["type"] == "audio_clip":
+                duration = float(request.get("duration_seconds", 0))
+                start = float(request.get("start_seconds", -1))
+                if not (math.isfinite(duration) and math.isfinite(start)
+                        and 0 < duration <= 6.0 and start >= 0):
+                    return False
+            if request["type"] == "still":
+                at = float(request.get("time_seconds"))
+                if not math.isfinite(at) or at < 0:
+                    return False
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _compact(value: object, depth: int = 0) -> object:
@@ -50,6 +97,8 @@ def _compact(value: object, depth: int = 0) -> object:
         return "truncated"
     if isinstance(value, str):
         return value[:600]
+    if isinstance(value, float) and not math.isfinite(value):
+        return "nonfinite"
     if isinstance(value, list):
         return [_compact(item, depth + 1) for item in value[:8]]
     if isinstance(value, dict):
@@ -93,6 +142,9 @@ def compile_packets(report: dict, context: dict | None = None) -> list[dict]:
     """Compile only unresolved deterministic/advisory targets; never clean passes."""
     packets = []
     context = context or {}
+    policy_context = _compact({key: context.get(key) for key in
+                               ("profile", "policy", "delivery_template", "duration_seconds")
+                               if context.get(key) is not None})
     for check in report.get("checks") or []:
         name = str(check.get("name") or "")
         if check.get("source", "deterministic") != "deterministic":
@@ -115,9 +167,10 @@ def compile_packets(report: dict, context: dict | None = None) -> list[dict]:
                                        "time_seconds": round(midpoint, 3)})
         payload = {
             "compiler_version": COMPILER_VERSION,
+            "packet_type": "targeted_advisory_review",
             "finding": _compact({k: check.get(k) for k in
-                        ("name", "status", "category", "detail", "expectation", "observation", "decision")}),
-            "context": _compact(context),
+                        ("name", "status", "category", "detail", "expectation", "observation", "decision", "policy")}),
+            "policy_context": policy_context,
             "evidence": evidence,
             "time_ranges": ranges,
             "review_question": _QUESTIONS[name],
@@ -126,11 +179,16 @@ def compile_packets(report: dict, context: dict | None = None) -> list[dict]:
                 "Do not change, clear, or override the deterministic delivery verdict.",
                 "Describe uncertainty and cite only supplied evidence IDs and time ranges.",
                 "Return not_checked when the supplied media is insufficient.",
+                "Do not infer compliance, acceptance, intent, or missing evidence.",
             ],
             "media_requests": media_requests,
+            "authority": {"lane": "ai_advisory", "canonical_report_mutable": False,
+                          "deterministic_delivery_outcome_unchanged": True},
         }
         digest = hashlib.sha256(_canonical(payload)).hexdigest()
-        packets.append({"packet_id": f"review-{digest[:16]}", "input_sha256": digest, **payload})
+        packet = {"packet_id": f"review-{digest[:16]}", "input_sha256": digest, **payload}
+        if validate_packet(packet):
+            packets.append(packet)
         if len(packets) >= MAX_PACKETS:
             break
     return packets

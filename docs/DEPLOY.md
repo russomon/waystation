@@ -307,13 +307,15 @@ running worker retained the `/scratch` and `/tmp` data-disk bind mounts. No
 historical upload was replayed. Future uploads use the cost-aware triage route;
 `AI_INTERPRETIVE_SHADOW=false` keeps the new advisory model pass spend-disabled.
 
-Source policy v1.3.0 and its Phase 2 plus authority-hardening adapters were
+Source policy v1.4.0 and its Phase 2-4 plus authority-hardening adapters were
 completed after this production record. They include deterministic-only
 canonical delivery authority, advisory-only PSE screening, isolated AI shadow
 observations, statistical calibration gates, bounded SCC/MCC/RCWT caption
-transport analysis, and declared audio mapping. They are not part of the image
-above and require a separate worker deployment decision. Do not infer runtime
-activation from the host branch or documentation state.
+transport analysis, declared audio mapping, bounded MXF/IMF/HDR/Dolby evidence,
+a versioned house-template layer, and offline commercial/shadow evaluation
+schemas. They are not part of the image above and require a separate worker
+deployment decision. AI shadow also remains disabled by default. Do not infer
+runtime activation from the host branch or documentation state.
 
 Customer-specific baseline values can be overridden with
 `WAYSTATION_BROADCAST_POLICY_OVERRIDES` JSON. Unknown keys fail closed, and

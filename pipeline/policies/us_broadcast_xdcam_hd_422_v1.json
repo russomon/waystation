@@ -1,8 +1,8 @@
 {
   "policy_id": "us_broadcast_xdcam_hd_422_baseline",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "profile_name": "us_broadcast_xdcam_hd_422_v1",
-  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.3",
+  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.4",
   "scope": "A Waystation house baseline for one common U.S. HD broadcast delivery shape. It is not a universal network specification or evidence of acceptance by any broadcaster.",
   "assumptions": [
     "single-file MXF OP1a delivery",
@@ -129,6 +129,17 @@
     "metadata_cross_validation": {
       "sources": ["ffprobe", "mediainfo", "mediaconch"],
       "authority": "advisory"
+    },
+    "deep_package": {
+      "max_entries": 4096,
+      "max_manifest_bytes": 4194304,
+      "max_hash_bytes": 67108864,
+      "authority": "advisory",
+      "as_profile_conformance": "not_checked_without_qualified_profile_rules_and_analyzer"
+    },
+    "hdr_dolby": {
+      "authority": "advisory",
+      "compliance_state": "metadata_discovery_and_cross_validation_only"
     }
   }
 }

@@ -45,6 +45,13 @@ def _facts(general: dict, video: dict, audio_tracks: list[dict]) -> dict:
         "video_bit_depth": video.get("BitDepth"),
         "audio_sample_rate": audio.get("SamplingRate"),
         "audio_channels": audio.get("Channels"),
+        "color_transfer": video.get("transfer_characteristics") or video.get("TransferCharacteristics"),
+        "color_primaries": video.get("colour_primaries") or video.get("ColorPrimaries"),
+        "color_space": video.get("matrix_coefficients") or video.get("MatrixCoefficients"),
+        "color_range": video.get("colour_range") or video.get("ColorRange"),
+        "hdr_format": video.get("HDR_Format"),
+        "hdr_format_profile": video.get("HDR_Format_Profile"),
+        "hdr_compatibility": video.get("HDR_Format_Compatibility"),
     }
 
 

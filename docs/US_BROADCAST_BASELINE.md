@@ -1,7 +1,7 @@
 # U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline
 
 Policy ID: `us_broadcast_xdcam_hd_422_baseline`
-Version: `1.3.0`
+Version: `1.4.0`
 Profile: `us_broadcast_xdcam_hd_422_v1`
 Source: `pipeline/policies/us_broadcast_xdcam_hd_422_v1.json`
 
@@ -55,6 +55,12 @@ not been calibrated against a representative network-accepted/rejected corpus:
 - SRT/VTT cue continuity and timeline coverage;
 - cross-tool metadata contradictions across ffprobe, MediaInfo, and MediaConch.
 - the bounded YDIF luma-transition PSE/flash candidate screen.
+- bounded deep MXF fact inventory with unsupported partition/index/ancillary/
+  AS-profile facts explicitly `not_checked`;
+- bounded IMF manifest/reference/hash inspection, separate from application-
+  profile conformance;
+- HDR/color metadata discovery and cross-tool contradiction evidence;
+- Dolby-related marker disclosure without Dolby conformance claims.
 
 They may produce `ISSUE` findings but do not hard-reject this baseline. The
 policy contains no composite quality or trust score. Each event carries start,
@@ -112,7 +118,7 @@ emits `ISSUE` candidates or FYI evidence, and can never create a BLOCKER. Full
 PSE/flash compliance remains deferred to a qualified analyzer with
 authoritative test vectors.
 
-Policy v1.3 also declares one stereo program track by ordinal, channel count,
+Policy v1.4 retains the declared one stereo program track by ordinal, channel count,
 and layout. Language, title, role, disposition, or stream index are enforced
 only when an effective profile explicitly declares them and ffprobe exposes
 the corresponding metadata. Semantic L/R or stem interpretation remains
@@ -129,6 +135,18 @@ Interpretive Pass is shadow-only (`AI_INTERPRETIVE_SHADOW=false` by default),
 records model/prompt/input provenance and uncertainty, receives detached packet
 copies, and emits `advisory_observations` outside canonical checks. It cannot
 alter deterministic status, tier counts, packets, or delivery outcome.
+Packets are schema/hash validated before extraction or spend, and model
+citations are restricted to evidence IDs supplied for that packet. Offline
+review dispositions and Wilson evaluation are described in
+`docs/DEEP_PACKAGE_AND_SHADOW_EVALUATION.md`.
+
+## Delivery templates
+
+Profile `waystation_house_xdcam_hd_422_v1` selects the versioned local template
+in `pipeline/policies/delivery_templates/`. The report retains its source hash,
+scope, overrides, and effective policy hash. This example is a Waystation house
+template, not a broadcaster's specification. No private network rules are
+invented or implied.
 
 ## Overrides
 
@@ -156,6 +174,9 @@ bash scripts/interpretive-shadow-proof.sh
 bash scripts/authority-boundary-proof.sh
 bash scripts/caption-transport-proof.sh
 bash scripts/audio-map-proof.sh
+bash scripts/deep-package-proof.sh
+bash scripts/qc-benchmark-proof.sh
+bash scripts/shadow-evaluation-proof.sh
 ```
 
 The first constructs an actual passing MXF and failing MP4, then exercises

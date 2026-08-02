@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-02 (deterministic QC milestones 1-2 deployed to worker)
+Updated: 2026-08-02 (Phase 3-4 source complete; production unchanged)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -209,6 +209,39 @@ as above, rather than trusting `git rev-parse` on the host.
   A local Docker worker build proved policy v1.3.0 and the pinned tools; the
   complete containerized gateway-worker-MinIO event/delivery loop wrote and
   SDK-verified its manifest. No production host/container was accessed.
+
+## Phase 3-4 deep package and AI-evaluation source milestone — 2026-08-02
+
+- Source policy `us_broadcast_xdcam_hd_422_baseline` is now v1.4.0. It adds a
+  bounded MXF wrapper/package/essence fact inventory and explicit `not_checked`
+  disclosures for partition/index/KLV/ancillary/AS-profile structures that the
+  installed analyzers do not qualify. These are advisories, not AS conformance.
+- ZIP-carried IMF packages receive traversal-safe, entry/XML/hash-bounded
+  AssetMap/PKL/CPL parsing, reference checks, and supported small-asset hash
+  verification without extracting essence. Structural consistency is separate
+  from Photon and never implies complete IMF application-profile conformance.
+- HDR/color labels are discovered and cross-checked across ffprobe/MediaInfo;
+  Dolby-related markers are disclosed. Neither path claims bitstream,
+  mastering/playback, Dolby Vision/E/Atmos, or delivery conformance.
+- Selectable template `waystation_house_xdcam_hd_422_v1` retains template
+  source/effective hashes and overrides. It is explicitly a Waystation house
+  template, not a broadcaster spec. The commercial benchmark schema records
+  retained side-by-side outcomes and disagreements without a parity score.
+- Prompt packets are now hash/schema validated before media extraction or
+  spend. Shadow citations are restricted to supplied evidence IDs. Offline
+  reviewer records support agree/disagree/needs-review/false-positive
+  dispositions and holdout precision/recall/false-positive Wilson intervals;
+  feedback cannot change policy or canonical delivery status.
+- Focused deep-package, benchmark, interpretive-shadow, and shadow-evaluation
+  proofs pass. Standard/Netflix, authority, Phase 2, caption/audio, QCTools,
+  MediaInfo/MediaConch/Photon, triage/agentic/synthetic, calibration, gateway,
+  client, Compose, and shell regressions also pass. A local Docker rebuild
+  proved pinned tools and policy v1.4.0; the complete gateway-worker-MinIO loop
+  processed a signed event, wrote all derivatives, and SDK-verified its
+  manifest.
+- This is source-only. Production remains on worker image
+  `sha256:753b834f…` / policy v1.1.0. Production was not accessed or changed,
+  and `AI_INTERPRETIVE_SHADOW=false` remains the default and production state.
 
 ## Phase 2 delivery-quality source milestone — 2026-08-02
 

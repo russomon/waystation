@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waystation.invalid/schemas/commercial-qc-benchmark-1.0.json",
+  "title": "Waystation side-by-side QC benchmark intake",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["asset_id", "asset_sha256", "source_kind", "independence_group", "reference", "waystation", "comparisons"],
+  "properties": {
+    "asset_id": {"type": "string", "minLength": 1},
+    "asset_sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+    "source_kind": {"enum": ["real_delivery", "synthetic_fixture"]},
+    "independence_group": {"type": "string", "minLength": 1},
+    "reference": {
+      "type": "object",
+      "required": ["kind", "outcome", "recorded_at", "evidence_reference"],
+      "properties": {
+        "kind": {"enum": ["human_review", "commercial_qc"]},
+        "provider": {"type": "string"},
+        "tool_version": {"type": "string"},
+        "outcome": {"enum": ["pass", "review", "fail", "not_checked"]},
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "evidence_reference": {"type": "string", "minLength": 1}
+      }
+    },
+    "waystation": {
+      "type": "object",
+      "required": ["outcome", "report_sha256", "policy", "tool_provenance"],
+      "properties": {
+        "outcome": {"enum": ["pass", "review", "fail", "not_checked"]},
+        "report_sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+        "policy": {
+          "type": "object",
+          "required": ["id", "version"],
+          "properties": {"id": {"type": "string"}, "version": {"type": "string"}, "effective_sha256": {"type": ["string", "null"]}}
+        },
+        "tool_provenance": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "comparisons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["category", "waystation_outcome", "reference_outcome", "taxonomy", "evidence_reference"],
+        "properties": {
+          "category": {"type": "string"},
+          "waystation_outcome": {"enum": ["pass", "review", "fail", "not_checked"]},
+          "reference_outcome": {"enum": ["pass", "review", "fail", "not_checked"]},
+          "taxonomy": {"enum": ["agreement", "waystation_only", "reference_only", "severity_difference", "category_mapping", "unsupported_capability", "inconclusive_evidence"]},
+          "evidence_reference": {"type": "string", "minLength": 1},
+          "notes": {"type": "string"}
+        }
+      }
+    }
+  }
+}
