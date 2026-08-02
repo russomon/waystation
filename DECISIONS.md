@@ -34,7 +34,23 @@ chat threads.
   records model/prompt/input provenance and uncertainty, and is stored outside
   canonical delivery checks so it cannot alter deterministic status or tiers.
 - Deployment consequence: source/image readiness and production activation are
-  recorded separately; see CURRENT_WORK.md for the current runtime state.
+  recorded separately. The worker-only production activation completed on
+  2026-08-02 from source commit `ecfcc01`; interpretive shadow remains disabled.
+  See CURRENT_WORK.md for exact runtime evidence.
+
+### 2026-08-02 - Activate deterministic QC and triage with a worker-only rebuild
+
+- Decision: after source proofs and image inspection passed, rebuild and
+  recreate only the production worker with `--no-deps`. Preserve gateway,
+  cloudflared, the control volume, scratch contents, and historical uploads.
+- Result: running worker image `sha256:753b834f…` contains the pinned qcli and
+  MediaConch CLIs, baseline policy v1.1.0, deterministic timeline/QCTools
+  adapters, prompt compiler, and cost-aware triage route. Both health endpoints
+  passed and the running image matched the inspected image exactly.
+- AI-spend boundary: `AI_INTERPRETIVE_SHADOW=false` remains explicit in
+  production. Cost-aware triage can route the already-requested AI lanes on
+  future uploads; the new interpretive shadow pass does not run or spend by
+  default and can never alter deterministic status.
 
 ### 2026-08-01 - Install preservation CLIs before activating their policies
 
@@ -53,10 +69,9 @@ chat threads.
   proofs land, both tools emit `FYI · not checked` whether absent or installed.
   Neither may clear or reject media. Existing deterministic policy instruments
   retain sole rejection authority; AI remains advisory.
-- Deployment consequence: source/image readiness and production activation are
-  separate. This change does not rebuild the VPS worker. A later rebuild also
-  activates the already-pending cost-aware AI triage and therefore requires an
-  explicit demo/readiness decision.
+- Historical deployment consequence: this source-only install did not itself
+  rebuild the VPS worker. The later, explicitly authorized worker-only rebuild
+  completed on 2026-08-02; see the decision above.
 
 ### 2026-08-01 - "The VPS is at commit X" does not mean commit X is running
 

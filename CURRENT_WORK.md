@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-02 (deterministic QC milestones 1-2, deployment pending)
+Updated: 2026-08-02 (deterministic QC milestones 1-2 deployed to worker)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -22,12 +22,10 @@ switches and chat history gaps.
   Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01`; transfer
   `d292c10b…`; end-to-end ~3 m 36 s. Local proof
   suite green at that commit (19 discovered, 19 passed).
-- **Deployed now:** gateway `7291c80`, portal pinned `ab15668`. See
-  "Deployment reconciliation" below — at the recorded reconciliation baseline,
-  production and branch runtime source were **identical for every file that
-  runs**; the only known gap was a stale worker image.
-- Immediate engineering action: finish validation, commit/push, then perform
-  the explicitly authorized worker-only production rebuild recorded below.
+- **Deployed now:** gateway remains on its prior image/source, portal remains
+  pinned at `ab15668`, and the worker runs source commit `ecfcc01` in image
+  `sha256:753b834f…`. The worker-only deployment record below distinguishes
+  host source, image contents, and running-container evidence.
 - The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
@@ -51,9 +49,9 @@ every file that runs.** Nothing needs reconciling in git. Later changes must be
 checked by content again; this statement deliberately does not call a mutable
 branch tip a deployment identifier.
 
-**The one real gap is a stale worker IMAGE, not a git divergence.** `e89da62`
-(cost-aware AI triage) is an **ancestor** of `7291c80`, so the triage source is
-already on the VPS — but the worker container was never rebuilt after it landed:
+**Historical gap, resolved 2026-08-02:** the worker IMAGE was stale even though
+the source was present. `e89da62` (cost-aware AI triage) is an ancestor of
+`7291c80`, but the old container had never been rebuilt after it landed:
 
 | | |
 |---|---|
@@ -62,9 +60,9 @@ already on the VPS — but the worker container was never rebuilt after it lande
 | `qc_ai_triage` in **running** worker | **0** occurrences |
 | `qc_ai_triage` in source at deployed `HEAD` | 3 occurrences |
 
-A container runs the image it was built from, so this cannot be reconciled
-without `docker compose build worker && up -d worker`. Procedure, verification
-and the reasons for holding it back are in `NEXT_STEPS.md`.
+A worker-only rebuild from source commit `ecfcc01` resolved this gap; exact
+runtime evidence is recorded below. The historical measurements remain here to
+show why host `HEAD` alone was insufficient.
 
 Useful distinction to carry forward: **"the VPS is at commit X" says nothing
 about what is running.** Check image build times and grep the running container,
@@ -87,10 +85,8 @@ as above, rather than trusting `git rev-parse` on the host.
   (`scripts/archive-tools-{proof,docker-proof}.sh`). The deterministic QC,
   coverage, MediaInfo, agentic-authority, triage, and full containerized-loop
   proofs also pass.
-- **Not deployed.** No VPS checkout, image, container, or service was touched.
-  Rebuilding production later would both install this toolchain and activate the
-  already-pending AI-triage source for future uploads; that remains a separate
-  demo/readiness decision.
+- **Deployed 2026-08-02** as part of the worker-only reconciliation recorded
+  below. The running image exposes the exact pinned CLI versions and labels.
 - The no-universal-parity boundary remains: QCTools threshold calibration and
   any wider customer/network policy packs require real corpus fixtures.
 
@@ -120,9 +116,8 @@ as above, rather than trusting `git rev-parse` on the host.
   `scripts/broadcast-qc-docker-proof.sh` builds the worker and proves pinned
   MediaConch 25.04 passes 16/16 metadata assertions on the good MXF and fails
   15/16 on the bad MP4.
-- **Not deployed.** No VPS checkout, worker image, container, restart, or
-  service was touched. A future production worker rebuild remains a separate
-  explicit decision and would also activate the already-pending AI triage.
+- This milestone was source-only when committed; it is now included in the
+  worker-only production deployment recorded below.
 - Next milestone: bounded QCTools report extraction/reducers and real
   customer/network acceptance-fixture calibration. Do not broaden hard policy
   authority before those proofs exist.
@@ -153,10 +148,33 @@ as above, rather than trusting `git rev-parse` on the host.
 - Focused local and Docker proofs cover good/bad timeline events, advanced
   metadata, policy overrides, QCTools present/missing/malformed behavior,
   packet minimization, and advisory shadow normalization. Full regression and
-  production deployment evidence will be recorded after those phases finish.
-- Production is still unchanged at this line in history. The final authorized
-  action is a worker-only rebuild after source is committed/pushed and live
-  checkout/scratch/Compose safety checks pass.
+  production deployment evidence is recorded below.
+
+## Worker-only production deployment — 2026-08-02
+
+- Source commit `ecfcc01` was pushed before deployment. The VPS checkout at
+  `/home/waystation/waystation` was fast-forwarded to that commit and remained
+  clean. Scratch preflight passed on `/dev/vdb1` (ext4) at
+  `/mnt/waystation-scratch`, with 390 G free; `/` remained on `/dev/vda2` at
+  13% used.
+- Built worker image `sha256:753b834fbac52381f7a2e6a24795efb42615d7f21fab283d006eb9a583afd9e9`
+  at `2026-08-02T20:18:54Z`. Image and running-container proofs report QCTools
+  `qcli 1.4+29bc627` at revision
+  `29bc627d7a3b4048d3e2ac250ca20adb1ba39cd2`, MediaConch CLI `25.04`
+  (package `25.04-2`), policy `1.1.0`, and the triage/prompt/shadow modules.
+- Recreated only `worker` with `docker compose -f docker-compose.prod.yml up
+  -d --no-deps worker`. Worker container changed from `5e290b8…` to
+  `6ad83c4…` and became healthy. Gateway `aa3cf13…` and cloudflared `4abd68d…`
+  container IDs did not change.
+- Both `http://127.0.0.1:8000/healthz` inside the worker and
+  `https://api.orbitolive.com/healthz` returned `{"ok":true}`. Running mounts
+  remain `/mnt/waystation-scratch/waystation:/scratch` and
+  `/mnt/waystation-scratch/waystation/tmp:/tmp`.
+- Cost-aware `qc_ai_triage` routing is now present for **future uploads**. No
+  upload or historical replay command was run during deployment; startup logs
+  contained only server startup and health probes. `AI_INTERPRETIVE_SHADOW` is
+  explicitly `false`, so the new interpretive shadow path creates no production
+  model spend and cannot alter deterministic delivery outcomes.
 
 ## Large-file mode PROVEN on real media — 2026-08-01
 

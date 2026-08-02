@@ -17,43 +17,14 @@ history.
   verified-download control. Download averaged 232 Mb/s in 16:09. Four defects
   found and fixed doing it — see `CURRENT_WORK.md`.
 
-- **Reconcile the stale worker IMAGE after the current source commit is pushed.**
-
-  > Read this framing before acting — an earlier note in this file said triage
-  > "landed on the branch and is not deployed", which was **wrong**. `e89da62`
-  > is an **ancestor** of the deployed commit `7291c80`, so the triage **source
-  > is already on the VPS**. The gap is *source vs running binary*, not
-  > *branch vs production*.
-
-  Measured 2026-08-01:
-
-  | | |
-  |---|---|
-  | VPS source `HEAD` | `7291c80`, clean |
-  | gateway image built | 2026-08-01T02:28Z — current |
-  | **worker image built** | **2026-07-28T03:25Z — 4 days stale** |
-  | `qc_ai_triage` in **running** worker | **0** occurrences |
-  | `qc_ai_triage` in source at `HEAD` | 3 occurrences |
-
-  The worker container was never rebuilt after triage landed, so it is running
-  pre-triage code. Reconciling requires a rebuild — a container cannot pick up
-  source changes without one:
-
-  ```bash
-  docker compose -f docker-compose.prod.yml build worker
-  docker compose -f docker-compose.prod.yml up -d worker
-  ```
-
-  Then verify: `qc_ai_triage` present in the running worker, a new upload's
-  report shows "Cost-aware AI triage", and any skipped AI work is disclosed as
-  a **skip**, never as clearance.
-
-  The user explicitly authorized this worker-only rebuild for the current task.
-  Before mutation, independently verify the live checkout/ref, clean tree,
-  scratch preflight, Compose config and existing container/image state. Rebuild
-  and restart only `worker`; do not touch gateway, cloudflared, the control
-  volume, historical uploads, or scratch data. Prove source/tools/triage in the
-  running container and record that interpretive shadow remains false.
+- ~~**Reconcile the stale worker image.**~~ **DONE 2026-08-02.** The worker was
+  rebuilt from source commit `ecfcc01` and now runs image `sha256:753b834f…`
+  with pinned qcli/MediaConch, policy v1.1.0, deterministic timeline/QCTools
+  analysis, prompt compilation, and future-upload cost-aware triage routing.
+  Worker health and both internal/public health endpoints passed; gateway and
+  cloudflared container IDs were unchanged. No historical upload was replayed.
+  `AI_INTERPRETIVE_SHADOW=false`, so interpretive model spend remains off.
+  See `CURRENT_WORK.md` and `docs/DEPLOY.md` for exact evidence.
 
 - ~~**Phase 1 deterministic milestone 1, steps 1-3.**~~ **DONE in source
   2026-08-02.** The versioned U.S. broadcast XDCAM baseline, active ffprobe /

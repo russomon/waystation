@@ -290,6 +290,23 @@ AI_INTERPRETIVE_SHADOW_MAX_PACKETS=4
 When enabled, the AI Interpretive Pass is shadow/advisory and cannot change the
 deterministic delivery status or tier counts.
 
+### Production worker record — 2026-08-02
+
+The worker-only deployment was built from source commit `ecfcc01` and runs
+image `sha256:753b834fbac52381f7a2e6a24795efb42615d7f21fab283d006eb9a583afd9e9`
+(created `2026-08-02T20:18:54Z`). Before restart, the image proved qcli
+`1.4+29bc627` at the full pinned revision, MediaConch CLI `25.04` from package
+`25.04-2`, policy v1.1.0, and imports/routes for deterministic QC, prompt
+compilation, cost-aware triage, and interpretive shadow.
+
+Only `worker` was recreated with `--no-deps`; gateway and cloudflared container
+IDs were unchanged. The replacement became healthy, internal and public
+health endpoints returned `{"ok":true}`, and its image ID matched the inspected
+image. Scratch preflight passed on `/dev/vdb1` (ext4, 390 G free), and the
+running worker retained the `/scratch` and `/tmp` data-disk bind mounts. No
+historical upload was replayed. Future uploads use the cost-aware triage route;
+`AI_INTERPRETIVE_SHADOW=false` keeps the new advisory model pass spend-disabled.
+
 Customer-specific baseline values can be overridden with
 `WAYSTATION_BROADCAST_POLICY_OVERRIDES` JSON. Unknown keys fail closed, and
 the override plus effective-policy hash are retained in `qc_report.json`; see
