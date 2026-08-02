@@ -5,7 +5,33 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - A versioned house baseline is not universal network compliance
+
+- Context: "U.S. broadcast MXF" is not one universal delivery specification.
+  Network/customer requirements differ, while wrapper facts, measurements and
+  policy decisions are different kinds of evidence.
+- Decision: milestone 1 ships profile `us_broadcast_xdcam_hd_422_v1`, backed by
+  immutable policy pack `us_broadcast_xdcam_hd_422_baseline` v1.0.0. It states
+  its exact MXF OP1a/XDCAM assumptions and accepts only explicit nested JSON
+  overrides. Unknown override keys fail closed; reports retain both source and
+  effective policy hashes plus the override object.
+- Decision: every baseline finding separates `expectation`, `observation`,
+  `evidence`, `provenance`, `decision`, and policy identity. Full decode,
+  wrapper/essence/timing/audio/metadata/caption/boundary rules may reject from
+  deterministic evidence. Black/freeze/silence and legal-range screens remain
+  advisory until calibrated. There is no composite score and AI gains no
+  policy authority.
+- MediaConch boundary: use its supported MAXML/MediaInfo metadata output for an
+  independent fact set, then apply a pure Waystation reducer. Do not claim its
+  implementation checker certifies MXF. QCTools stays FYI/not checked until a
+  bounded extractor is proven.
+- Deployment consequence: this is source/image readiness only. Production was
+  not rebuilt or restarted; activation remains a separate explicit decision.
+
 ### 2026-08-01 - Install preservation CLIs before activating their policies
+
+- Status: superseded for MediaConch by the 2026-08-02 baseline decision above;
+  QCTools remains availability-only.
 
 - Context: Phase 1 needs stronger deterministic analytics and preservation
   policy plumbing, but package presence is not evidence that a file was checked

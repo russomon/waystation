@@ -1,9 +1,9 @@
 """Availability and provenance for optional preservation-oriented CLI tools.
 
-QCTools and MediaConch are installed as headless plumbing in the Docker worker.
-No Waystation reducer or MediaConch policy is active yet, so this module only
-records what is available and emits an explicit FYI that the media was not
-checked by either tool. Installation must never be presented as clearance.
+QCTools and MediaConch are installed headlessly in the Docker worker. This
+module inventories both and emits FYIs for tools not activated by the selected
+profile. The U.S. broadcast adapter owns its MediaConch metadata-policy result;
+QCTools remains availability-only. Installation is never clearance.
 """
 from __future__ import annotations
 
@@ -84,12 +84,16 @@ def inventory() -> list[dict]:
     return items
 
 
-def checks(tools: list[dict] | None = None) -> list[dict]:
-    """Emit FYIs only; no policy or reducer is active in this installation step."""
+def checks(tools: list[dict] | None = None,
+           active_tools: set[str] | None = None) -> list[dict]:
+    """Emit FYIs for tools not owned by an active profile adapter."""
     tools = tools if tools is not None else inventory()
+    active_tools = active_tools or set()
     by_name = {item["tool"]: item for item in tools}
     out = []
     for spec in _TOOLS:
+        if spec["tool"] in active_tools:
+            continue
         item = by_name[spec["tool"]]
         if item["available"]:
             detail = (

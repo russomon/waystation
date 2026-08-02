@@ -3,7 +3,7 @@
 Send mastered video — it arrives **QC'd, summarized, and provable**.
 High-speed verified delivery over **Backblaze B2** (the cloud waystation) with
 a broadcast-grade QC engine + AI lane (**GMI Cloud**) that runs while the file
-is parked, a single-toggle **Netflix strict profile**, an **agentic read-only
+is parked, selectable deterministic policy profiles, an **agentic read-only
 QC report** for human-detectable risks, and a WORM-locked provenance trail.
 
 Built for the [Backblaze Generative Media Hackathon](https://backblaze-generative-media.devpost.com/).
@@ -46,6 +46,8 @@ bash scripts/object-lock-proof.sh  # WORM manifest: locked version cannot be del
 bash scripts/phase2-loop-proof.sh  # signed event -> pipeline -> derivatives + manifest + SSE
 bash scripts/archive-tools-proof.sh # qcli/MediaConch availability + provenance; never silent pass
 bash scripts/archive-tools-docker-proof.sh # pinned headless CLIs in the worker image
+bash scripts/broadcast-qc-proof.sh # U.S. XDCAM baseline: real good/bad media + pure reducer fixtures
+bash scripts/broadcast-qc-docker-proof.sh # MediaConch 25.04 metadata-policy good/bad outcomes
 ```
 
 ## Layout
@@ -100,10 +102,11 @@ excludes `.env`; config is injected at runtime).
 Proven by `scripts/docker-proof.sh`: the built containers + MinIO run the
 full loop — signed event → containerized pipeline → derivatives + an
 SDK-verified Genblaze manifest — and the worker image answers for ffmpeg,
-MediaInfo, pinned QCTools/MediaConch CLI versions, Java, and Photon. QCTools and
-MediaConch are currently **installed plumbing, not active conformance claims**:
-reports preserve their availability/version and say `FYI · not checked` until
-validated reducers and MediaConch policies are added.
+MediaInfo, pinned QCTools/MediaConch CLI versions, Java, and Photon. MediaConch
+is active only for the versioned U.S. broadcast baseline's metadata-policy
+cross-check; it is not presented as MXF implementation certification. QCTools
+remains installed plumbing and reports `FYI · not checked` until a bounded,
+validated report extractor is added.
 
 **Scaling the worker.** Two axes, with a plateau worth knowing:
 
@@ -249,6 +252,16 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   blocked, PSE hard-fail, R103 escalation. Report carries
   `profile_label: Netflix_Delivery_Specification_Strict` + tier counts,
   rendered as chips on the delivery page.
+- ✅ **U.S. broadcast XDCAM HD 4:2:2 baseline** — a versioned Waystation
+  house profile for MXF OP1a, MPEG-2 4:2:2 at nominal 50 Mb/s, exact
+  `30000/1001` 1080i TFF, 8-bit 4:2:2, 24-bit/48 kHz PCM stereo, timecode,
+  material-package UMID, captions, black head/tail, loudness and true peak.
+  Every baseline finding separates policy expectation, observed fact,
+  evidence/time range, tool version, and deterministic decision authority.
+  MediaConch independently supplies MAXML metadata facts; visual artifact and
+  legal-range screens remain advisory. This is explicitly not universal U.S.
+  network compliance. See `docs/US_BROADCAST_BASELINE.md` and the two
+  `scripts/broadcast-qc-*-proof.sh` proofs.
 - ✅ **Read-only reporting contract and mandatory risk coverage.** Waystation
   never repairs or rewrites the master. `qc_report.json` separates the QC
   verdict from coverage completeness and includes all 18 registered risk

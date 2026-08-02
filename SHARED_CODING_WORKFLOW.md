@@ -79,6 +79,8 @@ handoff:
 | `scripts/mediainfo-proof.sh` | optional MediaInfo wrapper/profile checks |
 | `scripts/archive-tools-proof.sh` | optional QCTools/MediaConch availability, provenance, and never-silent missing behavior |
 | `scripts/archive-tools-docker-proof.sh` | worker image contains pinned headless qcli/MediaConch, qcli generates a report, and no GUI apps exist (needs docker) |
+| `scripts/broadcast-qc-proof.sh` | versioned U.S. broadcast XDCAM baseline with actual good/bad media and pure reducer fixtures |
+| `scripts/broadcast-qc-docker-proof.sh` | pinned MediaConch MAXML metadata-policy pass/fail outcomes (needs docker) |
 
 Each prints `PASS ✓` or `FAIL`. Scripts that need docker/Photon self-skip with
 instructions when the dependency is absent.

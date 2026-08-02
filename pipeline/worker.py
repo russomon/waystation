@@ -40,6 +40,7 @@ from qc import agentic as qagentic
 from qc import archive_tools as qarchive_tools
 from qc import audio as qaudio
 from qc import avsync as qavsync
+from qc import broadcast as qbroadcast
 from qc import foundry as qfoundry
 from qc import generated as qgenerated
 from qc import jury as qjury
@@ -197,17 +198,30 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
         guarded(qstructural.timecode_checks, src, group="timecode_continuity")
         guarded(qstructural.container_checks, meta, key, profile, group="container_metadata")
         guarded(qmediainfo.checks, src, profile, group="mediainfo_wrapper")
+        if qbroadcast.active(profile):
+            guarded(qbroadcast.metadata_checks, meta, profile, group="broadcast_metadata")
+            guarded(qbroadcast.mediaconch_policy_checks, src, profile,
+                    group="broadcast_mediaconch_policy")
+            guarded(qbroadcast.timestamp_gop_checks, src, profile,
+                    group="broadcast_timestamp_gop")
         tool_provenance = qarchive_tools.inventory()
-        guarded(qarchive_tools.checks, tool_provenance, group="archive_tooling")
+        active_archive_tools = {"mediaconch"} if qbroadcast.active(profile) else set()
+        guarded(qarchive_tools.checks, tool_provenance, active_archive_tools,
+                group="archive_tooling")
         if key.lower().endswith((".m3u8", ".mpd")):
             guarded(qstructural.abr_lint, src, group="abr_manifest")
         guarded(qimf.photon_checks, src, tmp, profile, group="imf_photon")
 
         # ── Task 2: signal video quality ──
-        segments: dict = {"black": [], "freeze": []}
+        segments: dict = {"black": [], "freeze": [], "silence": []}
         try:
-            det, segments = qvideo.decode_and_detections(src, has_video, has_audio, duration)
+            det, segments = qvideo.decode_and_detections(src, has_video, has_audio, duration, profile)
+            if qbroadcast.active(profile):
+                det = [item for item in det if item["name"] not in
+                       {"black_frames", "freeze_frames", "audio_silence"}]
             checks.extend(det)
+            if qbroadcast.active(profile):
+                checks.extend(qbroadcast.signal_segment_checks(segments, duration, profile))
         except Exception as e:
             checks.append(qreport.check("decode", "warn", f"analyzer error: {str(e)[:140]}", "engine"))
         if has_video:
@@ -222,7 +236,10 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
 
         # ── Task 3: audio analysis ──
         if has_audio:
-            guarded(qaudio.loudness_checks, src, profile, group="loudness")
+            if qbroadcast.active(profile):
+                guarded(qbroadcast.audio_checks, src, profile, group="broadcast_loudness")
+            else:
+                guarded(qaudio.loudness_checks, src, profile, group="loudness")
             guarded(qaudio.phase_check, src, meta, group="audio_phase")
             guarded(qaudio.clipping_and_hum, src, group="audio_clipping")
             guarded(qaudio.channel_map_check, meta, group="channel_map")
@@ -260,12 +277,24 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
                                         "no caption track or sidecar found (mastered deliveries "
                                         "usually require captions)", "text"))
 
+    if qbroadcast.active(profile):
+        caption_sources = []
+        if captions_path:
+            caption_sources.append("sidecar")
+        if any(s.get("codec_type") == "subtitle" for s in streams):
+            caption_sources.append("embedded")
+        guarded(qbroadcast.caption_presence_check, bool(caption_sources),
+                "+".join(caption_sources), profile, check_captions,
+                group="broadcast_captions_present")
+
     report = qreport.finalize({"checks": checks}, profile)
+    if qbroadcast.active(profile):
+        report["policy_pack"] = profile["policy_pack"]
     if check_av:
         report["tool_provenance"] = tool_provenance
     # Flagged segment timecodes ride in the report: consumers see WHERE the
     # detections fired, and the AI escalation adjudicates those exact moments.
-    if check_av and (segments["black"] or segments["freeze"]):
+    if check_av and any(segments.values()):
         report["detections"] = {k: [[round(s, 2), round(e, 2)] for s, e in v]
                                 for k, v in segments.items() if v}
     return report

@@ -1,0 +1,58 @@
+{
+  "policy_id": "us_broadcast_xdcam_hd_422_baseline",
+  "version": "1.0.0",
+  "profile_name": "us_broadcast_xdcam_hd_422_v1",
+  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.0",
+  "scope": "A Waystation house baseline for one common U.S. HD broadcast delivery shape. It is not a universal network specification or evidence of acceptance by any broadcaster.",
+  "assumptions": [
+    "single-file MXF OP1a delivery",
+    "XDCAM HD 4:2:2 MPEG-2 at nominal 50 Mb/s",
+    "1920x1080, 30000/1001 interlaced top-field-first, 8-bit 4:2:2",
+    "one 24-bit 48 kHz PCM stereo programme track",
+    "SMPTE drop-frame start timecode and material-package UMID present",
+    "captions supplied as an embedded stream or SRT/VTT sidecar",
+    "1 to 5 seconds of black at head and tail",
+    "programme loudness -24 LKFS +/-2 LU and true peak at or below -2 dBTP"
+  ],
+  "rules": {
+    "wrapper": {
+      "format_names": ["mxf"],
+      "op1a_ul": "060e2b34.04010101.0d010201.01010900",
+      "required_metadata_tags": ["material_package_umid", "timecode"]
+    },
+    "video": {
+      "min_tracks": 1,
+      "codec_names": ["mpeg2video"],
+      "profiles": ["4:2:2"],
+      "frame_rate": {"numerator": 30000, "denominator": 1001},
+      "raster": {"width": 1920, "height": 1080},
+      "field_orders": ["tt"],
+      "bit_depth": 8,
+      "pixel_formats": ["yuv422p"],
+      "bit_rate": {"target": 50000000, "tolerance": 5000000},
+      "gop": {"max_frames": 15, "scan_frames": 1800},
+      "timestamp_gap_multiplier": 2.5,
+      "duration_tolerance_seconds": 0.5
+    },
+    "audio": {
+      "min_tracks": 1,
+      "total_channels": 2,
+      "codecs": ["pcm_s24le"],
+      "sample_rate": 48000,
+      "bit_depth": 24,
+      "loudness": {"target_lkfs": -24.0, "tolerance_lu": 2.0},
+      "true_peak": {"max_dbtp": -2.0}
+    },
+    "captions": {"required": true},
+    "signal": {
+      "black_head": {"min_seconds": 1.0, "max_seconds": 5.0},
+      "black_tail": {"min_seconds": 1.0, "max_seconds": 5.0},
+      "boundary_detection_tolerance_seconds": 0.1,
+      "unexpected_black_min_seconds": 0.5,
+      "freeze_min_seconds": 2.0,
+      "silence_min_seconds": 2.0,
+      "visual_artifact_authority": "advisory",
+      "legal_range_authority": "advisory"
+    }
+  }
+}

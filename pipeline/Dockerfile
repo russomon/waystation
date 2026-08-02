@@ -71,6 +71,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY worker.py .
 COPY qc ./qc
+COPY policies ./policies
 COPY --from=photon /opt/photon /opt/photon
 ENV PHOTON_JAR=/opt/photon
 

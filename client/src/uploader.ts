@@ -14,7 +14,7 @@ export interface Progress { bytes: number; total: number; phase: string; }
 export interface ServiceOptions {
   qc_av: boolean; qc_captions: boolean; qc_ai: boolean; qc_synthetic: boolean;
   thumbnail: boolean; summarize: boolean;
-  profile: string;      // "standard" | "netflix" — QC threshold profile
+  profile: string;      // standard | us_broadcast_xdcam_hd_422_v1 | netflix
   compute: string;      // "local" | "cloud" — where the waystation crunches
 }
 export interface SendExtras {

@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-01 (Phase 1 headless deterministic-tool installation in source)
+Updated: 2026-08-02 (deterministic QC milestone 1, source only)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -78,11 +78,9 @@ as above, rather than trusting `git rev-parse` on the host.
   Debian `mediaconch=25.04-2`. Image labels, environment, binary output, and the
   report's `tool_provenance` retain version/source evidence. No QCTools or
   MediaConch GUI application is installed.
-- This step is **plumbing only**. `pipeline/qc/archive_tools.py` does not run a QCTools
-  analysis or select a MediaConch policy. Present and absent tools both emit an
-  explicit FYI ending in **media not checked**; neither tool check is marked
-  pass or fail, and neither creates a composite score. Existing deterministic
-  instruments remain the only lane with policy-failure authority.
+- At that commit this step was **plumbing only**. Milestone 1 below now activates
+  a bounded MediaConch metadata-policy adapter for one versioned broadcast
+  baseline. QCTools remains availability-only and explicitly not checked.
 - Validated locally: gateway typecheck, client production build, worker
   compile/import, both Compose configs, shell syntax, missing/present adapter
   proof, and a real Docker worker build with exact qcli/MediaConch versions,
@@ -94,10 +92,40 @@ as above, rather than trusting `git rev-parse` on the host.
   Rebuilding production later would both install this toolchain and activate the
   already-pending AI-triage source for future uploads; that remains a separate
   demo/readiness decision.
-- Phase 1 next work: define versioned MediaConch policies for its supported
-  preservation scope and QCTools report extraction/reducers against fixtures.
-  Do not claim broadcast-MXF parity or add rejection rules before those outputs
-  are validated.
+- The no-universal-parity boundary remains: QCTools extraction and any wider
+  customer/network policy packs still require their own fixtures and proofs.
+
+## Deterministic QC milestone 1, steps 1-3 — 2026-08-02
+
+- Added versioned policy pack
+  `pipeline/policies/us_broadcast_xdcam_hd_422_v1.json` and sender profile
+  `us_broadcast_xdcam_hd_422_v1`. It is explicitly a Waystation U.S. broadcast
+  MXF OP1a / XDCAM HD 4:2:2 house baseline, not universal network compliance.
+  Assumptions and override behavior are documented in
+  `docs/US_BROADCAST_BASELINE.md`.
+- Active hard deterministic checks: full decode and stream presence; MXF/OP1a;
+  MPEG-2 4:2:2 profile; exact rational frame rate; raster; TFF/interlace; bit
+  depth/chroma/bitrate; bounded GOP and timestamp continuity; duration
+  agreement; PCM track/layout/sample rate/bit depth; full-program loudness and
+  true peak; timecode/material UMID; captions; black head/tail. MediaConch 25.04
+  supplies an independent MAXML metadata fact set to a pure versioned reducer.
+- Programme black, freeze runs, silence runs, and legal-range evidence are
+  active advisories only. QCTools remains FYI/not checked. Missing tools or
+  measurements cannot become a pass. Every baseline finding carries separate
+  expectation, observation, evidence/time range, tool provenance, policy hash,
+  and decision authority; no AI pass or composite score was added.
+- Proof library: `scripts/broadcast-qc-proof.sh` constructs a real passing MXF
+  and failing MP4 plus good/bad pure fixtures for timing/GOP, signal segments,
+  loudness/peak, captions, overrides, and evidence shape.
+  `scripts/broadcast-qc-docker-proof.sh` builds the worker and proves pinned
+  MediaConch 25.04 passes 16/16 metadata assertions on the good MXF and fails
+  15/16 on the bad MP4.
+- **Not deployed.** No VPS checkout, worker image, container, restart, or
+  service was touched. A future production worker rebuild remains a separate
+  explicit decision and would also activate the already-pending AI triage.
+- Next milestone: bounded QCTools report extraction/reducers and real
+  customer/network acceptance-fixture calibration. Do not broaden hard policy
+  authority before those proofs exist.
 
 ## Large-file mode PROVEN on real media — 2026-08-01
 

@@ -55,17 +55,19 @@ history.
   is a legitimate choice; if you leave it, record that as intentional rather
   than letting it look like drift.
 
-- **Phase 1 deterministic adapters after the CLI install.** The source worker
-  image now contains headless QCTools `qcli` and MediaConch, but both are
-  intentionally availability-only. Next, add representative preservation and
-  delivery fixtures, versioned MediaConch policies limited to MediaConch's
-  actual supported scope, and a bounded QCTools report extractor plus pure
-  reducers. Preserve raw reports and exact tool versions. Keep results FYI
-  until repeatable fixtures prove each rule; do not claim complete broadcast
-  MXF parity and do not give either tool rejection authority by installation
-  alone.
+- ~~**Phase 1 deterministic milestone 1, steps 1-3.**~~ **DONE in source
+  2026-08-02.** The versioned U.S. broadcast XDCAM baseline, active ffprobe /
+  FFmpeg / MediaInfo / MediaConch metadata reducers, structured evidence, and
+  known-good/known-bad proofs are present. It is a house baseline, not complete
+  broadcast-MXF or universal network parity.
 
-  Production remains unchanged. Any future worker rebuild must be reviewed as
+  Next: add a bounded QCTools report extractor and pure reducers, then calibrate
+  advisory black/freeze/silence/legal-range thresholds against representative
+  customer/network accepted and rejected masters. Preserve raw report hashes,
+  exact versions and time ranges. Do not broaden hard-rejection authority from
+  synthetic fixture behavior alone.
+
+  **Production remains unchanged.** Any future worker rebuild must be reviewed as
   one runtime change because it would both install these CLIs and activate the
   already-pending AI-triage source for subsequent uploads.
 

@@ -64,7 +64,8 @@ def checks(src: str, profile: dict) -> list:
               f"{fmt}" + (f", profile {profile_name}" if profile_name else ""), "structural")
     ]
 
-    strict = profile.get("name") == "netflix" or bool(profile.get("photon_required"))
+    strict = profile.get("name") in ("netflix", "us_broadcast_xdcam_hd_422_v1") \
+        or bool(profile.get("photon_required"))
     if fmt.upper() == "MXF":
         op = f"{profile_name} {general.get('Format_Commercial_IfAny', '')}".lower()
         op_norm = "".join(ch for ch in op if ch.isalnum())

@@ -22,16 +22,21 @@ SIGNAL_TILE_MAX_TOTAL_S = float(os.environ.get("SIGNAL_TILE_MAX_TOTAL_S", "240")
 
 
 def decode_and_detections(src: str, has_video: bool, has_audio: bool,
-                          duration: float = 0.0) -> tuple:
+                          duration: float = 0.0, profile: dict | None = None) -> tuple:
     """Full-decode corruption pass + black/freeze/silence detections.
-    Returns (checks, {"black": [(s,e)…], "freeze": [(s,e)…]}) — the black
+    Returns (checks, {"black": [(s,e)…], "freeze": [(s,e)…],
+    "silence": [(s,e)…]}) — the black
     segments feed the boundary check, and BOTH segment lists feed the
     AI-targeted escalation (Gemini adjudicates the exact flagged moments)."""
     checks = []
     dec = run(["ffmpeg", "-v", "error", "-i", src, "-f", "null", "-"])
     errs = [ln for ln in dec.stderr.splitlines() if ln.strip()]
-    checks.append(check("decode", "pass" if not errs else "fail",
-                        f"{len(errs)} error line(s)" + (f"; first: {errs[0][:120]}" if errs else "")))
+    if profile and profile.get("name") == "us_broadcast_xdcam_hd_422_v1":
+        from .broadcast import decode_finding
+        checks.append(decode_finding(errs, profile))
+    else:
+        checks.append(check("decode", "pass" if not errs else "fail",
+                            f"{len(errs)} error line(s)" + (f"; first: {errs[0][:120]}" if errs else "")))
 
     cmd = ["ffmpeg", "-hide_banner", "-i", src]
     if has_video:
@@ -41,7 +46,7 @@ def decode_and_detections(src: str, has_video: bool, has_audio: bool,
     cmd += ["-f", "null", "-"]
     log = run(cmd).stderr
 
-    segments = {"black": [], "freeze": []}
+    segments = {"black": [], "freeze": [], "silence": []}
     if has_video:
         segments["black"] = [(float(a), float(b)) for a, b in
                              re.findall(r"black_start:([\d.]+).*?black_end:([\d.]+)", log)]
@@ -56,9 +61,13 @@ def decode_and_detections(src: str, has_video: bool, has_audio: bool,
         checks.append(check("freeze_frames", "pass" if not segments["freeze"] else "warn",
                             f"{len(segments['freeze'])} frozen segment(s)"))
     if has_audio:
-        silences = log.count("silence_start")
-        checks.append(check("audio_silence", "pass" if silences == 0 else "warn",
-                            f"{silences} silent segment(s)", "audio"))
+        s_starts = [float(x) for x in re.findall(r"silence_start:\s*([\d.]+)", log)]
+        s_ends = [float(x) for x in re.findall(r"silence_end:\s*([\d.]+)", log)]
+        while len(s_ends) < len(s_starts):
+            s_ends.append(duration or (s_starts[len(s_ends)] + 2.0))
+        segments["silence"] = list(zip(s_starts, s_ends))
+        checks.append(check("audio_silence", "pass" if not segments["silence"] else "warn",
+                            f"{len(segments['silence'])} silent segment(s)", "audio"))
     return checks, segments
 
 
@@ -122,11 +131,24 @@ def range_and_pse(src: str, duration: float, profile: dict, bit_depth: int = 8) 
     detail = (f"Y [{ymin:.0f}..{ymax:.0f}] chroma [{cmin:.0f}..{cmax:.0f}]; "
               f"out-of-tolerance pixels Y {fy:.3%} / U {fu:.3%} / V {fv:.3%} "
               f"(area threshold 0.1%){span_note}")
+    status = "fail" if profile["video_range"]["escalate"] else "warn"
+    facts = {"y_min": ymin, "y_max": ymax, "chroma_min": cmin, "chroma_max": cmax,
+             "out_of_tolerance_fraction": {"y": fy, "u": fu, "v": fv},
+             "worst_fraction": worst_frac}
     if worst_frac > 0.001:
-        checks.append(violation("video_legal_range", profile["video_range"]["escalate"],
-                                "level overshoot: " + detail))
+        if profile.get("name") == "us_broadcast_xdcam_hd_422_v1":
+            from .broadcast import legal_range_finding
+            checks.append(legal_range_finding(profile, status, "level overshoot: " + detail,
+                                               facts, windows, analyzed))
+        else:
+            checks.append(violation("video_legal_range", profile["video_range"]["escalate"],
+                                    "level overshoot: " + detail))
     else:
-        checks.append(check("video_legal_range", "pass", detail))
+        if profile.get("name") == "us_broadcast_xdcam_hd_422_v1":
+            from .broadcast import legal_range_finding
+            checks.append(legal_range_finding(profile, "pass", detail, facts, windows, analyzed))
+        else:
+            checks.append(check("video_legal_range", "pass", detail))
 
     if profile["pse"]["enabled"]:
         ydif = tag_values(lines, "lavfi.signalstats.YDIF")

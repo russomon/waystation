@@ -98,14 +98,23 @@ def framerate_checks(src: str, meta: dict, profile: dict) -> list:
     if rep_n + rep_t + rep_b == 0:
         rep_n = 1
 
-    interlaced = (tff + bff) > prog
+    declared_field_order = str(v.get("field_order") or "").lower()
+    declared_interlaced = declared_field_order not in ("", "unknown", "progressive")
+    # The broadcast baseline treats the encoded stream's field-order flag as a
+    # wrapper fact and idet as sampled picture evidence. Synthetic or low-motion
+    # interlaced material can look progressive to idet even when correctly
+    # flagged TFF, so either source is sufficient to classify the delivery.
+    interlaced = ((tff + bff) > prog
+                  or (profile.get("name") == "us_broadcast_xdcam_hd_422_v1"
+                      and declared_interlaced))
     if interlaced and tff and bff:
         checks.append(check("field_order", "warn",
                             f"mixed field order (TFF {tff} / BFF {bff}) — possible cadence reversal", "structural"))
     else:
         checks.append(check("field_order", "pass" if not interlaced else "info",
                             "progressive" if not interlaced
-                            else ("top-field-first" if tff >= bff else "bottom-field-first"), "structural"))
+                            else ("top-field-first" if declared_field_order in ("tt", "tb") or tff >= bff
+                                  else "bottom-field-first"), "structural"))
 
     total_rep = rep_n + rep_t + rep_b
     pulldown = total_rep > 0 and (rep_t + rep_b) / total_rep > 0.10

@@ -22,6 +22,39 @@ def violation(name: str, escalate: bool, detail: str, category: str = "signal") 
     return check(name, "fail" if escalate else "warn", detail, category)
 
 
+def policy_check(name: str, status: str, detail: str, category: str, *,
+                 policy: dict, expectation: dict, observation: dict,
+                 evidence: list[dict], provenance: dict,
+                 time_range: dict | None = None,
+                 authority: str | None = None) -> dict:
+    """A policy finding with facts kept separate from the policy decision.
+
+    Existing consumers still receive the normal check shape. The additive
+    fields make the measurement, expected value, evidence reference, and
+    decision authority independently auditable.
+    """
+    item = check(name, status, detail, category)
+    item.update({
+        "policy": policy,
+        "expectation": expectation,
+        "observation": observation,
+        "evidence": evidence,
+        "provenance": provenance,
+        "decision": {
+            "outcome": observation.get("state", "not_checked")
+            if status == "info" and observation.get("state") == "not_checked"
+            else status,
+            "authority": authority or (
+                "deterministic_policy" if status in ("pass", "fail")
+                else "deterministic_advisory"
+            ),
+        },
+    })
+    if time_range is not None:
+        item["time_range"] = time_range
+    return item
+
+
 def finalize(report: dict, profile: dict) -> dict:
     """Recompute overall status + tier counts (idempotent; call after any append).
     Checks appended by other lanes get tiers backfilled from status."""

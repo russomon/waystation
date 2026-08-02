@@ -265,14 +265,20 @@ MediaConch GUI application. Verify a newly built image before deployment with:
 
 ```bash
 bash scripts/archive-tools-docker-proof.sh
+bash scripts/broadcast-qc-docker-proof.sh
 ```
 
-This builds the worker and proves `qcli` can generate a QCTools report from a
-small fixture. It is still an installation/provenance check, not a
-media-conformance claim.
-Until a validated QCTools reducer and explicit MediaConch policies land, QC
-reports label both analyzers `FYI · not checked`; neither can reject or clear a
-delivery.
+The archive-tools proof verifies installation/provenance and real qcli report
+generation. The broadcast proof verifies that MediaConch 25.04 emits MAXML
+facts and Waystation's v1 U.S. XDCAM baseline reducer passes/fails known media
+shapes. This metadata-policy adapter is active only when profile
+`us_broadcast_xdcam_hd_422_v1` is selected; it is not a universal network or
+MXF implementation-conformance claim. QCTools remains `FYI · not checked`.
+
+Customer-specific baseline values can be overridden with
+`WAYSTATION_BROADCAST_POLICY_OVERRIDES` JSON. Unknown keys fail closed, and
+the override plus effective-policy hash are retained in `qc_report.json`; see
+`docs/US_BROADCAST_BASELINE.md`.
 
 If the worker fails with a bind-mount error naming `/mnt/waystation-scratch`,
 that is the guard working: the scratch path is missing or the disk is not
