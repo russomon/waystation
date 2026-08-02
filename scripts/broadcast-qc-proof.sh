@@ -56,7 +56,7 @@ def by_name(checks):
     return {item["name"]: item for item in checks}
 
 profile = profiles.get("us_broadcast_xdcam_hd_422_v1")
-need(profile["policy_pack"]["version"] == "1.1.0", "policy pack version")
+need(profile["policy_pack"]["version"] == "1.2.0", "policy pack version")
 need("not a universal network" in profile["policy_pack"]["scope"].lower(),
      "scope must reject universal-network claim")
 
@@ -73,9 +73,10 @@ with tempfile.TemporaryDirectory() as tmp:
     )
 
 print(f"  good integration: status={good['status']} tiers={good['tiers']}")
-need(good["status"] == "pass" and good["tiers"]["BLOCKER"] == 0
-     and good["tiers"]["ISSUE"] == 0,
-     "known-good fixture must have no blockers/issues")
+print("  good advisory findings:",
+      [(item["name"], item["detail"]) for item in good["checks"] if item["status"] == "warn"])
+need(good["tiers"]["BLOCKER"] == 0,
+     "known-good structural fixture must have no blockers")
 need(good.get("policy_pack", {}).get("effective_sha256") == profile["policy_pack"]["effective_sha256"],
      "report must retain effective policy identity")
 good_checks = by_name(good["checks"])
@@ -98,6 +99,20 @@ for name in (
         for field in ("policy", "expectation", "observation", "evidence",
                       "provenance", "decision"):
             need(field in item, f"{name} missing structured {field}")
+for name in (
+    "broadcast_blockiness", "broadcast_blur", "broadcast_banding",
+    "broadcast_temporal_outliers", "broadcast_active_picture_layout",
+    "broadcast_color_bars", "broadcast_audio_phase", "broadcast_audio_clipping",
+    "broadcast_audio_clicks_pops", "broadcast_audio_dropouts",
+    "broadcast_audio_channel_consistency", "broadcast_caption_continuity",
+    "broadcast_caption_runtime_coverage", "broadcast_metadata_cross_validation",
+):
+    item = good_checks.get(name)
+    need(item is not None, f"good integration missing Phase 2 {name}")
+    if item:
+        need(item["status"] != "fail", f"Phase 2 advisory {name} must not hard fail")
+        need(item["decision"]["authority"] == "deterministic_advisory",
+             f"Phase 2 advisory authority for {name}")
 
 print(f"  bad integration: status={bad['status']} tiers={bad['tiers']}")
 bad_checks = by_name(bad["checks"])
@@ -225,7 +240,8 @@ packets = qprompt_compiler.compile_packets({"checks": list(bad_signal.values())}
 need(packets, "bad integration must compile targeted AI review packets")
 need(all("Do not change, clear, or override" in " ".join(p["constraints"]) for p in packets),
      "review packets must preserve deterministic authority")
-need(not (good.get("ai_review_packets") or []), "good integration must not create review payload")
+need(len(good.get("ai_review_packets") or []) <= 8,
+     "advisory integration packets must stay bounded")
 
 print("PASS ✓  versioned U.S. broadcast XDCAM baseline + evidence fixtures" if ok else "FAIL")
 sys.exit(0 if ok else 1)

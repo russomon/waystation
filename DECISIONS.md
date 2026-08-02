@@ -5,6 +5,25 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - Phase 2 perceptual metrics remain corpus-gated advisories
+
+- Decision: policy v1.2.0 adds bounded broadcast-only visual, audio, caption,
+  QCTools, and cross-tool metadata measurements. These are deterministic
+  evidence but do not gain hard delivery authority merely because a tool emits
+  a number. Standard and Netflix profiles remain unchanged.
+- Decision: only explicit, repeatable policy rules may reject. Every new
+  perceptual threshold remains `deterministic_advisory`; unavailable or
+  malformed measurements are `not_checked`. AI remains disabled by default,
+  advisory when enabled, and unable to change deterministic status or tiers.
+- Decision: synthetic fixtures prove code behavior, not network acceptance.
+  Threshold promotion requires real decision-backed accepted/rejected records,
+  documented review, a new policy version, and regression proof. The helper's
+  20-per-class gate is a workflow minimum, not statistical certification, and
+  cannot update policy automatically. No composite score is permitted.
+- Deployment consequence: this milestone is source-only. Production remains on
+  the previously recorded v1.1.0 worker image with
+  `AI_INTERPRETIVE_SHADOW=false` until separately approved.
+
 ### 2026-08-02 - A versioned house baseline is not universal network compliance
 
 - Context: "U.S. broadcast MXF" is not one universal delivery specification.

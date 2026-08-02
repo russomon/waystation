@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://waystation.invalid/schemas/qc-calibration-intake-1.0.json",
+  "title": "Waystation QC calibration intake",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["asset_id", "asset_sha256", "label", "source_kind", "metrics", "decision_provenance"],
+  "properties": {
+    "asset_id": {"type": "string", "minLength": 1},
+    "asset_sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+    "label": {"enum": ["accepted", "rejected"]},
+    "source_kind": {"enum": ["real_delivery", "synthetic_fixture"]},
+    "network_acceptance_evidence": {"type": "boolean", "default": false},
+    "decision_provenance": {
+      "type": "object",
+      "required": ["source", "recorded_at"],
+      "properties": {
+        "source": {"type": "string"},
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "reference": {"type": "string"}
+      }
+    },
+    "profile": {"type": "string"},
+    "policy_version": {"type": "string"},
+    "tool_provenance": {"type": "array", "items": {"type": "object"}},
+    "metrics": {
+      "type": "object",
+      "additionalProperties": {"type": ["number", "integer", "null"]}
+    },
+    "notes": {"type": "string"}
+  }
+}

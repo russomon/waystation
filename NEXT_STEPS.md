@@ -42,6 +42,20 @@ history.
   masters. Do not broaden advisory QCTools, black/freeze/silence/legal-range
   authority from synthetic fixtures alone.
 
+- ~~**Phase 2 delivery-grade visual/audio source milestone.**~~ **DONE in
+  source 2026-08-02; not deployed.** Policy v1.2.0 adds bounded advisory
+  blockiness, blur, banding, temporal/layout/color-bars, phase, clipping,
+  click/pop, dropout, channel-consistency, SRT/VTT continuity/coverage, and
+  three-tool metadata contradiction evidence. QCTools adds validated advisory
+  anomaly candidates while retaining raw-report hashes. The corpus intake gate
+  and fixtures are in `calibration/`, `docs/QC_CALIBRATION.md`, and
+  `scripts/phase2-quality-proof.sh`.
+
+  Next: collect real, decision-backed accepted/rejected deliveries. Keep every
+  Phase 2 threshold advisory until a reviewed corpus justifies a new policy
+  version. Production remains on worker policy v1.1.0 and
+  `AI_INTERPRETIVE_SHADOW=false`; deployment requires a separate decision.
+
 - **Record the baseline hackathon demo.** The hosted MVP is deployed, published
   and rehearsed — **14/14 production checks passed 2026-07-28** (record in
   `docs/DEPLOY.md`). Nothing infrastructural blocks recording.

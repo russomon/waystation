@@ -16,7 +16,28 @@ _QUESTIONS = {
     "broadcast_timestamp_continuity": "Is there a visible or audible discontinuity near the cited timestamp event?",
     "video_legal_range": "Do the cited signal excursions correspond to a visible picture defect?",
     "qctools_analytics": "Do the cited advisory measurements indicate a visible signal anomaly worth human review?",
+    "qctools_signal_anomalies": "Do the cited QCTools candidates correspond to a visible signal defect?",
+    "broadcast_blockiness": "Does the cited sample show objectionable macroblocking or mosquito noise?",
+    "broadcast_blur": "Does the cited sample show unintended loss of focus or sharpness?",
+    "broadcast_banding": "Does the cited sample show visible banding or contouring?",
+    "broadcast_temporal_outliers": "Does the cited sample show a visible temporal discontinuity or repeated-region defect?",
+    "broadcast_active_picture_layout": "Does the cited sample show unintended crop, matte, or active-picture layout?",
+    "broadcast_audio_phase": "Does the cited audio exhibit an audible phase or polarity problem?",
+    "broadcast_audio_clipping": "Does the cited audio contain audible clipping distortion?",
+    "broadcast_audio_clicks_pops": "Does the cited audio contain a click, pop, or impulse defect?",
+    "broadcast_audio_dropouts": "Does the cited audio contain an unintended dropout?",
+    "broadcast_audio_channel_consistency": "Does the cited audio show an unintended missing or imbalanced channel?",
+    "broadcast_caption_continuity": "Do the cited caption events represent unintended overlaps, ordering errors, or long gaps?",
+    "broadcast_metadata_cross_validation": "Does the cited cross-tool metadata contradiction require delivery review?",
 }
+
+_AUDIO_FINDINGS = {
+    "broadcast_silence_runs", "broadcast_audio_phase", "broadcast_audio_clipping",
+    "broadcast_audio_clicks_pops", "broadcast_audio_dropouts",
+    "broadcast_audio_channel_consistency",
+}
+
+_NO_MEDIA_FINDINGS = {"broadcast_metadata_cross_validation"}
 
 
 def _canonical(value: object) -> bytes:
@@ -83,7 +104,9 @@ def compile_packets(report: dict, context: dict | None = None) -> list[dict]:
         media_requests = []
         for index, span in enumerate(ranges[:2], 1):
             midpoint = (span["start_seconds"] + span["end_seconds"]) / 2
-            if name == "broadcast_silence_runs":
+            if name in _NO_MEDIA_FINDINGS:
+                continue
+            if name in _AUDIO_FINDINGS:
                 media_requests.append({"id": f"audio-{index}", "type": "audio_clip",
                                        "start_seconds": max(0.0, span["start_seconds"] - 0.5),
                                        "duration_seconds": min(6.0, max(1.0, span["end_seconds"] - span["start_seconds"] + 1.0))})

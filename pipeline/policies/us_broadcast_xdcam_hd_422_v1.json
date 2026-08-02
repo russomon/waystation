@@ -1,8 +1,8 @@
 {
   "policy_id": "us_broadcast_xdcam_hd_422_baseline",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "profile_name": "us_broadcast_xdcam_hd_422_v1",
-  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.1",
+  "label": "U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline v1.2",
   "scope": "A Waystation house baseline for one common U.S. HD broadcast delivery shape. It is not a universal network specification or evidence of acceptance by any broadcaster.",
   "assumptions": [
     "single-file MXF OP1a delivery",
@@ -13,7 +13,8 @@
     "captions supplied as an embedded stream or SRT/VTT sidecar",
     "1 to 5 seconds of black at head and tail",
     "programme loudness -24 LKFS +/-2 LU and true peak at or below -2 dBTP",
-    "BT.709 colour metadata, 16:9 display aspect, square pixels, and aligned programme starts"
+    "BT.709 colour metadata, 16:9 display aspect, square pixels, and aligned programme starts",
+    "Phase 2 visual/audio artifact thresholds are advisory calibration candidates, not broadcaster acceptance rules"
   ],
   "rules": {
     "wrapper": {
@@ -71,6 +72,50 @@
       "max_windows": 3,
       "authority": "advisory",
       "calibration_state": "pending_real_accepted_rejected_corpus"
+    },
+    "visual_quality": {
+      "window_seconds": 4.0,
+      "max_windows": 3,
+      "blockiness_warn_p95": 16.0,
+      "blur_warn_p95": 15.0,
+      "banding_max_used_bits": 6,
+      "banding_max_entropy": 0.65,
+      "banding_min_luma_span": 64,
+      "temporal_outlier_warn_max": 0.02,
+      "repeat_warn_max": 0.02,
+      "crop_max_fraction": 0.03,
+      "authority": "advisory",
+      "calibration_state": "pending_real_accepted_rejected_corpus"
+    },
+    "audio_quality": {
+      "window_seconds": 8.0,
+      "max_windows": 3,
+      "phase_minimum_mean": -0.2,
+      "phase_minimum_sample": -0.9,
+      "phase_max_negative_fraction": 0.1,
+      "clipping_peak_dbfs": -0.05,
+      "clipping_flat_factor": 0.0,
+      "click_peak_dbfs": -1.0,
+      "click_max_rms_dbfs": -25.0,
+      "click_min_difference": 0.5,
+      "silence_noise_db": -50.0,
+      "dropout_min_seconds": 0.05,
+      "persistent_silence_seconds": 2.0,
+      "channel_max_rms_spread_db": 12.0,
+      "dead_channel_rms_dbfs": -80.0,
+      "max_reported_events": 100,
+      "authority": "advisory",
+      "calibration_state": "pending_real_accepted_rejected_corpus"
+    },
+    "caption_quality": {
+      "eof_tolerance_seconds": 1.0,
+      "long_gap_advisory_seconds": 120.0,
+      "max_reported_events": 100,
+      "authority": "advisory"
+    },
+    "metadata_cross_validation": {
+      "sources": ["ffprobe", "mediainfo", "mediaconch"],
+      "authority": "advisory"
     }
   }
 }

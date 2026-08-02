@@ -48,6 +48,7 @@ from qc import hybrid as qhybrid
 from qc import imf as qimf
 from qc import interpretive as qinterpretive
 from qc import mediainfo as qmediainfo
+from qc import phase2 as qphase2
 from qc import prompt_compiler as qprompt_compiler
 from qc import profiles as qprofiles
 from qc import qctools as qqctools
@@ -209,6 +210,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             guarded(qbroadcast.metadata_checks, meta, profile, group="broadcast_metadata")
             guarded(qbroadcast.mediaconch_policy_checks, src, profile,
                     group="broadcast_mediaconch_policy")
+            guarded(qphase2.metadata_cross_validation, meta, checks, profile,
+                    group="broadcast_metadata_cross_validation")
             guarded(qbroadcast.timestamp_gop_checks, src, profile,
                     duration,
                     group="broadcast_timestamp_gop")
@@ -239,6 +242,9 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             guarded(qvideo.matte_and_aspect, src, meta, duration, group="letterbox_matte")
             guarded(qvideo.upconversion_check, src, meta, duration, group="upconversion")
             guarded(qvideo.operational_metadata, src, meta, profile, group="cc_metadata")
+            if qbroadcast.active(profile):
+                guarded(qphase2.visual_quality_checks, src, meta, duration, profile, segments,
+                        group="broadcast_visual_quality")
             if ref_path:
                 guarded(qvideo.reference_checks, src, ref_path, tmp, group="reference_ssim")
 
@@ -251,6 +257,9 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             guarded(qaudio.phase_check, src, meta, group="audio_phase")
             guarded(qaudio.clipping_and_hum, src, group="audio_clipping")
             guarded(qaudio.channel_map_check, meta, group="channel_map")
+            if qbroadcast.active(profile):
+                guarded(qphase2.audio_quality_checks, src, meta, duration, profile, segments,
+                        group="broadcast_audio_quality")
             if has_video:  # lip-sync proxy needs both streams
                 guarded(qaudio.lip_sync_proxy, src, meta, duration, group="lip_sync_drift_proxy")
                 # measured lip-sync via SyncNet when installed; honest FYI when not
@@ -260,6 +269,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
     if check_captions:
         sub_streams = [s for s in streams if s.get("codec_type") == "subtitle"]
         cap_text = None
+        caption_cues = None
+        caption_source = "none"
         try:
             cap_text = load_caption_text(src, captions_path, tmp)
         except Exception:
@@ -272,6 +283,8 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             if cap_text is not None:
                 source = ("sidecar " + os.path.basename(captions_path)) if captions_path else "embedded track"
                 cues = parse_caption_cues(cap_text)
+                caption_cues = cues
+                caption_source = source
                 guarded(lambda: qtext.caption_checks(cues, duration, source), group="caption_timing")
                 guarded(lambda: qtext.text_integrity_checks(cap_text), group="caption_encoding")
                 if has_audio:
@@ -284,6 +297,9 @@ def run_qc(src: str, meta: dict, captions_path: str | None = None,
             checks.append(qreport.check("captions_present", "warn",
                                         "no caption track or sidecar found (mastered deliveries "
                                         "usually require captions)", "text"))
+        if qbroadcast.active(profile):
+            guarded(qphase2.caption_quality_checks, caption_cues or [], duration,
+                    caption_source, profile, group="broadcast_caption_continuity")
 
     if qbroadcast.active(profile):
         caption_sources = []

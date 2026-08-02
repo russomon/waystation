@@ -3,7 +3,8 @@
 QCTools and MediaConch are installed headlessly in the Docker worker. This
 module inventories both and emits FYIs for tools not activated by the selected
 profile. The U.S. broadcast adapter owns its MediaConch metadata-policy result;
-QCTools remains availability-only. Installation is never clearance.
+its QCTools adapter owns bounded advisory evidence. Installation is never
+clearance.
 """
 from __future__ import annotations
 

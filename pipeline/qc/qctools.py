@@ -28,6 +28,7 @@ VALIDATED_METRICS = (
     "lavfi.signalstats.BRNG",
     "lavfi.signalstats.TOUT",
     "lavfi.signalstats.VREP",
+    "lavfi.signalstats.YBITDEPTH",
 )
 
 
@@ -118,6 +119,40 @@ def parse_report(path: str) -> dict:
     return {"frames": frame_count, "metrics": metrics}
 
 
+def quality_findings(observations: list[dict], artifacts: list[dict],
+                     provenance: dict, profile: dict) -> list[dict]:
+    """Reduce validated QCTools metrics into advisory calibration candidates."""
+    rules = profile["broadcast_policy"]["visual_quality"]
+    candidates = []
+    for observation in observations:
+        metrics = observation.get("metrics") or {}
+        tout = (metrics.get("lavfi.signalstats.TOUT") or {}).get("maximum")
+        vrep = (metrics.get("lavfi.signalstats.VREP") or {}).get("maximum")
+        bits = (metrics.get("lavfi.signalstats.YBITDEPTH") or {}).get("minimum")
+        reasons = []
+        if tout is not None and tout >= rules["temporal_outlier_warn_max"]:
+            reasons.append("temporal_outlier")
+        if vrep is not None and vrep >= rules["repeat_warn_max"]:
+            reasons.append("vertical_repeat")
+        if bits is not None and bits <= rules["banding_max_used_bits"]:
+            reasons.append("low_used_luma_bits")
+        if reasons:
+            candidates.append({"window": observation.get("window"), "reasons": reasons,
+                               "tout_max": tout, "vrep_max": vrep, "y_bit_depth_min": bits})
+    return [policy_check(
+        "qctools_signal_anomalies", "warn" if candidates else "info",
+        f"{len(candidates)} QCTools signal-anomaly candidate window(s); "
+        "advisory pending accepted/rejected corpus calibration",
+        "signal", policy=_policy(profile),
+        expectation={"value": {"candidate_windows": 0,
+                                "calibration_state": rules["calibration_state"]}},
+        observation={"value": {"candidates": candidates,
+                                "windows_measured": len(observations)}},
+        evidence=artifacts, provenance=provenance,
+        authority="deterministic_advisory",
+    )]
+
+
 def analyze(src: str, tmp: str, duration: float, profile: dict) -> tuple[list[dict], dict]:
     rules = profile["broadcast_policy"]["qctools"]
     provenance = {
@@ -205,6 +240,7 @@ def analyze(src: str, tmp: str, duration: float, profile: dict) -> tuple[list[di
         observation={"value": observations}, evidence=artifacts,
         provenance=provenance, authority="deterministic_advisory",
     )
-    return [finding], {"schema_version": SCHEMA_VERSION, "state": "measured_advisory",
+    checks = [finding, *quality_findings(observations, artifacts, provenance, profile)]
+    return checks, {"schema_version": SCHEMA_VERSION, "state": "measured_advisory",
                        "provenance": provenance, "artifacts": artifacts,
                        "windows": observations}

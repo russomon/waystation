@@ -176,6 +176,37 @@ as above, rather than trusting `git rev-parse` on the host.
   explicitly `false`, so the new interpretive shadow path creates no production
   model spend and cannot alter deterministic delivery outcomes.
 
+## Phase 2 delivery-quality source milestone — 2026-08-02
+
+- Source policy `us_broadcast_xdcam_hd_422_baseline` is now v1.2.0. The new
+  broadcast-only adapters add bounded visual, audio, caption, QCTools, and
+  cross-tool metadata evidence without changing Standard/Netflix behavior.
+- Visual candidates: blockiness, blur, banding/contouring, temporal outliers,
+  repeated regions, crop/matte layout, and two-frame boundary color-bars
+  disclosure. Audio candidates: phase/polarity, clipping, click/pop impulses,
+  short dropouts, and per-channel balance/dead channels. Persistent silence
+  remains the existing programme-silence advisory. SRT/VTT continuity reports
+  invalid, overlap, ordering, long-gap, and interval-union runtime evidence.
+- FFmpeg analysis is capped at three four-second picture and three eight-second
+  audio programme windows; QCTools remains capped at three eight-second
+  excerpts with validated metrics and raw XML hashes. All new perceptual
+  thresholds are deterministic advisories pending a real accepted/rejected
+  corpus. Missing/malformed evidence is FYI / `not_checked`, never pass.
+- Cross-validation compares already-collected ffprobe, MediaInfo, and
+  MediaConch facts using field-aware normalization and report hashes. It is
+  contradiction evidence, not a second MXF policy engine.
+- `calibration/intake.schema.json` and `qc.calibration` define a privacy-aware
+  intake and a 20-per-class minimum candidate gate. Synthetic fixtures are
+  explicitly barred from claiming network acceptance; candidates cannot edit
+  policy or acquire authority automatically.
+- Focused Phase 2/QCTools/calibration/broadcast proofs, archive-tool and
+  MediaInfo proofs, triage/agentic/synthetic/Netflix/Standard regressions,
+  Python compile, gateway/client builds, both Compose configs, pinned-tool and
+  broadcast Docker proofs, and the full local gateway-worker-MinIO loop passed.
+- Production was not accessed, rebuilt, restarted, or deployed for this
+  milestone. The live worker record above remains policy v1.1.0 at image
+  `sha256:753b834f…`; `AI_INTERPRETIVE_SHADOW=false` remains unchanged.
+
 ## Large-file mode PROVEN on real media — 2026-08-01
 
 First real large transfer end to end: **`CrossroadsFestival_Doyle_Bramhall_WM.mov`,

@@ -48,6 +48,8 @@ bash scripts/archive-tools-proof.sh # qcli/MediaConch availability + provenance;
 bash scripts/archive-tools-docker-proof.sh # pinned headless CLIs in the worker image
 bash scripts/broadcast-qc-proof.sh # U.S. XDCAM baseline: real good/bad media + pure reducer fixtures
 bash scripts/broadcast-qc-docker-proof.sh # MediaConch 25.04 metadata-policy good/bad outcomes
+bash scripts/phase2-quality-proof.sh # Phase 2 visual/audio/caption/metadata advisory reducers
+bash scripts/qc-calibration-proof.sh # corpus intake gate; synthetic data cannot claim acceptance
 ```
 
 ## Layout
@@ -105,8 +107,8 @@ SDK-verified Genblaze manifest — and the worker image answers for ffmpeg,
 MediaInfo, pinned QCTools/MediaConch CLI versions, Java, and Photon. MediaConch
 is active only for the versioned U.S. broadcast baseline's metadata-policy
 cross-check; it is not presented as MXF implementation certification. QCTools
-remains installed plumbing and reports `FYI · not checked` until a bounded,
-validated report extractor is added.
+runs a bounded, validated advisory extractor with hashed raw reports; it does
+not make broadcast-compliance decisions.
 
 **Scaling the worker.** Two axes, with a plateau worth knowing:
 
@@ -262,9 +264,10 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   signalstats reports retain raw-report hashes and remain advisory. Timeline
   defects compile into targeted, versioned AI review packets; optional model
   interpretation is shadow-only and spend-off by default. Visual artifact and
-  legal-range screens remain advisory. This is explicitly not universal U.S.
-  network compliance. See `docs/US_BROADCAST_BASELINE.md` and the two
-  `scripts/broadcast-qc-*-proof.sh` proofs.
+  legal-range screens remain advisory. Phase 2 adds bounded visual/audio defect,
+  SRT/VTT continuity, and metadata-contradiction evidence plus a corpus intake
+  gate. This is explicitly not universal U.S. network compliance. See
+  `docs/US_BROADCAST_BASELINE.md` and `docs/QC_CALIBRATION.md`.
 - ✅ **Read-only reporting contract and mandatory risk coverage.** Waystation
   never repairs or rewrites the master. `qc_report.json` separates the QC
   verdict from coverage completeness and includes all 18 registered risk

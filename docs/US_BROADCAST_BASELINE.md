@@ -1,7 +1,7 @@
 # U.S. Broadcast MXF OP1a / XDCAM HD 4:2:2 Baseline
 
 Policy ID: `us_broadcast_xdcam_hd_422_baseline`
-Version: `1.1.0`
+Version: `1.2.0`
 Profile: `us_broadcast_xdcam_hd_422_v1`
 Source: `pipeline/policies/us_broadcast_xdcam_hd_422_v1.json`
 
@@ -48,6 +48,12 @@ not been calibrated against a representative network-accepted/rejected corpus:
 - freeze/repeated-frame runs;
 - prolonged silence;
 - tiled legal-range amplitude/area evidence.
+- bounded blockiness, blur, contouring/banding, temporal-outlier/repeated-line,
+  active-picture crop/matte, and boundary color-bars candidates;
+- bounded phase/polarity, clipping, click/pop, short-dropout, and per-channel
+  level/dead-channel candidates;
+- SRT/VTT cue continuity and timeline coverage;
+- cross-tool metadata contradictions across ffprobe, MediaInfo, and MediaConch.
 
 They may produce `ISSUE` findings but do not hard-reject this baseline. The
 policy contains no composite quality or trust score. Each event carries start,
@@ -81,6 +87,24 @@ compressed XML report, and labels the result advisory. Missing binaries,
 timeouts, failed excerpts, and malformed XML are `FYI / not_checked`, never a
 pass. These measurements do not make a broadcast-compliance decision and stay
 advisory until calibrated against representative accepted/rejected masters.
+Its Phase 2 reducer discloses temporal-outlier, repeated-line, and low-used-luma
+bit candidates without granting QCTools delivery-policy authority.
+
+Phase 2 FFmpeg extraction is similarly bounded: at most three four-second
+picture windows and three eight-second audio windows, selected within the
+programme region after intended head/tail black is excluded. Color bars use
+only two downscaled boundary frames. Event lists are capped by policy. A failed
+or unavailable measurement is `not_checked`; it cannot become a clean pass.
+
+Caption continuity currently applies only where Waystation can parse SRT or
+WebVTT text cues. Runtime coverage means the union of cue intervals, not proof
+that dialogue was captioned. Persistent programme silence remains the existing
+`broadcast_silence_runs` advisory; short silence candidates are separately
+reported as dropouts.
+
+See `docs/QC_CALIBRATION.md` and `calibration/intake.schema.json` for the
+accepted/rejected corpus workflow. Synthetic fixtures establish reducer
+behavior only and can never be labelled network-acceptance evidence.
 
 Unresolved deterministic timeline findings compile into versioned, bounded AI
 review packets containing only the relevant finding, evidence, timestamp range,
@@ -109,11 +133,14 @@ when overrides are active, rather than applying mismatched assumptions.
 bash scripts/broadcast-qc-proof.sh
 bash scripts/broadcast-qc-docker-proof.sh
 bash scripts/qctools-analysis-proof.sh
+bash scripts/phase2-quality-proof.sh
+bash scripts/qc-calibration-proof.sh
 bash scripts/interpretive-shadow-proof.sh
 ```
 
 The first constructs an actual passing MXF and failing MP4, then exercises
 known-good/known-bad timestamp, GOP, boundary, artifact, audio, caption, and
 override reducers. The second builds the worker and proves pinned MediaConch
-25.04 produces passing/failing metadata-policy outcomes in Docker. Synthetic
-fixtures prove Waystation reducer behavior, not live broadcaster acceptance.
+25.04 produces passing/failing metadata-policy outcomes and the Phase 2 FFmpeg
+filters execute in Docker. Synthetic fixtures prove Waystation reducer
+behavior, not live broadcaster acceptance.

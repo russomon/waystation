@@ -6,6 +6,7 @@ while real wrapper mismatches become profile-aware findings.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -27,6 +28,24 @@ def _track(tracks: list, kind: str) -> dict:
 def _has_any(track: dict, needles: tuple[str, ...]) -> bool:
     text = " ".join(f"{k} {v}" for k, v in track.items()).lower()
     return any(n.lower() in text for n in needles)
+
+
+def _facts(general: dict, video: dict, audio_tracks: list[dict]) -> dict:
+    """Normalized fact inventory for independent metadata cross-validation."""
+    audio = audio_tracks[0] if audio_tracks else {}
+    rate_num = video.get("FrameRate_Num")
+    rate_den = video.get("FrameRate_Den")
+    rate = f"{rate_num}/{rate_den}" if rate_num and rate_den else video.get("FrameRate")
+    scan = video.get("ScanOrder") or video.get("ScanType")
+    chroma = video.get("ChromaSubsampling") or video.get("ColorSpace")
+    return {
+        "format": general.get("Format"),
+        "width": video.get("Width"), "height": video.get("Height"),
+        "frame_rate": rate, "scan": scan, "chroma": chroma,
+        "video_bit_depth": video.get("BitDepth"),
+        "audio_sample_rate": audio.get("SamplingRate"),
+        "audio_channels": audio.get("Channels"),
+    }
 
 
 def checks(src: str, profile: dict) -> list:
@@ -59,10 +78,14 @@ def checks(src: str, profile: dict) -> list:
     audio_tracks = [t for t in tracks if t.get("@type") == "Audio"]
     fmt = str(general.get("Format") or os.path.splitext(src)[1].lstrip(".") or "Unknown")
     profile_name = str(general.get("Format_Profile") or general.get("Format profile") or "")
-    checks_out = [
-        check("mediainfo_wrapper", "pass",
-              f"{fmt}" + (f", profile {profile_name}" if profile_name else ""), "structural")
-    ]
+    wrapper = check("mediainfo_wrapper", "pass",
+                    f"{fmt}" + (f", profile {profile_name}" if profile_name else ""), "structural")
+    wrapper.update({
+        "facts": _facts(general, video, audio_tracks),
+        "report_sha256": hashlib.sha256((r.stdout or "").encode()).hexdigest(),
+        "provenance": {"tool": "mediainfo", "method": "--Output=JSON fact inventory"},
+    })
+    checks_out = [wrapper]
 
     strict = profile.get("name") in ("netflix", "us_broadcast_xdcam_hd_422_v1") \
         or bool(profile.get("photon_required"))
