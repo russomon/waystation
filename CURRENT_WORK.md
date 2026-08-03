@@ -8,6 +8,19 @@ Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 Use this file for the active handoff state that should survive machine
 switches and chat history gaps.
 
+## Judge source release — 2026-08-03
+
+- GitHub `main` was fast-forwarded to the complete
+  `codex/hosted-waystation-mvp` source so the default repository view includes
+  the Genblaze/GMI interpretive workflow, deterministic broadcast policies,
+  proofs, and technical documentation.
+- The root README now identifies Genblaze Core's staged orchestration role,
+  B2 Event Notifications/Object Lock/lifecycle responsibilities, and links
+  directly to the interpretive architecture and release gates.
+- This is a source/documentation release only. Production still explicitly
+  tracks `codex/hosted-waystation-mvp` and remains on the previously recorded
+  gateway/worker images with paid interpretive execution disabled.
+
 ## Focus
 
 - Current branch: **`codex/hosted-waystation-mvp`** (waystation). OrbitWebsite

@@ -6,6 +6,13 @@ a broadcast-grade QC engine + AI lane (**GMI Cloud**) that runs while the file
 is parked, selectable deterministic policy profiles, an **agentic read-only
 QC report** for human-detectable risks, and a WORM-locked provenance trail.
 
+**Genblaze Core** is the orchestration layer: `RunBuilder` / `StepBuilder`
+coordinate the staged GMI planner, visual/audio specialists, critic, and
+synthesis while retaining evidence and run provenance. B2 Event Notifications
+start the pipeline without polling; Object Lock protects canonical manifests;
+lifecycle rules clean up abandoned multipart uploads. See the
+[AI Interpretive Analysis architecture and release gates](docs/AI_INTERPRETIVE_RUN.md).
+
 Built for the [Backblaze Generative Media Hackathon](https://backblaze-generative-media.devpost.com/).
 
 ## Flow

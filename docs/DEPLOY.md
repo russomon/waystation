@@ -133,7 +133,7 @@ GitHub credentials, no deploy key and no SSH agent forwarding:
 ```bash
 git clone https://github.com/russomon/waystation.git
 cd waystation
-git switch codex/hosted-waystation-mvp     # until it merges to main
+git switch codex/hosted-waystation-mvp     # production explicitly tracks this release branch
 ```
 
 (If the repository is ever made private, this step instead needs a read-only
