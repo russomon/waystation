@@ -165,7 +165,12 @@ if (tid) {
       es.onmessage = (e) => {
         const ev = JSON.parse(e.data);
         if (ev.type === "pipeline_skipped") { pipe.textContent = "transfer only — no waystation services"; es.close(); return; }
-        if (ev.type === "pipeline_started" && ev.compute) where = ` @ ${ev.compute}`;
+        if (ev.type === "pipeline_started" && ev.compute) {
+          const fallback = ev.compute_request_honored === false
+            ? ` (requested ${ev.requested_compute ?? "another worker"}; fallback)`
+            : "";
+          where = ` @ ${ev.compute}${fallback}`;
+        }
         const stage = ev.stage ? " · " + String(ev.stage).replaceAll("_", " ") : "";
         pipe.textContent = `waystation${where}: ${ev.type}${ev.step ? " · " + ev.step : ""}${stage}`;
         if (ev.type === "pipeline_complete") { pipe.textContent = `waystation${where} ✓ — open the share link`; es.close(); }

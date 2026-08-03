@@ -210,12 +210,14 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   Synthesis does not count as an independent source. Defaults are
   deployment-off and authority `shadow`. See
   `docs/AI_INTERPRETIVE_RUN.md` and its two zero-cloud proof scripts.
-  Run schema v1.5 requires chronological evidence and exact text comparison,
+  Run schema v1.6 requires chronological evidence and exact text comparison,
   uses provider-supported JSON mode plus strict local Pydantic validation,
-  records response mode/schema hashes plus bounded retry, truncation, and
-  expected/observed risk counts,
+  records response mode/schema hashes plus bounded transport/output repair,
+  every paid attempt, truncation, and expected/observed risk counts,
   prevents an interior audio-sample edge from being mislabeled as a source
-  edit, and publishes only bounded metadata for an optional sender review brief.
+  edit, prevents isolated stills from claiming timeline continuity, and
+  publishes only bounded metadata for an optional sender review brief. Use
+  `scripts/judge-calibration-up.sh` for the retained local judge configuration.
 - ✅ **Sender front end with per-service toggles.** The upload page
   (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`
   captions picker, and a services panel — AV QC, Caption QC, AI-selected

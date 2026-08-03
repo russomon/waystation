@@ -188,6 +188,13 @@ class Job(BaseModel):
     options: Optional[dict] = None
 
 
+def compute_route(job: "Job") -> dict:
+    requested = str((job.options or {}).get("compute") or "local")[:32]
+    actual = str(WORKER_LABEL or "unknown")[:64]
+    honored = requested == actual or (requested == "cloud" and actual.startswith("cloud"))
+    return {"requested": requested, "actual": actual, "request_honored": honored}
+
+
 def progress(job: "Job", event: dict) -> None:
     try:
         httpx.post(
@@ -874,8 +881,36 @@ def _validate_interpretive_payload(text: str, schema: type[BaseModel]) -> tuple[
     try:
         return schema.model_validate(raw).model_dump(mode="json"), None
     except ValidationError as exc:
-        first = exc.errors(include_url=False)[:3]
+        first = [{key: value for key, value in item.items() if key in {"type", "loc", "msg"}}
+                 for item in exc.errors(include_url=False)[:3]]
         return None, f"provider JSON failed local response schema: {json.dumps(first, default=str)[:600]}"
+
+
+def _compact_output_retry_prompt(prompt: str, _reason: str) -> str:
+    """Retry an invalid response without feeding untrusted model output back in."""
+    return (
+        prompt
+        + "\nCORRECTION FOR THIS RETRY: The prior response failed local schema or completeness "
+          "validation. Return one complete compact JSON object in the exact requested wrapper. "
+          "Do not add analysis, repeat evidence metadata, or approach the token limit."
+    )
+
+
+def _combined_response_usage(responses: list[object]) -> dict:
+    def total(name: str) -> int | None:
+        values = [getattr(response, name, None) for response in responses]
+        numeric = [int(value) for value in values if isinstance(value, (int, float))]
+        return sum(numeric) if numeric else None
+
+    costs = [getattr(response, "cost_usd", None) for response in responses]
+    numeric_costs = [float(value) for value in costs if isinstance(value, (int, float))]
+    return {
+        "tokens_in": total("tokens_in"),
+        "tokens_out": total("tokens_out"),
+        "tokens_cached": total("tokens_cached"),
+        "cost_usd": sum(numeric_costs) if numeric_costs else None,
+        "billable_events": len(responses),
+    }
 
 
 def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
@@ -923,6 +958,7 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                            AI_INTERPRETIVE_FALLBACK_MODEL, True))
     response = None
     used_model = model
+    used_candidate_model = model
     used_response_format_mode = None
     output_limit = (AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS
                     if name == "synthesis" else AI_INTERPRETIVE_MAX_OUTPUT_TOKENS)
@@ -955,6 +991,7 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                                 "finish_reason": getattr(response, "finish_reason", None)})
                 attempts.append(attempt)
                 used_model = response.model or candidate
+                used_candidate_model = candidate
                 used_response_format_mode = response_format_mode
                 break
             except Exception as exc:
@@ -991,23 +1028,98 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                        "state": "not_checked", "reason": error})
         return stage, []
 
-    payload, validation_error = _validate_interpretive_payload(
-        response.text, qinterpretive_run.InterpretiveObservationsPayload)
     allowed = {item["evidence_id"] for item in evidence}
-    observations = qinterpretive_run.sanitize_observations(
-        payload, allowed, name, allowed_risk_ids=allowed_risk_ids,
-        evidence_catalog={item["evidence_id"]: item for item in evidence})
+    evidence_catalog = {item["evidence_id"]: item for item in evidence}
+
+    def validate(candidate_response):
+        candidate_payload, candidate_error = _validate_interpretive_payload(
+            candidate_response.text, qinterpretive_run.InterpretiveObservationsPayload)
+        candidate_observations = qinterpretive_run.sanitize_observations(
+            candidate_payload, allowed, name, allowed_risk_ids=allowed_risk_ids,
+            evidence_catalog=evidence_catalog)
+        candidate_observed = {item.get("risk_id") for item in candidate_observations}
+        candidate_missing = sorted((expected_risk_ids or set()) - candidate_observed)
+        return (candidate_payload, candidate_error, candidate_observations,
+                candidate_observed, candidate_missing)
+
+    responses = [response]
+    payload, validation_error, observations, observed_risks, missing_expected = validate(response)
+    structured = payload is not None and bool(observations) and not missing_expected
+    invalid_reason = (validation_error or
+                      (f"provider omitted {len(missing_expected)} required risk observation(s)"
+                       if missing_expected else "provider returned no valid structured observations"))
+    attempts[-1].update({
+        "response_validation": "complete" if validation_error is None else "failed",
+        "response_validation_error": validation_error,
+        "semantic_validation": "complete" if structured else "failed",
+        "raw_output_sha256": hashlib.sha256(response.text.encode()).hexdigest(),
+        "usage": {"tokens_in": response.tokens_in, "tokens_out": response.tokens_out,
+                  "tokens_cached": response.tokens_cached, "cost_usd": response.cost_usd,
+                  "billable_events": 1},
+    })
+
+    same_model_attempt = max(
+        (int(item.get("provider_attempt") or 0) for item in attempts
+         if item.get("provider") == "gmicloud" and item.get("model") == used_candidate_model),
+        default=0)
+    if not structured and same_model_attempt < AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS:
+        attempts[-1]["outcome"] = "invalid_output"
+        attempts[-1]["retry_scheduled"] = True
+        retry_started = time.monotonic()
+        response_format, response_format_mode = _interpretive_response_format(
+            used_candidate_model, qinterpretive_run.InterpretiveObservationsPayload)
+        repair_attempt = {
+            "attempt": len(attempts) + 1,
+            "provider_attempt": same_model_attempt + 1,
+            "provider": "gmicloud",
+            "model": used_candidate_model,
+            "fallback": bool(attempts[-1].get("fallback")),
+            "response_format_mode": response_format_mode,
+            "repair_reason": invalid_reason[:400],
+            "started_at": _iso_now(),
+        }
+        try:
+            repaired = _gmi_chat_response(
+                [{"type": "text", "text": _compact_output_retry_prompt(prompt, invalid_reason)}]
+                + parts,
+                max_tokens=output_limit, model=used_candidate_model,
+                timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS,
+                max_attempts=1, response_format=response_format)
+            responses.append(repaired)
+            response = repaired
+            used_model = repaired.model or used_candidate_model
+            used_response_format_mode = response_format_mode
+            payload, validation_error, observations, observed_risks, missing_expected = validate(repaired)
+            structured = payload is not None and bool(observations) and not missing_expected
+            repair_attempt.update({
+                "outcome": "complete" if structured else "invalid_output",
+                "completed_at": _iso_now(),
+                "duration_ms": round((time.monotonic() - retry_started) * 1000),
+                "finish_reason": getattr(repaired, "finish_reason", None),
+                "response_validation": "complete" if validation_error is None else "failed",
+                "response_validation_error": validation_error,
+                "semantic_validation": "complete" if structured else "failed",
+                "raw_output_sha256": hashlib.sha256(repaired.text.encode()).hexdigest(),
+                "retry_scheduled": False,
+                "usage": {"tokens_in": repaired.tokens_in, "tokens_out": repaired.tokens_out,
+                          "tokens_cached": repaired.tokens_cached, "cost_usd": repaired.cost_usd,
+                          "billable_events": 1},
+            })
+        except Exception as exc:
+            repair_attempt.update({
+                "outcome": "failed", "error_code": _provider_error_code(exc),
+                "error": str(exc)[:600], "completed_at": _iso_now(),
+                "duration_ms": round((time.monotonic() - retry_started) * 1000),
+                "retry_scheduled": False,
+            })
+        attempts.append(repair_attempt)
+
     authority_source_id = f"gmicloud:{used_model}"
     for observation in observations:
         observation.update({"provider": "gmicloud", "model": used_model,
                             "review_role": review_role,
                             "authority_source_id": authority_source_id})
-    usage = {"tokens_in": response.tokens_in, "tokens_out": response.tokens_out,
-             "tokens_cached": response.tokens_cached, "cost_usd": response.cost_usd,
-             "billable_events": 1}
-    observed_risks = {item.get("risk_id") for item in observations}
-    missing_expected = sorted((expected_risk_ids or set()) - observed_risks)
-    structured = payload is not None and bool(observations) and not missing_expected
+    usage = _combined_response_usage(responses)
     truncated = getattr(response, "finish_reason", None) == "length"
     error = None
     if payload is None or not observations:
@@ -1035,12 +1147,12 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
         response_validation="complete" if validation_error is None else "failed",
         response_validation_error=validation_error,
         review_role=review_role, authority_source_id=authority_source_id,
-        usage=usage, cost_usd=response.cost_usd)
+        usage=usage, cost_usd=usage["cost_usd"])
     progress(job, {"type": "ai_interpretive_stage", "stage": name,
                    "step": name,
                    "state": "complete" if structured else "not_checked",
                    "observations": len(observations), "provider": "gmicloud", "model": used_model,
-                   "billable": {"unit": "run", "units": 1}})
+                   "billable": {"unit": "run", "units": usage["billable_events"]}})
     return stage, observations
 
 
@@ -1093,6 +1205,7 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
                 else:
                     break
 
+    responses = [] if response is None else [response]
     payload, validation_error = ((None, None) if response is None else
                                  _validate_interpretive_payload(
                                      response.text, qinterpretive_run.ReviewPlanPayload))
@@ -1100,9 +1213,73 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
         payload, meta, authority_policy,
         max_frames=AI_INTERPRETIVE_MAX_FRAMES,
         max_audio=AI_INTERPRETIVE_MAX_AUDIO_WINDOWS)
+    if response is not None:
+        attempts[-1].update({
+            "response_validation": "complete" if validation_error is None else "failed",
+            "response_validation_error": validation_error,
+            "semantic_validation": "complete" if plan is not None else "failed",
+            "raw_output_sha256": hashlib.sha256(response.text.encode()).hexdigest(),
+            "usage": {"tokens_in": response.tokens_in, "tokens_out": response.tokens_out,
+                      "tokens_cached": response.tokens_cached, "cost_usd": response.cost_usd,
+                      "billable_events": 1},
+        })
+    if response is not None and plan is None and len(attempts) < AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS:
+        invalid_reason = validation_error or "provider returned no usable bounded review plan"
+        attempts[-1]["outcome"] = "invalid_output"
+        attempts[-1]["retry_scheduled"] = True
+        retry_started = time.monotonic()
+        repair_attempt = {
+            "attempt": len(attempts) + 1,
+            "provider_attempt": len(attempts) + 1,
+            "provider": "gmicloud",
+            "model": AI_INTERPRETIVE_PLANNER_MODEL,
+            "response_format_mode": response_format_mode,
+            "repair_reason": invalid_reason[:400],
+            "started_at": _iso_now(),
+        }
+        try:
+            repaired = _gmi_chat_response(
+                [{"type": "text", "text": _compact_output_retry_prompt(prompt, invalid_reason)}],
+                max_tokens=AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
+                model=AI_INTERPRETIVE_PLANNER_MODEL,
+                timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS, max_attempts=1,
+                response_format=response_format)
+            responses.append(repaired)
+            response = repaired
+            payload, validation_error = _validate_interpretive_payload(
+                repaired.text, qinterpretive_run.ReviewPlanPayload)
+            plan = qinterpretive_run.sanitize_review_plan(
+                payload, meta, authority_policy,
+                max_frames=AI_INTERPRETIVE_MAX_FRAMES,
+                max_audio=AI_INTERPRETIVE_MAX_AUDIO_WINDOWS)
+            repair_attempt.update({
+                "outcome": "complete" if plan is not None else "invalid_output",
+                "model": repaired.model or AI_INTERPRETIVE_PLANNER_MODEL,
+                "completed_at": _iso_now(),
+                "duration_ms": round((time.monotonic() - retry_started) * 1000),
+                "finish_reason": getattr(repaired, "finish_reason", None),
+                "response_validation": "complete" if validation_error is None else "failed",
+                "response_validation_error": validation_error,
+                "semantic_validation": "complete" if plan is not None else "failed",
+                "raw_output_sha256": hashlib.sha256(repaired.text.encode()).hexdigest(),
+                "retry_scheduled": False,
+                "usage": {"tokens_in": repaired.tokens_in, "tokens_out": repaired.tokens_out,
+                          "tokens_cached": repaired.tokens_cached, "cost_usd": repaired.cost_usd,
+                          "billable_events": 1},
+            })
+        except Exception as exc:
+            repair_attempt.update({
+                "outcome": "failed", "error_code": _provider_error_code(exc),
+                "error": str(exc)[:600], "completed_at": _iso_now(),
+                "duration_ms": round((time.monotonic() - retry_started) * 1000),
+                "retry_scheduled": False,
+            })
+        attempts.append(repair_attempt)
+
     used_fallback = plan is None
     plan = plan or fallback
-    billable = 1 if response is not None else 0
+    usage = _combined_response_usage(responses)
+    billable = usage["billable_events"]
     error = None
     if used_fallback:
         error = ("AI planner reached the token limit without a valid complete plan; "
@@ -1134,15 +1311,11 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
         raw_output_characters=len(response.text) if response is not None else 0,
         truncated=getattr(response, "finish_reason", None) == "length",
         fallback={"used": used_fallback, "reason": error},
-        usage={"tokens_in": getattr(response, "tokens_in", None),
-               "tokens_out": getattr(response, "tokens_out", None),
-               "tokens_cached": getattr(response, "tokens_cached", None),
-               "cost_usd": getattr(response, "cost_usd", None),
-               "billable_events": billable})
+        usage=usage)
     event = {"type": "ai_interpretive_stage", "stage": name, "step": name,
              "state": stage["outcome"], "plan_source": plan["source"]}
     if billable:
-        event["billable"] = {"unit": "run", "units": 1}
+        event["billable"] = {"unit": "run", "units": billable}
     progress(job, event)
     return stage, plan
 
@@ -1362,6 +1535,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         "authority_mode": AI_INTERPRETIVE_AUTHORITY_MODE,
         "delivery_decision": delivery_decision,
         "deterministic_verdict_unchanged": True,
+        "compute_route": compute_route(job),
         "started_at": started, "completed_at": _iso_now(),
         "provider_configuration": {
             "primary_provider": AI_INTERPRETIVE_PROVIDER,
@@ -2541,7 +2715,10 @@ def summarize_via_gmi(meta: dict, captions_text: str | None = None) -> str | Non
 
 
 def run_pipeline(job: Job) -> None:
-    progress(job, {"type": "pipeline_started", "key": job.key, "compute": WORKER_LABEL})
+    route = compute_route(job)
+    progress(job, {"type": "pipeline_started", "key": job.key,
+                   "compute": route["actual"], "requested_compute": route["requested"],
+                   "compute_request_honored": route["request_honored"]})
     tid = job.transferId
     # Sender-selected services (missing = everything on). Non-boolean keys in
     # options carry the QC profile and compute target; do not coerce those.
@@ -3001,7 +3178,9 @@ def run_pipeline(job: Job) -> None:
             run_id=tid, name="waystation-delivery", status=RunStatus.COMPLETED,
             steps=gb_steps, completed_at=datetime.now(timezone.utc),
             metadata={"transferId": tid, "profile": profile["name"], "services": opts,
-                      "compute": WORKER_LABEL,
+                      "compute": route["actual"],
+                      "requested_compute": route["requested"],
+                      "compute_request_honored": route["request_honored"],
                       "reporter_mode": "read_only_no_repair",
                       **({"ai_interpretive_run_id": interpretive_result["run_id"],
                           "ai_interpretive_schema": interpretive_result["schema_version"],

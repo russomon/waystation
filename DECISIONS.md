@@ -5,6 +5,26 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-03 - Judge calibration is a retained profile, not ad hoc shell state
+
+- `scripts/judge-calibration-up.sh` pins the credentialed shadow calibration
+  profile to three frames, a bounded 6,144-token specialist ceiling, Gemini
+  3.5 visual/audio, and Gemini 3.6 planner/jury/synthesis. Paid defaults remain
+  off; no model runs until a sender explicitly selects AI Interpretive Analysis.
+- A schema-valid but unusable or malformed provider response may receive one
+  compact correction attempt. Every successful provider response is separately
+  metered and retained in the attempt ledger; repair can never disappear as a
+  single reported call.
+- Requested worker compute and actual worker compute are distinct provenance
+  fields. Selecting cloud without `PIPELINE_URL_CLOUD` records the local
+  fallback; GMI Cloud inference is shown separately from worker location.
+- Isolated still frames cannot prove or clear a freeze/timeline defect. The
+  reducer retains such temporal output only as `not_checked` with an explicit
+  sampling limitation.
+- The retained planted/clean pair validates one typography slice, not all AI
+  risks and not production. Production remains unchanged and shadow stays the
+  only authorized mode for the judge run.
+
 ### 2026-08-02 - GMI JSON is a transport contract, not a prose request
 
 - Every explicit AI planner, specialist, jury, and synthesis call supplies a

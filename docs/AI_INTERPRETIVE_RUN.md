@@ -94,20 +94,20 @@ Models are configuration, not code:
 
 ```text
 AI_INTERPRETIVE_PROVIDER=gmicloud
-AI_INTERPRETIVE_PLANNER_MODEL=openai/gpt-4o-mini
+AI_INTERPRETIVE_PLANNER_MODEL=google/gemini-3.6-flash
 AI_INTERPRETIVE_VISUAL_MODEL=google/gemini-3.5-flash
 AI_INTERPRETIVE_AUDIO_MODEL=google/gemini-3.5-flash
-AI_INTERPRETIVE_SYNTHESIS_MODEL=openai/gpt-4o-mini
-AI_INTERPRETIVE_JURY_MODEL=
+AI_INTERPRETIVE_SYNTHESIS_MODEL=google/gemini-3.6-flash
+AI_INTERPRETIVE_JURY_MODEL=google/gemini-3.6-flash
 AI_INTERPRETIVE_FALLBACK_PROVIDER=
 AI_INTERPRETIVE_FALLBACK_MODEL=
 AI_INTERPRETIVE_TIMEOUT_SECONDS=120
 AI_INTERPRETIVE_MAX_CONCURRENCY=3
 AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS=2
 AI_INTERPRETIVE_RETRY_DELAY_SECONDS=5
-AI_INTERPRETIVE_MAX_FRAMES=4
+AI_INTERPRETIVE_MAX_FRAMES=3
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS=1
-AI_INTERPRETIVE_MAX_OUTPUT_TOKENS=4096
+AI_INTERPRETIVE_MAX_OUTPUT_TOKENS=6144
 AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS=4096
 AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS=6144
 AI_INTERPRETIVE_AUTHORITY_MODE=shadow
@@ -212,8 +212,24 @@ transport and recorded its identity. The next credentialed run showed Gemini
 rejecting that OpenAI schema envelope with HTTP 400 while GPT-4o endpoints were
 temporarily overloaded with HTTP 429. Run schema v1.5 uses provider-compatible
 JSON mode, strict local validation, and provenance-visible bounded retries.
-This fix is mock- and container-proven; the paid planted/clean-twin shadow
-rerun is still pending.
+Run schema v1.6 adds one bounded compact output-repair attempt, complete
+per-attempt metering, optional planner wire fields, honest compute routing, and
+still-only temporal suppression.
+
+The retained credentialed pair now passes the typography gate. Planted transfer
+`e69de091-4e7c-48d8-a2a4-d35ec1c6fe8d` completed four first-response GMI calls,
+produced exact `TICKETS`, `TICKETS`, `TICKET5` transcriptions from both model
+identities, and proposed REJECT in shadow. Clean twin
+`164e64c6-c4c4-4d4b-9b1c-7bcbb219fc2b` completed the same four calls, retained
+`TICKETS` in every frame, and produced no qualified finding. Both canonical
+manifests verify. This is one retained typography-specific pair, not broad
+perceptual calibration or production activation.
+
+Start the repeatable local profile with:
+
+```bash
+bash scripts/judge-calibration-up.sh
+```
 
 ## Reversible production release checklist
 

@@ -7,29 +7,22 @@ history.
 
 ## Now
 
-- **Run the post-fix planted/clean-twin AI calibration pair in shadow.** Source
-  is not deployed; both paid-run gates remain false and authority defaults to
-  `shadow`. The latest planted run proved evidence selection but visual output
-  reached the former free-form JSON token ceiling. A subsequent run proved that
-  Gemini rejects the strict OpenAI schema envelope and current OpenAI endpoints
-  were overloaded. Run schema v1.5 now uses Gemini JSON-object mode plus strict
-  local schema validation, bounded visible retries, and recorded schema hashes.
-  Use the retained `TICKETS` to `TICKET5` mutation and a matching clean twin.
-  Supply `Expected title begins as TICKETS; detect and report any exact
-  character mutation.` in the sender review brief, keep every other AI lane
-  and Preview thumbnail off, use `google/gemini-3.5-flash` for visual and
-  `google/gemini-3.6-flash` for planner, jury, and synthesis. Confirm the UI
-  reports a non-empty review-brief hash before judging the result.
-  Require chronological evidence, exact per-frame
-  transcriptions, no false freeze diagnosis, planner/synthesis
-  `finish_reason=stop`, complete risk coverage, verified manifests, and
-  disclosed billable events and recorded response-schema hashes. This silent
-  fixture should make four calls: planner, visual, jury, synthesis.
-  Promote to `hold` only after the retained pair is reviewed. Do not use
-  `enforce` until a larger labeled corpus establishes acceptable false-positive
-  behavior for each enforceable category; distinct model names alone do not
-  establish scientific independence. Keep the replacement credential only in
-  the gitignored `.env`.
+- ~~**Run the post-fix planted/clean-twin AI calibration pair in shadow.**~~
+  **DONE 2026-08-03.** Planted transfer `e69de091…` produced a corroborated
+  typography finding and proposed REJECT; clean twin `164e64c6…` produced no
+  typography concern or qualified finding. Both used four GMI calls and have
+  verified canonical manifests. Source is still not deployed and authority
+  remains `shadow`.
+
+- **Run one representative judge asset, then record.** Use a 20–45 second
+  720p/1080p clip with audio and captions so the visual, audio, caption, and
+  synthesis lanes can all be judged. Start with
+  `bash scripts/judge-calibration-up.sh`, keep authority `shadow`, attach a
+  truthful review brief, and disable unrelated paid services for the first
+  run. Require complete stages, accepted evidence, a verified manifest, and no
+  invented timeline claim. Do not promote to `hold` or `enforce` from this
+  two-file typography pair; larger labeled per-risk calibration is still
+  required.
 
 - ~~Deploy the 350 GiB large-file build~~ — **DONE 2026-08-01.** Gateway is at
   `7291c80`, banner reports `max=350.0GiB verifiedRangeMax=16.0GiB

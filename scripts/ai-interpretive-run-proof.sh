@@ -140,6 +140,9 @@ job = worker.Job(bucket="proof", key="transfers/proof-transfer/master.mov",
                  transferId="proof-transfer", gatewayUrl="http://unused",
                  options={"ai_interpretive": True,
                           "review_brief": "Approved text must remain TICKETS."})
+cloud_request = job.model_copy(update={"options": {"compute": "cloud"}})
+assert worker.compute_route(cloud_request) == {
+    "requested": "cloud", "actual": "local", "request_honored": False}
 
 with tempfile.TemporaryDirectory() as tmp:
     source = os.path.join(tmp, "master.mov")
@@ -192,7 +195,12 @@ assert len(result["interpretive_observations"]) == len(ai_authority.load_policy(
 for observation in result["interpretive_observations"]:
     assert observation["authority"] == "eligible_for_versioned_policy_reducer"
     assert observation["raw_model_output_direct_authority"] is False
-    assert observation["confidence"] == 1.0
+    if observation["risk_id"] == "temporal_continuity_defect":
+        assert observation["finding_state"] == "not_checked"
+        assert observation["confidence"] == 0.0
+        assert observation["temporal_sampling_suppressed"] is True
+    else:
+        assert observation["confidence"] == 1.0
     assert observation["evidence_ids"] == ["interpretive-evidence-01"]
     assert observation["rejected_evidence_ids"] == ["invented-citation"]
     assert not ({"name", "status", "tier"} & observation.keys())
@@ -277,6 +285,18 @@ comparison_prompt, _ = interpretive_run.build_prompt(
 assert comparison_prompt.index('"evidence_id": "early"') < comparison_prompt.index('"evidence_id": "late"')
 assert "transcribe its exact characters" in comparison_prompt
 
+# Nullable fields for the other evidence kind are genuinely optional on the
+# provider wire; a valid frame request must not be rejected for omitting audio fields.
+planner_wire = interpretive_run.ReviewPlanPayload.model_validate({
+    "review_objective": "inspect title",
+    "risk_targets": [{"risk_id": "typography_defect", "review_question": "Did text mutate?"}],
+    "evidence_requests": [{"type": "frame", "time_seconds": 1.0,
+                           "risk_ids": ["typography_defect"],
+                           "reason": "title sample", "review_question": "Exact title?"}],
+    "coverage_limits": ["sampled evidence"],
+})
+assert planner_wire.evidence_requests[0].start_seconds is None
+
 # Contradictory exact transcriptions cannot be accepted as a clean typography
 # result, and unresolved intent cannot retain reject severity.
 text_conflict = interpretive_run.sanitize_observations({"observations": [{
@@ -297,6 +317,29 @@ ambiguous = interpretive_run.sanitize_observations({"observations": [{
 }]}, {"early"}, "gmi_visual_analysis", allowed_risk_ids=set(policy["risks"]))
 assert ambiguous[0]["severity"] == "hold"
 assert ambiguous[0]["intent_state"] == "ambiguous"
+
+# Isolated stills can show a text transition but cannot prove a freeze or
+# timeline defect. Such a model claim is retained only as not_checked.
+still_only = interpretive_run.sanitize_observations({"observations": [{
+    "risk_id": "temporal_continuity_defect", "finding_state": "concern",
+    "severity": "hold", "issue_description": "Static sequence indicates a freeze.",
+    "confidence": 0.95, "evidence_ids": ["early", "late"],
+}]}, {"early", "late"}, "synthesis", allowed_risk_ids=set(policy["risks"]),
+    evidence_catalog={"early": {"type": "frame", "time_seconds": 1.5},
+                      "late": {"type": "frame", "time_seconds": 4.5}})
+assert still_only[0]["finding_state"] == "not_checked"
+assert still_only[0]["temporal_sampling_suppressed"] is True
+assert "isolated still frames" in still_only[0]["authority_downgrade_reason"]
+assert still_only[0]["issue_description"] == \
+       "Timeline continuity cannot be established from isolated still frames."
+still_only_clean = interpretive_run.sanitize_observations({"observations": [{
+    "risk_id": "temporal_continuity_defect", "finding_state": "no_concern",
+    "severity": "info", "issue_description": "No sampled continuity concern.",
+    "confidence": 0.9, "evidence_ids": ["early", "late"],
+}]}, {"early", "late"}, "synthesis", allowed_risk_ids=set(policy["risks"]),
+    evidence_catalog={"early": {"type": "frame"}, "late": {"type": "frame"}})
+assert still_only_clean[0]["finding_state"] == "not_checked"
+assert still_only_clean[0]["temporal_sampling_suppressed"] is True
 
 # An extraction-window boundary is not a source edit. A model claim about a
 # truncated syllable at an interior sample edge is forced to not_checked.
@@ -337,20 +380,36 @@ stage, observations = worker._run_interpretive_model_stage(
 assert stage["outcome"] == "not_configured" and observations == []
 assert stage["usage"]["billable_events"] == 0
 
-# A paid but malformed provider response remains explicitly not_checked.
+# A malformed provider response receives one compact, provenance-visible repair
+# attempt. Both successful provider responses are metered.
 worker.GMI_API_KEY = "mock"
 worker.AI_INTERPRETIVE_FALLBACK_PROVIDER = ""
 worker.AI_INTERPRETIVE_FALLBACK_MODEL = ""
-worker._gmi_chat_response = lambda *_args, **_kwargs: SimpleNamespace(
-    text="not json", model="proof/model", tokens_in=2, tokens_out=2,
-    tokens_cached=0, cost_usd=None, finish_reason="length")
+malformed_calls = []
+def malformed_then_repaired(content, **_kwargs):
+    malformed_calls.append(content[0]["text"])
+    if len(malformed_calls) == 1:
+        return SimpleNamespace(text="not json", model="proof/model", tokens_in=2, tokens_out=2,
+                               tokens_cached=0, cost_usd=None, finish_reason="length")
+    return SimpleNamespace(text=json.dumps({"observations": [{
+        "risk_id": "perceptual_visual_defect", "finding_state": "no_concern",
+        "severity": "info", "issue_description": "No sampled concern",
+        "context": "bounded evidence", "confidence": 0.9,
+        "uncertainty": "sampled only", "evidence_ids": [],
+        "evidence_location": "unknown", "intent_state": "not_applicable",
+        "evidence_transcriptions": [], "review_question": "Review sample?",
+    }]}), model="proof/model", tokens_in=3, tokens_out=3,
+        tokens_cached=0, cost_usd=None, finish_reason="stop")
+worker._gmi_chat_response = malformed_then_repaired
 stage, observations = worker._run_interpretive_model_stage(
     job, "gmi_visual_analysis", "proof/model", "prompt", "d" * 64, [], [], "e" * 64)
-assert stage["outcome"] == "not_checked" and observations == []
-assert stage["usage"]["billable_events"] == 1
-assert stage["finish_reason"] == "length"
-assert stage["truncated"] is True
-assert "token limit" in stage["error"]
+assert stage["outcome"] == "complete" and observations
+assert stage["usage"]["billable_events"] == 2
+assert stage["usage"]["tokens_in"] == 5 and stage["usage"]["tokens_out"] == 5
+assert stage["finish_reason"] == "stop" and stage["truncated"] is False
+assert [item["outcome"] for item in stage["attempts"]] == ["invalid_output", "complete"]
+assert stage["attempts"][0]["retry_scheduled"] is True
+assert "CORRECTION FOR THIS RETRY" in malformed_calls[1]
 
 # Gemini uses provider-supported JSON-object mode, then the exact same strict
 # schema is enforced locally. A transient 429 is retried and every attempt is

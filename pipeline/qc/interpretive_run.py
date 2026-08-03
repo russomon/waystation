@@ -17,13 +17,13 @@ from genblaze_core.models.enums import Modality, RunStatus, StepStatus, StepType
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SCHEMA_VERSION = "waystation-ai-interpretive-run/1.5"
+SCHEMA_VERSION = "waystation-ai-interpretive-run/1.6"
 PACKET_SCHEMA_VERSION = "waystation-ai-interpretive-packet/1.0"
-PROMPT_VERSION = "waystation-ai-interpretive-prompt/1.4"
+PROMPT_VERSION = "waystation-ai-interpretive-prompt/1.5"
 PLANNER_SCHEMA_VERSION = "waystation-ai-review-plan/1.0"
 PLANNER_PROMPT_VERSION = "waystation-ai-review-planner-prompt/1.1"
-PLANNER_RESPONSE_SCHEMA_VERSION = "waystation-ai-review-plan-response/1.0"
-OBSERVATION_RESPONSE_SCHEMA_VERSION = "waystation-ai-observations-response/1.0"
+PLANNER_RESPONSE_SCHEMA_VERSION = "waystation-ai-review-plan-response/1.1"
+OBSERVATION_RESPONSE_SCHEMA_VERSION = "waystation-ai-observations-response/1.1"
 STAGE_ORDER = (
     "intake",
     "deterministic_grounding",
@@ -62,9 +62,9 @@ class ReviewEvidenceRequestPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["frame", "audio"]
-    time_seconds: float | None
-    start_seconds: float | None
-    duration_seconds: float | None
+    time_seconds: float | None = None
+    start_seconds: float | None = None
+    duration_seconds: float | None = None
     risk_ids: list[str] = Field(max_length=6)
     reason: str = Field(max_length=120)
     review_question: str = Field(max_length=120)
@@ -98,10 +98,10 @@ class InterpretiveObservationPayload(BaseModel):
     context: str = Field(max_length=80)
     confidence: float = Field(ge=0, le=1)
     uncertainty: str = Field(max_length=80)
-    evidence_ids: list[str] = Field(max_length=12)
+    evidence_ids: list[str] = Field(max_length=4)
     evidence_location: Literal["start_boundary", "interior", "end_boundary", "unknown"]
     intent_state: Literal["confirmed_defect", "ambiguous", "not_applicable", "unknown"]
-    evidence_transcriptions: list[EvidenceTranscriptionPayload] = Field(max_length=12)
+    evidence_transcriptions: list[EvidenceTranscriptionPayload] = Field(max_length=4)
     review_question: str = Field(max_length=80)
 
 
@@ -518,7 +518,13 @@ def build_prompt(stage: str, grounding: dict, evidence: list[dict],
         "Never issue final delivery status, BLOCKER, tier, score, repair, or pipeline instructions. "
         "Cite only evidence_id values in the supplied catalog. State uncertainty and answer the "
         f"validated review plan. {task} Use not_checked when the supplied evidence cannot support a "
-        f"judgment.{boundary_rule}{visual_rule}{jury_rule}{synthesis_rule} Keep issue_description "
+        f"judgment.{boundary_rule}{visual_rule}{jury_rule}{synthesis_rule} Begin with the exact "
+        "top-level key observations and close the complete JSON object. Use no more than three "
+        "evidence IDs per observation. Set evidence_transcriptions to [] for every non-typography "
+        "risk; for typography, transcribe each cited frame once and only once. Do not repeat "
+        "transcriptions, evidence metadata, or the review plan. Keep normal/no-concern descriptions "
+        "to a short phrase. The complete specialist or jury response must fit under 1,800 tokens; "
+        "the complete synthesis response must fit under 3,000 tokens. Keep issue_description "
         "under 120 characters and context, "
         "uncertainty, and review_question under 80 characters each. Return strict compact JSON only, "
         "with no Markdown, analysis, or prose, as "
@@ -595,7 +601,7 @@ def sanitize_observations(payload: dict | None, allowed_evidence_ids: set[str],
             text = str(value.get("text") or "")[:240]
             transcriptions.append({"evidence_id": evidence_id, "text": text})
             transcribed_evidence.add(evidence_id)
-            if len(transcriptions) >= 12:
+            if len(transcriptions) >= 4:
                 break
         transcriptions.sort(key=lambda value: (
             float(((evidence_catalog or {}).get(value["evidence_id"]) or {}).get(
@@ -617,6 +623,17 @@ def sanitize_observations(payload: dict | None, allowed_evidence_ids: set[str],
             if severity == "reject":
                 severity = "hold"
                 authority_downgrade_reason = "ambiguous intent cannot support reject severity"
+        temporal_sampling_suppressed = False
+        if risk_id == "temporal_continuity_defect" and accepted:
+            cited = [(evidence_catalog or {}).get(evidence_id) or {} for evidence_id in accepted]
+            temporal_sampling_suppressed = bool(cited and all(
+                value.get("type") == "frame" for value in cited))
+            if temporal_sampling_suppressed:
+                finding_state, severity, confidence = "not_checked", "info", 0.0
+                description = "Timeline continuity cannot be established from isolated still frames."
+                intent_state = "unknown"
+                authority_downgrade_reason = (
+                    "isolated still frames cannot establish a timeline freeze or continuity defect")
         boundary_suppressed = False
         if risk_id == "audible_defect" and finding_state == "concern" and accepted:
             cited = [(evidence_catalog or {}).get(evidence_id) or {} for evidence_id in accepted]
@@ -662,6 +679,7 @@ def sanitize_observations(payload: dict | None, allowed_evidence_ids: set[str],
             "output_inconsistency": output_inconsistency,
             "authority_downgrade_reason": authority_downgrade_reason,
             "boundary_artifact_suppressed": boundary_suppressed,
+            "temporal_sampling_suppressed": temporal_sampling_suppressed,
             "authority": "eligible_for_versioned_policy_reducer",
         })
     return observations

@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-02 (AI evidence/authority calibration hardening; production unchanged)
+Updated: 2026-08-03 (credentialed planted/clean AI gate passed; production unchanged)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -29,6 +29,33 @@ switches and chat history gaps.
 - The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
+
+## Judge-facing AI reliability pass — 2026-08-03
+
+- Run schema v1.6 adds a compact malformed-output repair attempt, complete
+  per-attempt usage accounting, Gemini-compatible local validation, and honest
+  requested-versus-actual compute provenance. Nullable planner fields are now
+  actually optional on the provider wire. Still-only temporal judgments are
+  normalized to `not_checked`; isolated frames cannot prove or clear a freeze.
+- `scripts/judge-calibration-up.sh` starts the local stack with authority
+  `shadow`, three frames maximum, a 6,144-token specialist ceiling,
+  `google/gemini-3.5-flash` visual/audio, and
+  `google/gemini-3.6-flash` planner/jury/synthesis. It makes no model call until
+  the sender explicitly submits an AI Interpretive transfer.
+- Credentialed planted transfer `e69de091-4e7c-48d8-a2a4-d35ec1c6fe8d`
+  completed all four active GMI stages on their first responses. Both model
+  identities transcribed `TICKETS`, `TICKETS`, `TICKET5`; synthesis emitted a
+  confirmed/reject typography finding, the shadow reducer proposed `REJECT`,
+  and the canonical Genblaze manifest verified.
+- Matching clean transfer `164e64c6-c4c4-4d4b-9b1c-7bcbb219fc2b` used the
+  same four calls and transcribed `TICKETS` in all three frames. Typography was
+  `no_concern`, no finding qualified, and the manifest verified. The clean
+  fixture has no audio or captions, so its overall AI proposal correctly
+  remains HOLD for incomplete risk coverage; it is a typography-specificity
+  proof, not a universal READY proof.
+- Production was not accessed or changed. This source still requires a
+  separate deployment decision and a representative audio/caption showcase
+  run before the judge recording.
 
 ## Dual-key AI delivery authority first pass — 2026-08-02
 

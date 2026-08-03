@@ -160,6 +160,7 @@ assert ai['delivery_decision']['ai_interpretive_gate']['proposed_disposition']==
 assert ai['spend_accounting']['explicit_gmi_model_calls']==4
 assert ai['review_context']['provided'] is True and ai['review_context']['characters'] == 2000
 assert 'brief' not in ai['review_context']
+assert ai['compute_route'] == {'requested':'local','actual':'local','request_honored':True}
 assert [stage['name'] for stage in ai['timeline']] == [
  'intake','deterministic_grounding','ai_review_planning','evidence_selection','gmi_visual_analysis',
  'gmi_audio_analysis','gmi_independent_jury','synthesis','artifact_storage']
@@ -176,6 +177,9 @@ assert not any(check.get('source')=='ai_interpretive' for check in qc['checks'])
 steps=manifest['run']['steps']
 assert any(step['step_id']=='ai-interpretive' for step in steps)
 assert any(step['step_id']=='ai-interpretive/gmi_visual_analysis' for step in steps)
+assert manifest['run']['metadata']['requested_compute']=='local'
+assert manifest['run']['metadata']['compute']=='local'
+assert manifest['run']['metadata']['compute_request_honored'] is True
 urls={item['key']:item['url'] for item in transfer['derivatives']}
 for step in steps:
   for asset in step.get('assets') or []:

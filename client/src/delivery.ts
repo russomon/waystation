@@ -272,7 +272,11 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   if (aiRun) {
     const panel = el(`<section class="ai-run"><h3>AI Interpretive Analysis</h3></section>`);
     const runMeta = el(`<p class="meta"></p>`);
-    runMeta.textContent = `Genblaze run ${aiRun.run_id ?? "unknown"} · ${aiRun.state ?? "not_checked"} · authority ${aiRun.authority_mode ?? "shadow"}`;
+    const route = aiRun.compute_route ?? {};
+    const routeText = route.actual
+      ? ` · orchestration ${route.actual}${route.request_honored === false ? ` (requested ${route.requested}; fallback)` : ""}`
+      : "";
+    runMeta.textContent = `Genblaze run ${aiRun.run_id ?? "unknown"} · ${aiRun.state ?? "not_checked"} · authority ${aiRun.authority_mode ?? "shadow"}${routeText} · inference GMI Cloud`;
     panel.append(runMeta);
 
     const decision = aiRun.delivery_decision ?? {};
@@ -483,7 +487,10 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   if (manifest) {
     const prov = el(`<details class="prov" open><summary>Provenance</summary></details>`);
     const compute = manifest?.run?.metadata?.compute;
-    prov.append(el(`<p class="mono">Genblaze manifest v${manifest.schema_version} · canonical hash ${String(manifest.canonical_hash).slice(0, 20)}…${compute ? ` · processed @ ${compute}` : ""}</p>`));
+    const requestedCompute = manifest?.run?.metadata?.requested_compute;
+    const computeFallback = manifest?.run?.metadata?.compute_request_honored === false
+      ? ` (requested ${requestedCompute}; fallback)` : "";
+    prov.append(el(`<p class="mono">Genblaze manifest v${manifest.schema_version} · canonical hash ${String(manifest.canonical_hash).slice(0, 20)}…${compute ? ` · processed @ ${compute}${computeFallback}` : ""}</p>`));
     const inputAsset = gbSteps[0]?.inputs?.[0];
     if (inputAsset?.sha256)
       prov.append(el(`<p class="mono">original sha256: ${String(inputAsset.sha256).slice(0, 24)}…</p>`));
