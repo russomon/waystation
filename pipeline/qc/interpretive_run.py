@@ -17,9 +17,9 @@ from genblaze_core.models.enums import Modality, RunStatus, StepStatus, StepType
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SCHEMA_VERSION = "waystation-ai-interpretive-run/1.7"
-PACKET_SCHEMA_VERSION = "waystation-ai-interpretive-packet/1.1"
-PROMPT_VERSION = "waystation-ai-interpretive-prompt/1.6"
+SCHEMA_VERSION = "waystation-ai-interpretive-run/1.8"
+PACKET_SCHEMA_VERSION = "waystation-ai-interpretive-packet/1.2"
+PROMPT_VERSION = "waystation-ai-interpretive-prompt/1.7"
 PLANNER_SCHEMA_VERSION = "waystation-ai-review-plan/1.0"
 PLANNER_PROMPT_VERSION = "waystation-ai-review-planner-prompt/1.2"
 PLANNER_RESPONSE_SCHEMA_VERSION = "waystation-ai-review-plan-response/1.1"
@@ -219,6 +219,23 @@ def build_evidence_plan(meta: dict, grounding: dict, review_plan: dict | None = 
                     })
             except (KeyError, TypeError, ValueError):
                 continue
+
+    # Temporal continuity is a required policy risk whenever video exists. A
+    # planner may prioritize other questions, but it cannot leave that risk
+    # with isolated stills only. Reserve one bounded sequence before generic
+    # timeline anchors consume the remaining frame budget.
+    required_risks = {str(item.get("risk_id") or "") for item in
+                      (review_plan or {}).get("risk_targets") or []}
+    if (_has_stream(meta, "video") and duration > 0
+            and "temporal_continuity_defect" in required_risks
+            and not any(item.get("type") == "frame_sequence" for item in frames)
+            and max_frames > 0):
+        frames.insert(0, {
+            "type": "frame_sequence", "time_seconds": duration * 0.5,
+            "reason": "mandatory bounded temporal continuity coverage",
+            "packet_id": None, "risk_ids": ["temporal_continuity_defect"],
+            "review_question": "Do sequential samples show an unintended continuity defect?",
+        })
 
     # Every explicit run has bounded timeline anchors, even when deterministic
     # QC found no target. These are samples, never full-timeline clearance.
@@ -488,7 +505,7 @@ def build_prompt(stage: str, grounding: dict, evidence: list[dict],
                for item in ordered_evidence]
     for target, source in zip(catalog, ordered_evidence):
         for key in ("sample_times_seconds", "sequence_span_seconds", "frame_count",
-                    "signal_metrics"):
+                    "signal_metrics", "caption_alignment"):
             if source.get(key) is not None:
                 target[key] = source[key]
     scoped_plan = stage_review_plan(stage, review_plan, ordered_evidence)
@@ -496,11 +513,30 @@ def build_prompt(stage: str, grounding: dict, evidence: list[dict],
     task = (f"Return exactly one concise observation for each of the {target_count} risk targets."
             if stage == "synthesis" else
             f"Return at most one concise observation for each of the {target_count} listed lane risks.")
+    source_caption_context = grounding.get("caption_context") or {}
+    aligned_cues: list[dict] = []
+    seen_cues: set[tuple] = set()
+    for item in ordered_evidence:
+        for cue in (item.get("caption_alignment") or {}).get("cues") or []:
+            key = (cue.get("start_seconds"), cue.get("end_seconds"), cue.get("text"))
+            if key not in seen_cues:
+                seen_cues.add(key)
+                aligned_cues.append(cue)
+    compact_caption_context = {
+        key: source_caption_context.get(key) for key in
+        ("state", "source", "source_extension", "source_sha256", "cue_count", "truncated",
+         "semantic_scope", "reason") if source_caption_context.get(key) is not None
+    }
+    compact_caption_context.update({
+        "selection_scope": "cues overlapping supplied audio evidence only",
+        "aligned_cue_count": len(aligned_cues),
+        "cues": aligned_cues[:24],
+    })
     compact_grounding = {
         "delivery_status": grounding.get("delivery_status"),
         "deterministic_policy": grounding.get("deterministic_policy"),
         "media_context": grounding.get("media_context"),
-        "caption_context": grounding.get("caption_context"),
+        "caption_context": compact_caption_context,
         "review_context": grounding.get("review_context"),
         "deterministic_findings": [{key: item.get(key) for key in
                                     ("name", "status", "category", "detail")}
@@ -693,6 +729,23 @@ def sanitize_observations(payload: dict | None, allowed_evidence_ids: set[str],
                 or (evidence_location == "unknown" and inferred_end and interior_sample_end))
             if boundary_suppressed:
                 finding_state, severity, confidence = "not_checked", "info", 0.0
+        caption_alignment_suppressed = False
+        if risk_id in {"caption_semantic_mismatch", "caption_text_quality"} \
+                and finding_state != "not_checked":
+            cited = [(evidence_catalog or {}).get(evidence_id) or {} for evidence_id in accepted]
+            aligned = [value.get("caption_alignment") or {} for value in cited
+                       if value.get("type") == "audio_window"]
+            has_aligned_cue = any(int(value.get("cue_count") or 0) > 0 for value in aligned)
+            has_caption_transcription = any(value.get("text", "").strip()
+                                            for value in transcriptions)
+            caption_alignment_suppressed = not (has_aligned_cue and has_caption_transcription)
+            if caption_alignment_suppressed:
+                finding_state, severity, confidence = "not_checked", "info", 0.0
+                description = ("Caption meaning or text quality cannot be established without "
+                               "caption cues aligned to the cited audio evidence.")
+                intent_state = "unknown"
+                authority_downgrade_reason = (
+                    "no temporally aligned caption cue and transcription support")
         observations.append({
             "observation_id": f"{stage}-observation-{index}",
             "stage": stage,
@@ -717,6 +770,7 @@ def sanitize_observations(payload: dict | None, allowed_evidence_ids: set[str],
             "authority_downgrade_reason": authority_downgrade_reason,
             "boundary_artifact_suppressed": boundary_suppressed,
             "temporal_sampling_suppressed": temporal_sampling_suppressed,
+            "caption_alignment_suppressed": caption_alignment_suppressed,
             "authority": "eligible_for_versioned_policy_reducer",
         })
     return observations

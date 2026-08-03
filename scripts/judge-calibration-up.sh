@@ -25,6 +25,7 @@ export AI_INTERPRETIVE_VISUAL_MODEL=google/gemini-3.5-flash
 export AI_INTERPRETIVE_AUDIO_MODEL=google/gemini-3.5-flash
 export AI_INTERPRETIVE_JURY_MODEL=google/gemini-3.6-flash
 export AI_INTERPRETIVE_SYNTHESIS_MODEL=google/gemini-3.6-flash
+export GMI_MODEL=google/gemini-3.6-flash
 export AI_INTERPRETIVE_MAX_CONCURRENCY=3
 export AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS=2
 export AI_INTERPRETIVE_RETRY_DELAY_SECONDS=5

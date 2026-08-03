@@ -18,9 +18,13 @@ also allow it and the worker must enable it. The run records these stages:
    deterministic fallback plan is recorded if the call is absent or malformed.
 4. `evidence_selection` extracts at most four JPEG frames, one bounded
    chronological frame sequence for temporal questions, and one six-second
-   mono WAV window by default. Finding targets are preferred; timeline anchors
+   mono WAV window by default. Temporal continuity always reserves a bounded
+   sequence when video exists, even if the planner omits it. Finding targets are preferred; timeline anchors
    fill unused capacity. Caption cues and deterministic audio signal metrics
-   are attached as bounded, hashed grounding when available. Every media object
+   are attached as bounded, hashed grounding when available. Each audio window
+   receives only caption cues that overlap its exact source-time range. Caption
+   semantic/text clearance without an aligned cue and transcription is forced
+   to `not_checked`. Every media object
    is written beneath the transfer's B2 derivative prefix with SHA-256 and size.
 5. `gmi_visual_analysis` and `gmi_audio_analysis` run concurrently when both
    evidence types exist. Each has an independent timeout and attempt ledger.

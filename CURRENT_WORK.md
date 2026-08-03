@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-03 (sender AI consolidation and local cloud routing; production unchanged)
+Updated: 2026-08-03 (credentialed consolidated judge run reviewed and hardened; production unchanged)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -32,6 +32,26 @@ switches and chat history gaps.
 
 ## Sender AI consolidation and local cloud routing — 2026-08-03
 
+- Credentialed transfer `4fb573b0-6ae9-4c44-bc0e-40cb3197c71c` ran on
+  `cloud-docker-local` with the cloud request honored. Planning, parallel
+  visual/audio review, independent jury, and synthesis all completed on their
+  first attempts: five metered GMI calls, an SDK-verifiable manifest, four
+  stored evidence objects, and zero legacy AI-QC calls.
+- Thumbnail selection reused interpretive evidence at 12.747s with zero added
+  GMI calls. The recipient UI now labels this as successful AI selection rather
+  than the former generic fallback text.
+- The run exposed a real fail-closed gap: deterministic QC found 17 caption cues
+  past EOF and 0% speech overlap, while synthesis claimed a caption match from
+  an unrelated 3.12s audio sample. Run schema `1.8` now attaches only
+  temporally overlapping cues to each audio window and suppresses caption
+  semantic/text clearance without an aligned cue plus transcription.
+- The same run left temporal continuity `not_checked` because the planner did
+  not request sequential evidence. Required temporal coverage now reserves one
+  bounded frame sequence before generic anchors, even when the planner omits it.
+- The judge launcher pins the proven Gemini 3.6 Flash text model for the
+  optional summary; the prior GPT-4o-mini default produced no summary step on
+  this run. This requires one post-restart credentialed confirmation.
+
 - Cloud compute remains visible and is checked by default. `scripts/dev-up.sh`
   starts both the host worker on `:8000` and the current tool-complete Docker
   worker on `:8001` by default, and registers both with the gateway. Checked
@@ -49,7 +69,7 @@ switches and chat history gaps.
   interpretive run. That path records `interpretive_reuse`, performs no
   duplicate extraction, and adds zero model calls. Standalone bounded selection
   remains the honest fallback when no reusable frame exists.
-- Source schemas are interpretive run `1.7`, packet `1.1`, prompt `1.6`, planner
+- Source schemas are interpretive run `1.8`, packet `1.2`, prompt `1.7`, planner
   `1.2`, and authority policy `1.2.0`. Focused mock orchestration and full local
   gateway-worker-MinIO proofs cover the consolidated behavior.
 - Production was not accessed, rebuilt, restarted, or changed. Source defaults

@@ -5,6 +5,22 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-03 - Caption semantics require temporal alignment, not prompt proximity
+
+- An AI caption match or text-quality clearance is ineligible unless a cited
+  audio window contains at least one temporally overlapping caption cue and the
+  observation supplies a bounded transcription. Supplying an entire sidecar
+  near unrelated audio let a credentialed model invent correspondence despite
+  deterministic 0% overlap; prompt instructions alone were not an enforcement
+  boundary.
+- Video runs with temporal continuity in the versioned risk registry reserve
+  one bounded frame sequence even when the planner omits it. Isolated stills
+  remain insufficient and produce `not_checked`.
+- `interpretive_reuse` is successful AI poster selection with zero incremental
+  model calls, not a fallback. The recipient UI must describe it accordingly.
+- Run schema `1.8`, packet `1.2`, and prompt `1.7` implement these rules.
+  Production was not accessed or changed; local authority remains `shadow`.
+
 ### 2026-08-03 - Sender AI is consolidated and local cloud means Docker
 
 - The current sender exposes one AI QC workflow: **AI Interpretive Analysis**.

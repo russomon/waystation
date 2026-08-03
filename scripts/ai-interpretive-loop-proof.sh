@@ -179,6 +179,7 @@ assert len(ai['interpretive_observations']) == 11
 audio=next(item for item in ai['evidence'] if item['type']=='audio_window')
 assert audio['sampling_window']['sample_edges_are_not_source_edits'] is True
 assert audio['signal_metrics']['state']=='measured'
+assert audio['caption_alignment']['state']=='aligned' and audio['caption_alignment']['cue_count']==1
 assert any(item['type']=='frame_sequence' for item in ai['evidence'])
 assert all('tier' not in item and 'status' not in item for item in ai['interpretive_observations'])
 assert qc['ai_interpretive_analysis']['deterministic_verdict_unchanged'] is True

@@ -212,6 +212,10 @@ for observation in result["interpretive_observations"]:
         assert observation["finding_state"] == "not_checked"
         assert observation["confidence"] == 0.0
         assert observation["temporal_sampling_suppressed"] is True
+    elif observation["risk_id"] in {"caption_semantic_mismatch", "caption_text_quality"}:
+        assert observation["finding_state"] == "not_checked"
+        assert observation["confidence"] == 0.0
+        assert observation["caption_alignment_suppressed"] is True
     else:
         assert observation["confidence"] == 1.0
     assert observation["evidence_ids"] == ["interpretive-evidence-01"]
@@ -274,6 +278,9 @@ compact_plan = interpretive_run.sanitize_review_plan({
                            "risk_ids": ["perceptual_visual_defect"]}],
 }, meta, policy)
 assert compact_plan is not None
+mandatory_sequence = interpretive_run.build_evidence_plan(
+    meta, {}, compact_plan, max_frames=2, max_audio=0)
+assert any(item["type"] == "frame_sequence" for item in mandatory_sequence)
 
 # Temporal requests become bounded sequential evidence, not isolated stills.
 sequence_plan = interpretive_run.sanitize_review_plan({
@@ -297,12 +304,46 @@ with tempfile.TemporaryDirectory() as support_tmp:
     caption_context = worker._bounded_caption_context("unused", captions, support_tmp)
     assert caption_context["state"] == "available"
     assert caption_context["cue_count"] == 1 and len(caption_context["source_sha256"]) == 64
+    aligned = worker._caption_alignment(caption_context, 1.2, 0.5)
+    missing = worker._caption_alignment(caption_context, 8.0, 1.0)
+    assert aligned["state"] == "aligned" and aligned["cue_count"] == 1
+    assert missing["state"] == "no_overlapping_cues" and missing["cue_count"] == 0
     wav = os.path.join(support_tmp, "tone.wav")
     subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
                     "-ac", "1", "-ar", "16000", wav], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     signal = worker._audio_signal_metrics(wav, 10.0)
     assert signal["state"] == "measured" and signal["continuous_above_threshold"] is True
+
+caption_claim = {"observations": [{
+    "risk_id": "caption_semantic_mismatch", "finding_state": "no_concern",
+    "severity": "info", "issue_description": "Speech matches captions",
+    "confidence": 0.9, "evidence_ids": ["audio-1"],
+    "evidence_transcriptions": [{"evidence_id": "audio-1", "text": "Hello world"}],
+}]}
+suppressed = interpretive_run.sanitize_observations(
+    caption_claim, {"audio-1"}, "proof", evidence_catalog={"audio-1": {
+        "evidence_id": "audio-1", "type": "audio_window",
+        "caption_alignment": {"state": "no_overlapping_cues", "cue_count": 0},
+    }})
+assert suppressed[0]["finding_state"] == "not_checked"
+assert suppressed[0]["caption_alignment_suppressed"] is True
+supported = interpretive_run.sanitize_observations(
+    caption_claim, {"audio-1"}, "proof", evidence_catalog={"audio-1": {
+        "evidence_id": "audio-1", "type": "audio_window",
+        "caption_alignment": {"state": "aligned", "cue_count": 1},
+    }})
+assert supported[0]["finding_state"] == "no_concern"
+assert supported[0]["caption_alignment_suppressed"] is False
+caption_prompt, _ = interpretive_run.build_prompt(
+    "gmi_audio_analysis", {"caption_context": {
+        "state": "available", "cue_count": 2,
+        "cues": [{"start_seconds": 1.0, "end_seconds": 2.0, "text": "Aligned hello"},
+                 {"start_seconds": 8.0, "end_seconds": 9.0, "text": "Unrelated future cue"}],
+    }}, [{"evidence_id": "audio-1", "type": "audio_window", "start_seconds": 1.2,
+          "duration_seconds": 0.5, "caption_alignment": aligned}],
+    review_plan=compact_plan)
+assert "Hello world" in caption_prompt and "Unrelated future cue" not in caption_prompt
 assert set(item["risk_id"] for item in compact_plan["risk_targets"]) == set(policy["risks"])
 
 # Planner priority cannot leave evidence or specialist risks out of timeline

@@ -1479,6 +1479,23 @@ def _bounded_caption_context(src: str, captions_path: str | None, tmp: str) -> d
     }
 
 
+def _caption_alignment(caption_context: dict, start_seconds: float,
+                       duration_seconds: float) -> dict:
+    """Return only cues that overlap one selected source-audio window."""
+    end_seconds = start_seconds + duration_seconds
+    aligned = [cue for cue in caption_context.get("cues") or []
+               if float(cue.get("end_seconds") or 0) > start_seconds
+               and float(cue.get("start_seconds") or 0) < end_seconds]
+    return {
+        "state": "aligned" if aligned else "no_overlapping_cues",
+        "window_start_seconds": round(start_seconds, 3),
+        "window_end_seconds": round(end_seconds, 3),
+        "cue_count": len(aligned),
+        "cues": aligned[:12],
+        "source_sha256": caption_context.get("source_sha256"),
+    }
+
+
 def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
                               qc_report: dict | None, src_sha: str, profile: dict,
                               captions_path: str | None = None) -> tuple[dict, list[dict]]:
@@ -1563,10 +1580,14 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
                     "sample_edges_are_not_source_edits": True,
                 }
                 public["signal_metrics"] = _audio_signal_metrics(path, sample_start)
+                public["caption_alignment"] = _caption_alignment(
+                    caption_context, sample_start, request["duration_seconds"])
                 model_parts["audio"].extend([{"type": "text", "text":
                     f"Evidence {evidence_id} is an extracted source window "
                     f"{sample_start:.3f}s-{sample_end:.3f}s. Its sample edges are not source edits. "
-                    f"Measured signal facts: {json.dumps(public['signal_metrics'], sort_keys=True)}:"}, model])
+                    f"Measured signal facts: {json.dumps(public['signal_metrics'], sort_keys=True)}. "
+                    f"Temporally aligned captions: "
+                    f"{json.dumps(public['caption_alignment'], sort_keys=True)}:"}, model])
         if not item or not os.path.exists(path):
             continue
         public.update({"reason": request["reason"], "packet_id": request.get("packet_id"),

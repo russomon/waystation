@@ -79,7 +79,9 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     const selectionStatus = el(`<p class="meta"></p>`);
     selectionStatus.textContent = thumbSelection.selection_method === "gmi_ai"
       ? `AI-selected preview · ${thumbSelection.model} · ${Number(thumbSelection.selected_time_seconds).toFixed(1)}s`
-      : `Preview fallback · ${thumbSelection.reason}`;
+      : thumbSelection.selection_method === "interpretive_reuse"
+        ? `AI-selected preview · reused interpretive evidence · ${thumbSelection.model} · ${Number(thumbSelection.selected_time_seconds).toFixed(1)}s · no additional AI call`
+        : `Preview fallback · ${thumbSelection.reason}`;
     card.append(selectionStatus);
   }
   const h2 = el(`<h2></h2>`);
