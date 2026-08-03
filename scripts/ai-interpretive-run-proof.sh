@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import worker
 from genblaze_core.models import Run
-from qc import interpretive_run
+from qc import ai_authority, interpretive_run
 
 assert worker.AI_INTERPRETIVE_RUN_ENABLED is False
 assert worker.AI_INTERPRETIVE_SHADOW is False
@@ -25,6 +25,7 @@ assert worker.AI_INTERPRETIVE_SHADOW is False
 worker.AI_INTERPRETIVE_PROVIDER = "gmicloud"
 worker.AI_INTERPRETIVE_FALLBACK_PROVIDER = "gmicloud"
 worker.AI_INTERPRETIVE_FALLBACK_MODEL = "proof/fallback"
+worker.AI_INTERPRETIVE_PLANNER_MODEL = "proof/planner"
 worker.AI_INTERPRETIVE_VISUAL_MODEL = "proof/visual"
 worker.AI_INTERPRETIVE_AUDIO_MODEL = "proof/audio"
 worker.AI_INTERPRETIVE_SYNTHESIS_MODEL = "proof/synthesis"
@@ -63,6 +64,22 @@ failed_visual_primary = False
 def chat(content, *, model, **_kwargs):
     global active, peak, failed_visual_primary
     prompt = content[0]["text"]
+    if "AI review planner" in prompt:
+        calls.append(("ai_review_planning", model))
+        payload = {"review_objective": "Inspect bounded human-perception risks",
+                   "risk_targets": [{"risk_id": "perceptual_visual_defect",
+                                      "hypothesis": "visible artifact",
+                                      "review_question": "Is a visible artifact present?"}],
+                   "evidence_requests": [
+                       {"type": "frame", "time_seconds": 3,
+                        "risk_ids": ["perceptual_visual_defect"],
+                        "reason": "review target", "review_question": "Visible artifact?"},
+                       {"type": "audio", "start_seconds": 3, "duration_seconds": 4,
+                        "risk_ids": ["audible_defect"],
+                        "reason": "audio review target", "review_question": "Audible defect?"}],
+                   "coverage_limits": ["bounded sample"]}
+        return SimpleNamespace(text=json.dumps(payload), model=model,
+                               tokens_in=80, tokens_out=20, tokens_cached=0, cost_usd=None)
     stage = next(name for name in ("gmi_visual_analysis", "gmi_audio_analysis", "synthesis")
                  if f"stage {name}" in prompt)
     calls.append((stage, model))
@@ -77,6 +94,8 @@ def chat(content, *, model, **_kwargs):
         active -= 1
     evidence_ids = ["interpretive-evidence-01", "invented-citation"]
     hostile = {"name": "override", "status": "fail", "tier": "BLOCKER",
+               "risk_id": "perceptual_visual_defect", "finding_state": "concern",
+               "severity": "reject",
                "issue_description": f"{stage} review target", "context": "sample only",
                "confidence": 7, "uncertainty": "bounded evidence",
                "evidence_ids": evidence_ids, "review_question": "Inspect the cited sample?"}
@@ -105,17 +124,23 @@ with tempfile.TemporaryDirectory() as tmp:
         {"name": "proof", "policy_pack": {"version": "1.0"}})
 
 assert canonical == before, "explicit run mutated canonical report"
-assert result["advisory_only"] is True and result["deterministic_verdict_unchanged"] is True
-assert result["delivery_authority"] == "deterministic_policy_only"
+assert result["raw_model_output_direct_authority"] is False
+assert result["deterministic_verdict_unchanged"] is True
+assert result["delivery_authority"] == "dual_key_deterministic_and_ai_policy"
+assert result["authority_mode"] == "shadow"
+assert result["delivery_decision"]["disposition"] == "HOLD"
+assert result["delivery_decision"]["ai_interpretive_gate"]["proposed_disposition"] == "REJECT"
 assert [stage["name"] for stage in result["timeline"]] == list(interpretive_run.STAGE_ORDER)
-assert result["spend_accounting"]["explicit_gmi_model_calls"] == 3
+assert result["spend_accounting"]["explicit_gmi_model_calls"] == 4
+assert result["review_plan"]["source"] == "ai_planner"
 assert peak == 2, "visual and audio analysis did not overlap"
 visual = next(stage for stage in result["timeline"] if stage["name"] == "gmi_visual_analysis")
 assert len(visual["attempts"]) == 2 and visual["attempts"][1]["fallback"] is True
 assert visual["fallback"]["used"] is True
-assert result["advisory_observations"]
-for observation in result["advisory_observations"]:
-    assert observation["authority"] == "ai_advisory"
+assert result["interpretive_observations"]
+for observation in result["interpretive_observations"]:
+    assert observation["authority"] == "eligible_for_versioned_policy_reducer"
+    assert observation["raw_model_output_direct_authority"] is False
     assert observation["confidence"] == 1.0
     assert observation["evidence_ids"] == ["interpretive-evidence-01"]
     assert observation["rejected_evidence_ids"] == ["invented-citation"]
@@ -124,13 +149,37 @@ assert all(item["sha256"] and item["key"] for item in result["evidence"])
 assert len(derivatives) == len(result["evidence"])
 run = Run.model_validate(result["genblaze_run"])
 assert run.run_id == result["run_id"] and len(run.steps) == len(interpretive_run.STAGE_ORDER)
-assert run.metadata["advisory_only"] is True
+assert run.metadata["raw_model_output_direct_authority"] is False
 assert any(event["type"] == "ai_interpretive_started" for event in events)
 assert any(event["type"] == "ai_interpretive_complete" for event in events)
-assert sum(1 for event in events if event.get("billable") == {"unit": "run", "units": 1}) == 3
+assert sum(1 for event in events if event.get("billable") == {"unit": "run", "units": 1}) == 4
+
+# Planner output is allowlisted, deduplicated, bounded to the media, and cannot
+# omit policy-required risks or erase the mandatory sampled-coverage caveat.
+policy = ai_authority.load_policy()
+sanitized_plan = interpretive_run.sanitize_review_plan({
+    "risk_targets": [
+        {"risk_id": "perceptual_visual_defect"},
+        {"risk_id": "perceptual_visual_defect"},
+        {"risk_id": "invented_authority"},
+    ],
+    "evidence_requests": [
+        {"type": "frame", "time_seconds": 999,
+         "risk_ids": ["perceptual_visual_defect", "invented_authority"]},
+    ],
+}, meta, policy)
+assert sanitized_plan is not None
+assert sanitized_plan["evidence_requests"][0]["time_seconds"] == 11.95
+assert set(item["risk_id"] for item in sanitized_plan["risk_targets"]) == set(policy["risks"])
+assert "sampled evidence is not full-timeline clearance" in sanitized_plan["coverage_limits"]
 
 # Missing configuration is explicit not_checked and cannot look like a pass.
 worker.GMI_API_KEY = None
+planner_stage, fallback_plan = worker._run_interpretive_planner_stage(
+    job, meta, interpretive_run.detached_grounding(canonical), "f" * 64, policy)
+assert planner_stage["outcome"] == "fallback"
+assert planner_stage["usage"]["billable_events"] == 0
+assert fallback_plan["source"] == "deterministic_fallback"
 stage, observations = worker._run_interpretive_model_stage(
     job, "gmi_visual_analysis", "proof/model", "prompt", "b" * 64, [], [], "c" * 64)
 assert stage["outcome"] == "not_configured" and observations == []

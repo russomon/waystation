@@ -44,8 +44,10 @@ GitHub: `git@github.com:russomon/waystation.git` (public)
 - **Internal/competitive documents stay out of this repo** — they live in the
   user's Claude project directory, not here. This repo is public.
 - Deterministic checks (ffmpeg/ffprobe measurements, Photon, hashes) and AI
-  checks (GMI vision/ASR/prompt engines) are **separate lanes**. AI verdicts
-  annotate; they never overwrite an instrument reading.
+  checks (GMI vision/ASR/prompt engines) are **separate gates**. AI never
+  overwrites or clears an instrument reading. The explicit AI Interpretive
+  gate may HOLD or REJECT delivery only through its versioned authority policy;
+  raw model text has no direct authority and deterministic rejection always wins.
 - Waystation is a **read-only QC reporter**. Do not add media repair or
   transformation actions to the QC path. Every applicable registered risk
   must receive an explicit disposition, including unresolved gaps.

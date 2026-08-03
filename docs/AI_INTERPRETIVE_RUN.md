@@ -11,21 +11,34 @@ also allow it and the worker must enable it. The run records these stages:
 1. `intake` binds the B2 master key, byte size, and SHA-256.
 2. `deterministic_grounding` snapshots only bounded deterministic findings,
    policy identity, and valid review packets. It cannot mutate the QC report.
-3. `evidence_selection` extracts at most four JPEG frames and one six-second
+3. `ai_review_planning` asks a configurable GMI planning model for a bounded,
+   risk-targeted review plan. The plan is schema-validated and allowlisted; a
+   deterministic fallback plan is recorded if the call is absent or malformed.
+4. `evidence_selection` extracts at most four JPEG frames and one six-second
    mono WAV window by default. Finding targets are preferred; timeline anchors
    fill unused capacity. Every object is written beneath the transfer's B2
    derivative prefix with SHA-256 and size.
-4. `gmi_visual_analysis` and `gmi_audio_analysis` run concurrently when both
+5. `gmi_visual_analysis` and `gmi_audio_analysis` run concurrently when both
    evidence types exist. Each has an independent timeout and attempt ledger.
-5. `synthesis` receives deterministic grounding plus sanitized observations,
+6. `synthesis` receives the validated plan, deterministic grounding, and
+   sanitized specialist observations,
    never a mutable delivery report.
-6. `artifact_storage` records B2 artifact references and hashes.
+7. `artifact_storage` records B2 artifact references and hashes.
 
-GMI output is parsed as untrusted data. Waystation creates a fresh
-`advisory_observations` array, clamps confidence, drops unsupported fields, and
-accepts only evidence IDs from the run's allowlist. A model cannot create a
-delivery check, status, tier, BLOCKER, score, repair, or pipeline instruction.
-Malformed/provider-failed output is `not_checked`, never pass.
+GMI output is parsed as untrusted data. Waystation creates fresh observations,
+clamps confidence, drops unsupported fields, and accepts only evidence IDs
+from the run allowlist. Raw model output cannot create a delivery check, status,
+tier, score, repair, or pipeline instruction. A separate versioned authority
+reducer may issue an AI HOLD or REJECT only for policy-listed risks after
+evidence, confidence, and corroboration requirements pass. Missing risk
+coverage, malformed output, or provider failure produces HOLD/not_checked,
+never READY. AI cannot clear a deterministic rejection.
+
+This first pass analyzes bounded stills and mono audio windows, not the entire
+video bitstream in a native video-capable model. Visible image, typography, and
+audible-defect categories can be enforceable in `enforce` mode. Temporal
+continuity, lip sync, caption semantics, intent, and aesthetics are HOLD-only
+until evidence delivery and real-corpus calibration are stronger.
 
 The official `genblaze_gmicloud.chat` SDK boundary performs each configured GMI
 call. Official Genblaze Core `RunBuilder` and `StepBuilder` models record stage
@@ -41,10 +54,12 @@ Both gates default to false:
 ```text
 ALLOW_AI_INTERPRETIVE=false
 AI_INTERPRETIVE_RUN_ENABLED=false
+AI_INTERPRETIVE_AUTHORITY_MODE=shadow
 ```
 
 The sender option is a third required condition. Enabling the explicit mode can
-make two concurrent analysis calls plus one synthesis call. A media type that
+make one planning call, two concurrent analysis calls, and one synthesis call.
+A media type that
 is absent is not called. Every successful provider call emits one separately
 metered `run` event. AI QC triage, deeper AI QC, Synthetic QC, AI Summary, and
 shadow mode are separate selections and separate spend. For the first bounded
@@ -54,6 +69,7 @@ Models are configuration, not code:
 
 ```text
 AI_INTERPRETIVE_PROVIDER=gmicloud
+AI_INTERPRETIVE_PLANNER_MODEL=openai/gpt-4o-mini
 AI_INTERPRETIVE_VISUAL_MODEL=google/gemini-3.5-flash
 AI_INTERPRETIVE_AUDIO_MODEL=google/gemini-3.5-flash
 AI_INTERPRETIVE_SYNTHESIS_MODEL=openai/gpt-4o-mini
@@ -63,11 +79,20 @@ AI_INTERPRETIVE_TIMEOUT_SECONDS=120
 AI_INTERPRETIVE_MAX_CONCURRENCY=2
 AI_INTERPRETIVE_MAX_FRAMES=4
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS=1
+AI_INTERPRETIVE_AUTHORITY_MODE=shadow
 ```
 
 The installed analysis adapter is GMI Cloud. An alternate provider name is
 recorded as `not_configured`; it is never relabeled as GMI or silently invoked.
 A fallback occurs only when both fallback provider and model are configured.
+
+Authority modes are staged and reversible:
+
+- `shadow`: record the AI gate's proposed disposition; deterministic policy
+  alone determines the displayed disposition.
+- `hold`: AI may stop release for review but cannot reject on its own.
+- `enforce`: corroborated, evidence-backed findings in enforceable policy
+  categories may reject. Deterministic rejection always wins.
 
 ## Demo story
 
@@ -77,8 +102,9 @@ A fallback occurs only when both fallback provider and model are configured.
 2. Show live stages: deterministic grounding, B2 evidence selection, parallel
    GMI visual/audio analysis, synthesis, and artifact storage.
 3. Open the recipient link. Keep the deterministic QC badge in view, then open
-   the green AI panel: Genblaze run ID, stage timeline, provider/model, advisory
-   observations, uncertainty, accepted evidence IDs, and selected B2 frames.
+   the AI panel: dual-key READY/HOLD/REJECT, both gate dispositions, Genblaze
+   run ID, stage timeline, provider/model, observations, uncertainty, accepted
+   evidence IDs, and selected B2 frames.
 4. Open Provenance and verify it. The canonical Genblaze manifest covers the
    master, QC report, AI result JSON, and selected evidence hashes.
 
@@ -92,7 +118,7 @@ bash scripts/ai-interpretive-loop-proof.sh
 It validates orchestration, overlap, fallback records, sanitizer behavior,
 artifact hashing, SDK run shape, metering events, and authority isolation with
 an SDK-shaped mock. The second proof sends a browser-style multipart upload
-through the local gateway, runs three mock-GMI stages, stores and rehashes B2
+through the local gateway, runs four mock-GMI stages, stores and rehashes B2
 artifacts in MinIO, exercises the recipient API shape, and SDK-verifies the
 canonical manifest. A credentialed GMI run against the release candidate is
 still required before the public recording.
@@ -117,9 +143,11 @@ fail-closed sanitizer, but it is not an end-to-end explicit-run validation.
 4. Set `ALLOW_AI_INTERPRETIVE=true` and `AI_INTERPRETIVE_RUN_ENABLED=true`,
    recreate only gateway and worker, then recheck health and effective env.
 5. Run one short, bounded asset with only deterministic QC and explicit
-   interpretation selected. Confirm three or fewer billable model events, GMI
+   interpretation selected. Confirm four or fewer billable model events, GMI
    provider/model metadata, accepted evidence citations, B2 derivative hashes,
-   SDK manifest verification, and unchanged deterministic status/tiers.
+   SDK manifest verification, unchanged deterministic status/tiers, and a
+   shadow-mode dual-key decision. Promote to `hold` first; use `enforce` only
+   after retained accepted/rejected corpus review for each enforceable risk.
 6. Record only after the credentialed result is visible and truthful. Do not
    replay historical uploads.
 7. Roll back on provider loops, missing/mismatched hashes, authority drift,

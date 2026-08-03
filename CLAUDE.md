@@ -20,7 +20,9 @@ Follow the rules in `AGENTS.md`. In particular:
   green rather than adding unverified features.
 - Never print, echo, or commit secret values. `.env` is gitignored — lint it
   by length/prefix only. The full git history has been scanned clean.
-- Deterministic and AI QC are separate lanes; AI annotates, never overwrites.
+- Deterministic and AI QC are separate gates. AI never overwrites or clears an
+  instrument reading. Only the explicit versioned AI authority reducer may
+  turn corroborated, evidence-cited interpretive findings into HOLD/REJECT.
 - This repo is public: competitive analyses and personal reference files
   belong in the user's Claude project directory, not here.
 

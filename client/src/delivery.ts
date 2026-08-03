@@ -82,13 +82,23 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     : `<p class="summary muted">No AI summary — the sender didn't order one for this delivery.</p>`));
   if (summary) (card.querySelector(".summary") as HTMLElement).textContent = summary;
 
-  // QC badge — canonical delivery disposition is deterministic-only. AI lane
-  // observations are rendered separately and never counted as BLOCKERs.
+  // Deterministic instrument status remains intact. The separate dual-key
+  // disposition below combines it with the versioned AI interpretive gate.
   if (qc) {
-    const cls = qc.status === "pass" ? "ok" : qc.status === "warn" ? "warnc" : "bad";
-    const label = qc.status === "pass" ? "✓ QC passed" : qc.status === "warn" ? "⚠ QC warnings" : "✗ QC failed";
+    const disposition = qc.delivery_disposition;
+    const cls = disposition === "READY" ? "ok" : disposition === "HOLD" ? "warnc" :
+      disposition === "REJECT" ? "bad" : qc.status === "pass" ? "ok" : qc.status === "warn" ? "warnc" : "bad";
+    const label = disposition === "READY" ? "✓ Delivery ready" : disposition === "HOLD" ? "⚠ Delivery hold" :
+      disposition === "REJECT" ? "✗ Delivery rejected" : qc.status === "pass" ? "✓ QC passed" :
+      qc.status === "warn" ? "⚠ QC warnings" : "✗ QC failed";
     const profileTag = qc.profile_label ? ` · ${qc.profile_label}` : "";
     const badge = el(`<details class="prov"><summary><span class="${cls}">${label}</span><span class="meta">${profileTag}</span></summary></details>`);
+    if (disposition) {
+      const gates = qc.delivery_decision ?? {};
+      const detail = el(`<p class="meta"></p>`);
+      detail.textContent = `Deterministic QC ${qc.status ?? "not_checked"} · deterministic gate ${gates.deterministic_gate?.disposition ?? "HOLD"} · AI gate ${gates.ai_interpretive_gate?.disposition ?? "HOLD"}`;
+      badge.append(detail);
+    }
     const tiers = qc.tiers ?? {};
     if (tiers.BLOCKER || tiers.ISSUE || tiers.FYI) {
       const chips = el(`<p></p>`);
@@ -244,13 +254,26 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     card.append(badge);
   }
 
-  // Explicit Genblaze/GMI analysis is a separate advisory artifact. It is
-  // intentionally outside the canonical QC badge and cannot affect delivery.
+  // Explicit Genblaze/GMI analysis remains separate from instrument checks.
+  // Raw model text has no direct authority; the policy reducer may hold or
+  // reject only when the configured authority mode and evidence rules allow.
   if (aiRun) {
     const panel = el(`<section class="ai-run"><h3>AI Interpretive Analysis</h3></section>`);
     const runMeta = el(`<p class="meta"></p>`);
-    runMeta.textContent = `ADVISORY ONLY · Genblaze run ${aiRun.run_id ?? "unknown"} · ${aiRun.state ?? "not_checked"}`;
+    runMeta.textContent = `Genblaze run ${aiRun.run_id ?? "unknown"} · ${aiRun.state ?? "not_checked"} · authority ${aiRun.authority_mode ?? "shadow"}`;
     panel.append(runMeta);
+
+    const decision = aiRun.delivery_decision ?? {};
+    const disposition = String(decision.disposition ?? "HOLD");
+    const decisionClass = disposition === "READY" ? "ok" : disposition === "HOLD" ? "warnc" : "bad";
+    const decisionBox = el(`<div class="observation"><strong class="${decisionClass}"></strong><p></p><p class="meta"></p></div>`);
+    (decisionBox.querySelector("strong") as HTMLElement).textContent = `Delivery ${disposition}`;
+    (decisionBox.querySelector("p") as HTMLElement).textContent = (decision.reasons ?? []).join(" · ") || "No decision reason was recorded.";
+    const deterministicGate = decision.deterministic_gate?.disposition ?? "HOLD";
+    const aiGate = decision.ai_interpretive_gate?.disposition ?? "HOLD";
+    (decisionBox.querySelector("p.meta") as HTMLElement).textContent =
+      `deterministic gate ${deterministicGate} · AI gate ${aiGate} · raw model output has no direct authority`;
+    panel.append(decisionBox);
 
     const timeline = el(`<div class="timeline"></div>`);
     for (const stage of (aiRun.timeline ?? [])) {
@@ -263,7 +286,7 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     }
     panel.append(timeline);
 
-    const observations = aiRun.advisory_observations ?? [];
+    const observations = aiRun.interpretive_observations ?? aiRun.advisory_observations ?? [];
     if (!observations.length) {
       const empty = el(`<p class="meta"></p>`);
       empty.textContent = "No structured observation was produced. This run remains not checked, not passed.";
@@ -275,7 +298,7 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       (item.querySelector("p") as HTMLElement).textContent = observation.context || observation.review_question || "Human review requested.";
       const evidence = (observation.evidence_ids ?? []).join(", ") || "no accepted citation";
       (item.querySelector("p.meta") as HTMLElement).textContent =
-        `confidence ${Number(observation.confidence ?? 0).toFixed(2)} · evidence ${evidence} · ${observation.uncertainty ?? "uncertainty not supplied"}`;
+        `${observation.risk_id ?? "unclassified"} · ${observation.finding_state ?? "not_checked"}/${observation.severity ?? "review"} · confidence ${Number(observation.confidence ?? 0).toFixed(2)} · evidence ${evidence} · ${observation.uncertainty ?? "uncertainty not supplied"}`;
       panel.append(item);
     }
 

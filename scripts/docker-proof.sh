@@ -38,14 +38,15 @@ docker exec "$( "${COMPOSE[@]}" ps -q worker )" sh -c '
   java -version 2>&1 | head -1
   test "$(find /opt/photon -name "*.jar" | wc -l)" -gt 0
   python - <<"PY"
-from qc import benchmark, caption_transport, deep_package, interpretive_run, profiles, shadow_evaluation
+from qc import ai_authority, benchmark, caption_transport, deep_package, interpretive_run, profiles, shadow_evaluation
 assert profiles.get("us_broadcast_xdcam_hd_422_v1")["policy_pack"]["version"] == "1.4.0"
 assert caption_transport.SCHEMA_VERSION == "waystation-caption-transport/1.0"
 assert deep_package.SCHEMA_VERSION == "waystation-deep-package-evidence/1.0"
 assert benchmark.SCHEMA_VERSION == "waystation-commercial-qc-benchmark/1.0"
 assert shadow_evaluation.SCHEMA_VERSION == "waystation-ai-shadow-review/1.0"
-assert interpretive_run.SCHEMA_VERSION == "waystation-ai-interpretive-run/1.0"
-print("policy 1.4.0 + deep package/caption/benchmark/shadow + explicit interpretive adapters")
+assert interpretive_run.SCHEMA_VERSION == "waystation-ai-interpretive-run/1.1"
+assert ai_authority.load_policy()["version"] == "1.0.0"
+print("policy 1.4.0 + deep package/caption/benchmark/shadow + dual-key interpretive adapters")
 PY
 ' || { echo "FAIL: worker toolchain assertion"; exit 1; }
 

@@ -7,13 +7,16 @@ history.
 
 ## Now
 
-- **Release and record the explicit Genblaze/GMI workflow.** Source now includes
-  the dedicated opt-in run, B2 evidence artifacts, stage/provenance timeline,
-  and compact recipient view. It is not deployed and both production gates are
-  false. Follow `docs/AI_INTERPRETIVE_RUN.md`: deploy first with gates false,
-  enable reversibly, make one bounded credentialed GMI run with other AI lanes
-  off, verify hashes/metering/authority, then record. Do not claim the mock proof
-  as live-provider validation.
+- **Review and calibrate the dual-key Genblaze/GMI workflow before release.**
+  Source now includes an AI review planner, specialist visual/audio stages,
+  synthesis, versioned `shadow|hold|enforce` authority, B2 artifacts, and a
+  visible READY/HOLD/REJECT result. It is not deployed; both paid-run gates are
+  false and authority defaults to `shadow`. First run one short credentialed
+  asset with all other AI lanes off, verify four-or-fewer model events and risk
+  coverage, then review retained known-good/known-bad assets per enforceable
+  category. Promote to `hold` before considering `enforce`. Do not call bounded
+  still/audio sampling a complete human replacement or mock proof live-provider
+  validation.
 
 - ~~Deploy the 350 GiB large-file build~~ — **DONE 2026-08-01.** Gateway is at
   `7291c80`, banner reports `max=350.0GiB verifiedRangeMax=16.0GiB

@@ -22,11 +22,29 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers["content-length"])))
         content = body["messages"][0]["content"]
         text = " ".join(item.get("text", "") for item in content if isinstance(item, dict))
+        if "AI review planner" in text:
+            payload = json.dumps({"review_objective":"bounded proof review",
+              "risk_targets":[{"risk_id":"perceptual_visual_defect","hypothesis":"artifact",
+                "review_question":"Is an artifact visible?"}],
+              "evidence_requests":[
+                {"type":"frame","time_seconds":0.6,"risk_ids":["perceptual_visual_defect"],
+                 "reason":"visual proof","review_question":"Artifact visible?"},
+                {"type":"audio","start_seconds":0.2,"duration_seconds":1.0,
+                 "risk_ids":["audible_defect"],"reason":"audio proof",
+                 "review_question":"Defect audible?"}],"coverage_limits":["mock sample"]})
+            response = json.dumps({"model": body.get("model"),
+              "choices":[{"finish_reason":"stop","message":{"content":payload}}],
+              "usage":{"prompt_tokens":80,"completion_tokens":20,"total_tokens":100}}).encode()
+            self.send_response(200); self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(response))); self.end_headers(); self.wfile.write(response)
+            return
         stage = next((name for name in ("gmi_visual_analysis", "gmi_audio_analysis", "synthesis")
                       if f"stage {name}" in text), "analysis")
         evidence = re.findall(r'interpretive-evidence-\d+', text)
         observation = {"issue_description": f"Mock {stage.replace('_', ' ')} observation",
-                       "context": "bounded proof evidence", "confidence": 0.72,
+                       "risk_id": "perceptual_visual_defect", "finding_state": "concern",
+                       "severity": "reject",
+                       "context": "bounded proof evidence", "confidence": 0.96,
                        "uncertainty": "local mock, not a live GMI judgment",
                        "evidence_ids": evidence[:1],
                        "review_question": "Does the cited sample need human follow-up?",
@@ -123,15 +141,19 @@ ai=json.load(urllib.request.urlopen(by_name['ai_interpretive.json']['url']))
 qc=json.load(urllib.request.urlopen(by_name['qc_report.json']['url']))
 manifest=json.load(urllib.request.urlopen(transfer['manifestUrl']))
 gb=parse_manifest(manifest); assert gb.verify_hash()
-assert ai['state']=='complete' and ai['advisory_only'] is True
-assert ai['delivery_authority']=='deterministic_policy_only'
-assert ai['spend_accounting']['explicit_gmi_model_calls']==3
+assert ai['state']=='complete' and ai['raw_model_output_direct_authority'] is False
+assert ai['delivery_authority']=='dual_key_deterministic_and_ai_policy'
+assert ai['authority_mode']=='shadow'
+assert ai['delivery_decision']['ai_interpretive_gate']['proposed_disposition']=='REJECT', json.dumps(ai['delivery_decision'], indent=2)
+assert ai['spend_accounting']['explicit_gmi_model_calls']==4
 assert [stage['name'] for stage in ai['timeline']] == [
- 'intake','deterministic_grounding','evidence_selection','gmi_visual_analysis',
+ 'intake','deterministic_grounding','ai_review_planning','evidence_selection','gmi_visual_analysis',
  'gmi_audio_analysis','synthesis','artifact_storage']
-assert ai['advisory_observations'] and all(item['authority']=='ai_advisory' for item in ai['advisory_observations'])
-assert all('tier' not in item and 'status' not in item for item in ai['advisory_observations'])
+assert ai['review_plan']['source']=='ai_planner'
+assert ai['interpretive_observations'] and all(item['authority']=='eligible_for_versioned_policy_reducer' for item in ai['interpretive_observations'])
+assert all('tier' not in item and 'status' not in item for item in ai['interpretive_observations'])
 assert qc['ai_interpretive_analysis']['deterministic_verdict_unchanged'] is True
+assert qc['delivery_decision']==ai['delivery_decision']
 assert not any(check.get('source')=='ai_interpretive' for check in qc['checks'])
 steps=manifest['run']['steps']
 assert any(step['step_id']=='ai-interpretive' for step in steps)
@@ -145,7 +167,7 @@ for step in steps:
     assert hashlib.sha256(body).hexdigest()==asset['sha256']
 usage=json.load(urllib.request.urlopen(f'{base}/transfers/{tid}/usage'))
 ai_units=[item for item in usage['events'] if item.get('event') in {
- 'gmi_visual_analysis','gmi_audio_analysis','synthesis'}]
-assert len(ai_units)==3 and sum(float(item['units']) for item in ai_units)==3
-print(f"PASS full explicit loop: {len(ai['evidence'])} B2 evidence objects, 3 metered mock GMI calls, SDK manifest verified")
+ 'ai_review_planning','gmi_visual_analysis','gmi_audio_analysis','synthesis'}]
+assert len(ai_units)==4 and sum(float(item['units']) for item in ai_units)==4
+print(f"PASS full explicit loop: {len(ai['evidence'])} B2 evidence objects, 4 metered mock GMI calls, SDK manifest verified")
 PYEOF

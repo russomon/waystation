@@ -81,6 +81,9 @@ handoff:
 | `scripts/archive-tools-docker-proof.sh` | worker image contains pinned headless qcli/MediaConch, qcli generates a report, and no GUI apps exist (needs docker) |
 | `scripts/broadcast-qc-proof.sh` | versioned U.S. broadcast XDCAM baseline with actual good/bad media and pure reducer fixtures |
 | `scripts/broadcast-qc-docker-proof.sh` | pinned MediaConch MAXML metadata-policy pass/fail outcomes (needs docker) |
+| `scripts/ai-authority-proof.sh` | pure dual-key READY/HOLD/REJECT reducer: immutable deterministic gate, evidence/confidence/corroboration rules, shadow/hold/enforce modes |
+| `scripts/ai-interpretive-run-proof.sh` | explicit AI planner, parallel specialists, synthesis, B2 evidence hashes, sanitizer, fallback, and dual-key isolation (mock, zero spend) |
+| `scripts/ai-interpretive-loop-proof.sh` | full local gateway-worker-MinIO explicit run with four metered mock-GMI stages and SDK-verified manifest |
 
 Each prints `PASS ✓` or `FAIL`. Scripts that need docker/Photon self-skip with
 instructions when the dependency is absent.

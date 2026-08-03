@@ -50,6 +50,7 @@ bash scripts/broadcast-qc-proof.sh # U.S. XDCAM baseline: real good/bad media + 
 bash scripts/broadcast-qc-docker-proof.sh # MediaConch 25.04 metadata-policy good/bad outcomes
 bash scripts/phase2-quality-proof.sh # Phase 2 visual/audio/caption/metadata advisory reducers
 bash scripts/qc-calibration-proof.sh # corpus intake gate; synthetic data cannot claim acceptance
+bash scripts/ai-authority-proof.sh # dual-key shadow/hold/enforce authority, fail-closed coverage
 bash scripts/ai-interpretive-run-proof.sh # explicit Genblaze run, concurrency/fallback/sanitizer (mock, zero spend)
 bash scripts/ai-interpretive-loop-proof.sh # gateway upload -> mock GMI -> B2 artifacts -> SDK manifest
 ```
@@ -189,11 +190,14 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   Proven live against real B2 + GMI (`scripts/live-run.sh`,
   `GMI_MODEL=google/gemini-3.5-flash`).
 - ✅ **Explicit AI Interpretive Analysis** (opt-in, spend-off by default) —
-  Genblaze records intake, deterministic grounding, bounded B2 evidence,
-  concurrent GMI visual/audio analysis, synthesis, and artifact storage. The
-  delivery page shows the run timeline, advisory observations, uncertainty,
-  evidence citations, and selected frames separately from deterministic QC.
-  Provider output is allowlisted and cannot create a delivery failure. See
+  Genblaze records intake, deterministic grounding, an AI-created bounded
+  review plan, B2 evidence, concurrent GMI visual/audio analysis, synthesis,
+  and artifact storage. The delivery page shows a dual-key READY/HOLD/REJECT
+  decision, both gate dispositions, the run timeline, uncertainty, evidence
+  citations, and selected frames. Raw provider text is never authoritative;
+  the versioned reducer can hold or reject only after allowlisted evidence,
+  confidence, category, coverage, and corroboration rules pass. Defaults are
+  deployment-off and authority `shadow`. See
   `docs/AI_INTERPRETIVE_RUN.md` and its two zero-cloud proof scripts.
 - ✅ **Sender front end with per-service toggles.** The upload page
   (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`

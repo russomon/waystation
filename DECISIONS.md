@@ -5,7 +5,33 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
-### 2026-08-02 - Explicit Genblaze/GMI interpretation is visible but never delivery authority
+### 2026-08-02 - Explicit AI interpretation becomes a constrained delivery gate
+
+- Product decision: Waystation uses dual-key delivery authority. Deterministic
+  instruments retain immutable authority over measured conformance. The
+  explicit AI Interpretive gate has independent authority over versioned
+  perceptual categories and can contribute HOLD/REJECT. AI can never erase a
+  deterministic failure, rewrite an instrument value, or create a composite
+  trust/quality score.
+- Architecture: a configurable GMI planner turns detached deterministic facts
+  into an allowlisted bounded review plan. Configurable visual/audio specialist
+  models inspect stored B2 evidence concurrently; synthesis emits one structured
+  state per required risk. Raw provider text has no direct authority. A pure
+  policy reducer requires accepted evidence IDs, confidence, policy category,
+  category coverage, and cross-stage corroboration.
+- Rollout: `shadow` records the proposed AI decision, `hold` lets AI stop
+  release, and `enforce` lets qualified enforceable findings reject. Defaults
+  remain run-disabled and `shadow`. Missing, malformed, incomplete, or omitted
+  AI evidence yields HOLD/not_checked, never READY.
+- First-pass scope: visible image, typography, and audible defects may enforce.
+  Temporal continuity, lip sync, caption semantics, editorial/creative intent,
+  and aesthetics are HOLD-only pending native video evidence and retained
+  real-corpus calibration. Stage corroboration is disclosed as pipeline-stage
+  corroboration, not independent-model consensus.
+- Deployment consequence: source/tests/docs only. Production was not accessed,
+  rebuilt, restarted, or deployed; no paid call or authority mode was enabled.
+
+### 2026-08-02 - Initial explicit-run advisory boundary (superseded in source)
 
 - Decision: add a dedicated sender-selected AI Interpretive Analysis run rather
   than repurposing hidden shadow evaluation. The real GMI call boundary is

@@ -34,12 +34,14 @@ Object Lock.
 On the sender page select deterministic QC plus **AI Interpretive Analysis**;
 turn AI QC, Synthetic QC, and AI Summary off for this first take. Hold on the
 live stage line through deterministic grounding, B2 evidence selection,
-parallel GMI visual/audio analysis, synthesis, and artifact storage. On the
-recipient page show the deterministic badge first, then the green AI panel:
-Genblaze run ID, provider/models, stage timing, advisory observations,
-uncertainty, cited B2 evidence, and selected frames. Finish by verifying the
-canonical provenance manifest. The narration must call AI advisory and
-deterministic policy the sole delivery authority.
+AI review planning, parallel GMI visual/audio analysis, synthesis, and artifact
+storage. On the recipient page show the deterministic badge first, then the AI
+panel: dual-key disposition, Genblaze run ID, provider/models, stage timing,
+observations, uncertainty, cited B2 evidence, and selected frames. Finish by
+verifying the canonical provenance manifest. In `shadow`, narrate the AI
+disposition as proposed. In `hold` or `enforce`, state the exact versioned
+policy mode and do not imply full-timeline human replacement from bounded
+samples.
 
 ## ⚠ Never on camera
 

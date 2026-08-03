@@ -117,6 +117,7 @@ services:
       AI_INTERPRETIVE_SHADOW: "false"
       AI_INTERPRETIVE_SHADOW_MAX_PACKETS: "4"
       AI_INTERPRETIVE_RUN_ENABLED: "false"   # sender option alone cannot start paid calls
+      AI_INTERPRETIVE_AUTHORITY_MODE: "shadow" # source supports hold/enforce; production opt-in
 
       # ── scratch: every heavy write lands on the 390 GB data disk ──
       # The worker's real scratch usage is two tempfile.TemporaryDirectory()

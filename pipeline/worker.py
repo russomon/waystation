@@ -41,6 +41,7 @@ from genblaze_gmicloud import chat as gb_gmi_chat
 from pydantic import BaseModel
 
 from qc import agentic as qagentic
+from qc import ai_authority as qai_authority
 from qc import archive_tools as qarchive_tools
 from qc import audio as qaudio
 from qc import avsync as qavsync
@@ -137,6 +138,8 @@ AI_INTERPRETIVE_RUN_ENABLED = os.environ.get("AI_INTERPRETIVE_RUN_ENABLED", "fal
     "1", "true", "yes", "on",
 }
 AI_INTERPRETIVE_PROVIDER = (os.environ.get("AI_INTERPRETIVE_PROVIDER") or "gmicloud").strip()
+AI_INTERPRETIVE_PLANNER_MODEL = (os.environ.get("AI_INTERPRETIVE_PLANNER_MODEL")
+                                  or GMI_MODEL).strip()
 AI_INTERPRETIVE_VISUAL_MODEL = (os.environ.get("AI_INTERPRETIVE_VISUAL_MODEL")
                                  or GMI_MULTIMODAL_MODEL).strip()
 AI_INTERPRETIVE_AUDIO_MODEL = (os.environ.get("AI_INTERPRETIVE_AUDIO_MODEL")
@@ -151,6 +154,8 @@ AI_INTERPRETIVE_MAX_CONCURRENCY = max(1, min(2, int(os.environ.get(
 AI_INTERPRETIVE_MAX_FRAMES = max(0, min(8, int(os.environ.get("AI_INTERPRETIVE_MAX_FRAMES", "4"))))
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS = max(0, min(3, int(os.environ.get(
     "AI_INTERPRETIVE_MAX_AUDIO_WINDOWS", "1"))))
+AI_INTERPRETIVE_AUTHORITY_MODE = qai_authority.normalize_mode(
+    os.environ.get("AI_INTERPRETIVE_AUTHORITY_MODE", "shadow"))
 
 
 class Job(BaseModel):
@@ -718,7 +723,8 @@ def _provider_error_code(exc: Exception) -> str:
 
 def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                                   prompt_sha: str, parts: list[dict], evidence: list[dict],
-                                  grounding_hash: str) -> tuple[dict, list[dict]]:
+                                  grounding_hash: str,
+                                  allowed_risk_ids: set[str] | None = None) -> tuple[dict, list[dict]]:
     """Run one configured GMI stage with explicit, recorded fallback semantics."""
     started = _iso_now()
     progress(job, {"type": "ai_interpretive_stage", "stage": name, "state": "started"})
@@ -791,7 +797,8 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
 
     payload = _json_from(response.text)
     allowed = {item["evidence_id"] for item in evidence}
-    observations = qinterpretive_run.sanitize_observations(payload, allowed, name)
+    observations = qinterpretive_run.sanitize_observations(
+        payload, allowed, name, allowed_risk_ids=allowed_risk_ids)
     usage = {"tokens_in": response.tokens_in, "tokens_out": response.tokens_out,
              "tokens_cached": response.tokens_cached, "cost_usd": response.cost_usd,
              "billable_events": 1}
@@ -813,9 +820,76 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
     return stage, observations
 
 
+def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
+                                    grounding_hash: str, authority_policy: dict) -> tuple[dict, dict]:
+    """Run the bounded AI planner; deterministic fallback preserves availability."""
+    started = _iso_now()
+    name = "ai_review_planning"
+    prompt, prompt_sha = qinterpretive_run.build_planner_prompt(
+        grounding, meta, authority_policy)
+    fallback = qinterpretive_run.fallback_review_plan(meta, grounding, authority_policy)
+    progress(job, {"type": "ai_interpretive_stage", "stage": name, "state": "started"})
+    attempts: list[dict] = []
+    response = None
+    if AI_INTERPRETIVE_PROVIDER == "gmicloud" and GMI_API_KEY:
+        attempt_started = time.monotonic()
+        try:
+            response = _gmi_chat_response(
+                [{"type": "text", "text": prompt}], max_tokens=2400,
+                model=AI_INTERPRETIVE_PLANNER_MODEL,
+                timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS, max_attempts=1)
+            attempts.append({"attempt": 1, "provider": "gmicloud",
+                             "model": response.model or AI_INTERPRETIVE_PLANNER_MODEL,
+                             "outcome": "complete", "started_at": started,
+                             "completed_at": _iso_now(),
+                             "duration_ms": round((time.monotonic() - attempt_started) * 1000)})
+        except Exception as exc:
+            attempts.append({"attempt": 1, "provider": "gmicloud",
+                             "model": AI_INTERPRETIVE_PLANNER_MODEL,
+                             "outcome": "failed", "error_code": _provider_error_code(exc),
+                             "error": str(exc)[:240], "started_at": started,
+                             "completed_at": _iso_now(),
+                             "duration_ms": round((time.monotonic() - attempt_started) * 1000)})
+
+    payload = _json_from(response.text) if response is not None else None
+    plan = qinterpretive_run.sanitize_review_plan(
+        payload, meta, authority_policy,
+        max_frames=AI_INTERPRETIVE_MAX_FRAMES,
+        max_audio=AI_INTERPRETIVE_MAX_AUDIO_WINDOWS)
+    used_fallback = plan is None
+    plan = plan or fallback
+    billable = 1 if response is not None else 0
+    error = None
+    if used_fallback:
+        error = "AI planner unavailable or malformed; deterministic bounded plan used"
+    stage = _interpretive_stage(
+        name, outcome="fallback" if used_fallback else "complete",
+        provider="gmicloud" if response is not None else "waystation",
+        model=(response.model or AI_INTERPRETIVE_PLANNER_MODEL) if response is not None
+              else "deterministic-review-planner/1.0",
+        started_at=started, error=error, attempts=attempts,
+        prompt_version=qinterpretive_run.PLANNER_PROMPT_VERSION,
+        prompt_sha256=prompt_sha, input_sha256=grounding_hash,
+        raw_output_sha256=hashlib.sha256(response.text.encode()).hexdigest()
+        if response is not None else None,
+        review_plan_sha256=qinterpretive_run.canonical_hash(plan),
+        fallback={"used": used_fallback, "reason": error},
+        usage={"tokens_in": getattr(response, "tokens_in", None),
+               "tokens_out": getattr(response, "tokens_out", None),
+               "tokens_cached": getattr(response, "tokens_cached", None),
+               "cost_usd": getattr(response, "cost_usd", None),
+               "billable_events": billable})
+    event = {"type": "ai_interpretive_stage", "stage": name, "step": name,
+             "state": stage["outcome"], "plan_source": plan["source"]}
+    if billable:
+        event["billable"] = {"unit": "run", "units": 1}
+    progress(job, event)
+    return stage, plan
+
+
 def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
                               qc_report: dict | None, src_sha: str, profile: dict) -> tuple[dict, list[dict]]:
-    """Run the explicit advisory workflow and persist selected evidence to B2."""
+    """Run the explicit dual-key workflow and persist selected evidence to B2."""
     run_id = f"ai-{uuid.uuid4()}"
     started = _iso_now()
     progress(job, {"type": "ai_interpretive_started", "run_id": run_id,
@@ -837,9 +911,14 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         progress(job, {"type": "ai_interpretive_stage", "stage": stage["name"],
                        "state": stage["outcome"]})
 
+    authority_policy = qai_authority.load_policy()
+    planner_stage, review_plan = _run_interpretive_planner_stage(
+        job, meta, grounding, grounding_hash, authority_policy)
+    stages.append(planner_stage)
+
     selection_started = _iso_now()
     plan = qinterpretive_run.build_evidence_plan(
-        meta, grounding, max_frames=AI_INTERPRETIVE_MAX_FRAMES,
+        meta, grounding, review_plan, max_frames=AI_INTERPRETIVE_MAX_FRAMES,
         max_audio=AI_INTERPRETIVE_MAX_AUDIO_WINDOWS)
     evidence: list[dict] = []
     model_parts: dict[str, list[dict]] = {"visual": [], "audio": []}
@@ -865,6 +944,8 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         if not item or not os.path.exists(path):
             continue
         public.update({"reason": request["reason"], "packet_id": request.get("packet_id"),
+                       "risk_ids": request.get("risk_ids") or [],
+                       "review_question": request.get("review_question"),
                        "sha256": sha256_file(path), "size_bytes": os.path.getsize(path)})
         key = f"derivatives/{job.transferId}/ai-interpretive/evidence/{os.path.basename(path)}"
         s3.upload_file(path, BUCKET, key, ExtraArgs={"ContentType": mime})
@@ -888,6 +969,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
                    "state": selection_stage["outcome"], "artifacts": len(evidence)})
 
     jobs = []
+    allowed_risk_ids = set((authority_policy.get("risks") or {}).keys())
     for name, lane, model in (("gmi_visual_analysis", "visual", AI_INTERPRETIVE_VISUAL_MODEL),
                               ("gmi_audio_analysis", "audio", AI_INTERPRETIVE_AUDIO_MODEL)):
         lane_evidence = [item for item in evidence
@@ -899,13 +981,16 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             progress(job, {"type": "ai_interpretive_stage", "stage": name,
                            "state": "not_checked", "reason": f"no {lane} evidence"})
             continue
-        prompt, prompt_sha = qinterpretive_run.build_prompt(name, grounding, lane_evidence)
+        prompt, prompt_sha = qinterpretive_run.build_prompt(
+            name, grounding, lane_evidence, review_plan=review_plan)
         jobs.append((name, model, prompt, prompt_sha, model_parts[lane], lane_evidence))
 
-    observations: list[dict] = []
+    specialist_observations: list[dict] = []
+    stage_observations: dict[str, list[dict]] = {}
     if jobs:
         with ThreadPoolExecutor(max_workers=min(AI_INTERPRETIVE_MAX_CONCURRENCY, len(jobs))) as pool:
-            futures = {pool.submit(_run_interpretive_model_stage, job, *args, grounding_hash): args[0]
+            futures = {pool.submit(_run_interpretive_model_stage, job, *args, grounding_hash,
+                                   allowed_risk_ids): args[0]
                        for args in jobs}
             completed: dict[str, tuple[dict, list[dict]]] = {}
             for future in as_completed(futures):
@@ -914,17 +999,18 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             if name in completed:
                 stage, found = completed[name]
                 stages.append(stage)
-                observations.extend(found)
+                stage_observations[name] = found
+                specialist_observations.extend(found)
 
     synthesis_prompt, synthesis_sha = qinterpretive_run.build_prompt(
-        "synthesis", grounding, evidence, observations)
-    if observations:
+        "synthesis", grounding, evidence, specialist_observations, review_plan)
+    synthesis_observations: list[dict] = []
+    if specialist_observations:
         synthesis_stage, synthesis_observations = _run_interpretive_model_stage(
             job, "synthesis", AI_INTERPRETIVE_SYNTHESIS_MODEL, synthesis_prompt,
-            synthesis_sha, [], evidence, grounding_hash)
+            synthesis_sha, [], evidence, grounding_hash, allowed_risk_ids)
         stages.append(synthesis_stage)
-        if synthesis_observations:
-            observations = synthesis_observations
+        stage_observations["synthesis"] = synthesis_observations
     else:
         stages.append(_interpretive_stage(
             "synthesis", outcome="not_checked", provider="gmicloud",
@@ -935,15 +1021,27 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         progress(job, {"type": "ai_interpretive_stage", "stage": "synthesis",
                        "state": "not_checked", "reason": "no sanitized analysis observations"})
 
+    observations = synthesis_observations or specialist_observations
+    state = "complete" if synthesis_observations else "not_checked"
+    delivery_decision = qai_authority.decide(
+        deterministic_status=grounding.get("delivery_status"),
+        interpretive_state=state,
+        stage_observations=stage_observations,
+        mode=AI_INTERPRETIVE_AUTHORITY_MODE,
+        policy=authority_policy,
+        required=True,
+        required_risk_ids=[item["risk_id"] for item in review_plan.get("risk_targets") or []])
+
     artifact_stage = _interpretive_stage(
         "artifact_storage", provider="backblaze-b2-s3", model="object-storage",
+        outcome="complete" if evidence else "not_checked",
         artifacts=[{"artifact_id": item["evidence_id"], "url": item["url"],
                     "media_type": item["media_type"], "sha256": item["sha256"],
                     "size_bytes": item["size_bytes"]} for item in evidence],
         usage={"billable_events": 0})
     stages.append(artifact_stage)
     progress(job, {"type": "ai_interpretive_stage", "stage": "artifact_storage",
-                   "state": "complete", "artifacts": len(evidence)})
+                   "state": artifact_stage["outcome"], "artifacts": len(evidence)})
 
     order = {name: index for index, name in enumerate(qinterpretive_run.STAGE_ORDER)}
     stages.sort(key=lambda stage: order[stage["name"]])
@@ -951,15 +1049,18 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
     genblaze_run = qinterpretive_run.build_genblaze_run(
         run_id, job.transferId, source, stages, policy_pack.get("version"))
     successful_calls = sum((stage.get("usage") or {}).get("billable_events", 0) for stage in stages)
-    state = "complete" if observations else "not_checked"
     result = {
         "schema_version": qinterpretive_run.SCHEMA_VERSION,
-        "run_id": run_id, "state": state, "advisory_only": True,
-        "delivery_authority": "deterministic_policy_only",
+        "run_id": run_id, "state": state,
+        "raw_model_output_direct_authority": False,
+        "delivery_authority": "dual_key_deterministic_and_ai_policy",
+        "authority_mode": AI_INTERPRETIVE_AUTHORITY_MODE,
+        "delivery_decision": delivery_decision,
         "deterministic_verdict_unchanged": True,
         "started_at": started, "completed_at": _iso_now(),
         "provider_configuration": {
             "primary_provider": AI_INTERPRETIVE_PROVIDER,
+            "planner_model": AI_INTERPRETIVE_PLANNER_MODEL,
             "visual_model": AI_INTERPRETIVE_VISUAL_MODEL,
             "audio_model": AI_INTERPRETIVE_AUDIO_MODEL,
             "synthesis_model": AI_INTERPRETIVE_SYNTHESIS_MODEL,
@@ -971,9 +1072,13 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         "prompt_packet": {"schema_version": qinterpretive_run.PACKET_SCHEMA_VERSION,
                           "schema_sha256": qinterpretive_run.canonical_hash(
                               {"schema_version": qinterpretive_run.PACKET_SCHEMA_VERSION}),
-                          "prompt_version": qinterpretive_run.PROMPT_VERSION},
+                          "prompt_version": qinterpretive_run.PROMPT_VERSION,
+                          "planner_schema_version": qinterpretive_run.PLANNER_SCHEMA_VERSION,
+                          "planner_prompt_version": qinterpretive_run.PLANNER_PROMPT_VERSION},
+        "review_plan": review_plan,
         "evidence": evidence,
-        "advisory_observations": observations,
+        "interpretive_observations": observations,
+        "stage_observations": stage_observations,
         "timeline": stages,
         "spend_accounting": {
             "explicit_gmi_model_calls": successful_calls,
@@ -984,7 +1089,9 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
     }
     progress(job, {"type": "ai_interpretive_complete", "run_id": run_id,
                    "state": state, "observations": len(observations),
-                   "artifacts": len(evidence), "model_calls": successful_calls})
+                   "artifacts": len(evidence), "model_calls": successful_calls,
+                   "delivery_disposition": delivery_decision["disposition"],
+                   "authority_mode": AI_INTERPRETIVE_AUTHORITY_MODE})
     return result, derivatives
 
 
@@ -2400,9 +2507,10 @@ def run_pipeline(job: Job) -> None:
             qc_report = qagentic.finalize_report(
                 qc_report, meta, job.key, agentic_report, ai_state)
 
-        # 3d. Dedicated, visible Genblaze/GMI analysis. This is not shadow mode
-        # and never enters canonical checks. Sender intent and an operator gate
-        # are both required before any provider call can occur.
+        # 3d. Dedicated, visible Genblaze/GMI analysis. Raw model observations
+        # never enter canonical deterministic checks. A separate versioned
+        # reducer may add an AI HOLD/REJECT to the dual-key delivery decision.
+        # Sender intent and an operator gate are required before any call.
         if opts["ai_interpretive"]:
             if not AI_INTERPRETIVE_RUN_ENABLED:
                 progress(job, {"type": "ai_interpretive_skipped",
@@ -2411,7 +2519,8 @@ def run_pipeline(job: Job) -> None:
                 if qc_report is not None:
                     qc_report["ai_interpretive_analysis"] = {
                         "schema_version": qinterpretive_run.SCHEMA_VERSION,
-                        "state": "disabled_by_deployment", "advisory_only": True,
+                        "state": "disabled_by_deployment",
+                        "raw_model_output_direct_authority": False,
                         "deterministic_verdict_unchanged": True,
                     }
             else:
@@ -2427,22 +2536,43 @@ def run_pipeline(job: Job) -> None:
                     derivatives.append({"step": "ai-interpretive", "key": result_key,
                                         "sha256": result_sha, "mime": "application/json"})
                     if qc_report is not None:
+                        qc_report["delivery_decision"] = copy.deepcopy(
+                            interpretive_result["delivery_decision"])
+                        qc_report["delivery_disposition"] = interpretive_result[
+                            "delivery_decision"]["disposition"]
+                        qc_report["delivery_authority"] = (
+                            "dual_key_deterministic_and_ai_policy")
                         qc_report["ai_interpretive_analysis"] = {
                             "schema_version": interpretive_result["schema_version"],
                             "run_id": interpretive_result["run_id"],
                             "state": interpretive_result["state"],
-                            "advisory_only": True,
+                            "raw_model_output_direct_authority": False,
+                            "authority_mode": interpretive_result["authority_mode"],
+                            "delivery_disposition": interpretive_result[
+                                "delivery_decision"]["disposition"],
                             "deterministic_verdict_unchanged": True,
                             "artifact": {"key": result_key, "sha256": result_sha},
-                            "observations": len(interpretive_result["advisory_observations"]),
+                            "observations": len(interpretive_result["interpretive_observations"]),
                         }
                 except Exception as exc:
                     progress(job, {"type": "ai_interpretive_error", "state": "not_checked",
                                    "error": str(exc)[:240]})
                     if qc_report is not None:
+                        failed_decision = qai_authority.decide(
+                            deterministic_status=qc_report.get("status"),
+                            interpretive_state="not_checked", stage_observations={},
+                            mode=AI_INTERPRETIVE_AUTHORITY_MODE,
+                            policy=qai_authority.load_policy(), required=True)
+                        qc_report["delivery_decision"] = failed_decision
+                        qc_report["delivery_disposition"] = failed_decision["disposition"]
+                        qc_report["delivery_authority"] = (
+                            "dual_key_deterministic_and_ai_policy")
                         qc_report["ai_interpretive_analysis"] = {
                             "schema_version": qinterpretive_run.SCHEMA_VERSION,
-                            "state": "not_checked", "advisory_only": True,
+                            "state": "not_checked",
+                            "raw_model_output_direct_authority": False,
+                            "authority_mode": AI_INTERPRETIVE_AUTHORITY_MODE,
+                            "delivery_disposition": failed_decision["disposition"],
                             "deterministic_verdict_unchanged": True,
                             "reason": f"explicit analysis failed: {str(exc)[:180]}",
                         }
@@ -2551,7 +2681,10 @@ def run_pipeline(job: Job) -> None:
                       **({"ai_interpretive_run_id": interpretive_result["run_id"],
                           "ai_interpretive_schema": interpretive_result["schema_version"],
                           "ai_interpretive_state": interpretive_result["state"],
-                          "ai_interpretive_advisory_only": True}
+                          "ai_interpretive_authority_mode": interpretive_result["authority_mode"],
+                          "ai_interpretive_delivery_disposition": interpretive_result[
+                              "delivery_decision"]["disposition"],
+                          "ai_interpretive_raw_output_direct_authority": False}
                          if interpretive_result else {}),
                       **({"qc_prompt_version": agentic_report["prompt"]["version"],
                           "qc_prompt_sha256": agentic_report["prompt"]["sha256"],

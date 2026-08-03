@@ -287,10 +287,14 @@ AI_INTERPRETIVE_SHADOW=false
 AI_INTERPRETIVE_SHADOW_MAX_PACKETS=4
 ALLOW_AI_INTERPRETIVE=false
 AI_INTERPRETIVE_RUN_ENABLED=false
+AI_INTERPRETIVE_AUTHORITY_MODE=shadow
 ```
 
-When enabled, the AI Interpretive Pass is shadow/advisory and cannot change the
-deterministic delivery status or tier counts.
+The legacy AI Interpretive Shadow remains advisory. The separate explicit run
+now has a versioned dual-key reducer with `shadow`, `hold`, and `enforce` modes.
+Raw model output never changes deterministic checks/status/tiers and can never
+clear a deterministic rejection. Production remains gated off and `shadow`;
+source support is not runtime activation.
 
 The separate user-visible explicit run is also spend-disabled by default. It
 requires gateway permission, worker permission, and sender selection. Its
@@ -322,6 +326,11 @@ a versioned house-template layer, and offline commercial/shadow evaluation
 schemas. They are not part of the image above and require a separate worker
 deployment decision. AI shadow also remains disabled by default. Do not infer
 runtime activation from the host branch or documentation state.
+
+Later source adds the explicit AI review planner and dual-key delivery policy.
+That source is also not in the recorded production image. Both paid-run gates
+remain false and production authority mode remains `shadow`; no deployment or
+AI-spend change was made by the source implementation.
 
 Customer-specific baseline values can be overridden with
 `WAYSTATION_BROADCAST_POLICY_OVERRIDES` JSON. Unknown keys fail closed, and

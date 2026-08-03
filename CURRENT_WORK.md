@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-02 (explicit Genblaze/GMI run source-ready; production unchanged)
+Updated: 2026-08-02 (dual-key AI delivery authority first pass; production unchanged)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -30,6 +30,41 @@ switches and chat history gaps.
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
 
+## Dual-key AI delivery authority first pass — 2026-08-02
+
+- The explicit run now follows the intended QC architecture: deterministic
+  tools produce immutable grounding; a configurable GMI planner creates a
+  bounded, risk-targeted review plan; specialist visual/audio stages run in
+  parallel; synthesis resolves the structured observations; a separate
+  versioned reducer combines deterministic and AI gates into READY/HOLD/REJECT.
+- Raw model text still has no direct authority and cannot alter or clear
+  deterministic measurements. AI authority is real but constrained: `shadow`
+  records a proposed decision, `hold` can stop release, and `enforce` can reject
+  only allowlisted categories with stored evidence, confidence, and cross-stage
+  corroboration. Missing category coverage is HOLD, never READY. There is no
+  composite score.
+- Policy `waystation_ai_interpretive_authority` v1.0.0 makes visible image,
+  typography, and audible defects enforceable. Temporal continuity, lip sync,
+  caption semantics, editorial/creative intent, and aesthetics are HOLD-only
+  in this first pass because the current bounded still/audio evidence is not a
+  native full-video review.
+- The recipient report displays the dual-key disposition and both gates while
+  retaining the original deterministic status/tiers. Genblaze provenance now
+  includes the planner, provider/model attempts, hashes, usage, policy identity,
+  and the B2 evidence/result artifacts.
+- Focused pure/orchestration proofs and the full local gateway-worker-MinIO loop
+  pass. The loop proves four metered mock-GMI calls, stored evidence hashes,
+  manifest verification, and the shadow-mode rejection proposal without
+  mutating deterministic checks.
+- Validation also passes for Python compile/import, gateway TypeScript build,
+  client production build, production Compose expansion with placeholder
+  secrets, browser checks at 1280 px and 390 px, the shipped Docker worker/full
+  container loop, and the existing authority/shadow/triage/agentic/Standard/
+  Netflix/AI/Synthetic/Phase 2/deep-package regressions.
+- **Production was not accessed or changed.** Paid-run gates remain false and
+  `AI_INTERPRETIVE_AUTHORITY_MODE=shadow` in production Compose. Source must be
+  reviewed and live-provider calibrated before any separate deployment decision.
+
 ## Hackathon AI Interpretive run — 2026-08-02
 
 - Source now has a dedicated sender-selected **AI Interpretive Analysis** mode,
@@ -41,14 +76,15 @@ switches and chat history gaps.
   storage. Primary/fallback attempts, timing, provider/model, token usage,
   prompt/input hashes, evidence SHA-256, and billable events are retained.
 - Hostile model fields and unsupported evidence citations are discarded into a
-  fresh `advisory_observations` namespace. The run cannot mutate canonical
-  checks/status/tiers; deterministic policy remains the only delivery authority.
+  fresh observation namespace. The run cannot mutate canonical deterministic
+  checks/status/tiers. This original advisory-only boundary is superseded by
+  the dual-key first pass above; the deployed runtime remains unchanged.
 - The recipient page renders the Genblaze run ID, timeline, observations,
   uncertainty, accepted evidence, and selected B2 frames beside the separate
   deterministic result. The existing canonical manifest embeds the stage run
   and covers the AI result/evidence derivatives.
 - The network-free orchestration proof passes, and the full local explicit loop
-  passes: browser-style multipart through the gateway, three distinct metered
+  previously passed: browser-style multipart through the gateway, three metered
   mock-GMI calls, three B2 evidence objects, recipient API result shape, and an
   SDK-verified canonical manifest. That loop caught and fixed a metering
   idempotency collision by giving every paid stage its own event identity.
