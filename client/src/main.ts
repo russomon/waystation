@@ -96,15 +96,15 @@ if (tid) {
   // "Transfer only" greys out and overrides the individual services.
   transferOnly.onchange = () => servicesEl.classList.toggle("off", transferOnly.checked);
   interpretive.onchange = () => { reviewBriefRow.hidden = !interpretive.checked; };
+  reviewBriefRow.hidden = !interpretive.checked;
 
-  // All-cloud deployments pin the compute target and hide the selector: the
-  // gateway and worker share one host, so there is no second machine to route
-  // to and a visible toggle would imply a choice that does not exist. The
-  // gateway enforces this independently — hiding a control is never the
-  // enforcement.
+  // Keep the selected route visible. Hosted deployments may enforce one route;
+  // disabling the control communicates that policy without hiding provenance.
   if (FORCED_COMPUTE) {
-    const row = $<HTMLInputElement>("#opt_cloud").closest("label");
-    if (row) (row as HTMLElement).hidden = true;
+    const cloud = $<HTMLInputElement>("#opt_cloud");
+    cloud.checked = FORCED_COMPUTE === "cloud";
+    cloud.disabled = true;
+    cloud.closest("label")?.setAttribute("title", `This deployment requires ${FORCED_COMPUTE} compute`);
   }
 
   const currentOptions = (): ServiceOptions => {
@@ -118,7 +118,9 @@ if (tid) {
     return {
       qc_av: val("opt_qc_av"),
       qc_captions: val("opt_qc_captions"),
-      qc_ai: val("opt_qc_ai"),
+      // Legacy AI QC remains API-compatible for old clients, but the sender
+      // uses the consolidated explicit interpretive workflow exclusively.
+      qc_ai: false,
       qc_synthetic: val("opt_qc_synthetic"),
       ai_interpretive: val("opt_ai_interpretive"),
       thumbnail: val("opt_thumbnail"),
@@ -151,7 +153,7 @@ if (tid) {
       // All services off: the gateway skips the pipeline during `complete`,
       // before we could subscribe — no stream to wait on, say so directly.
       // (Only the service booleans count — `profile` is a string, always truthy.)
-      const services = [options.qc_av, options.qc_captions, options.qc_ai,
+      const services = [options.qc_av, options.qc_captions,
                         options.qc_synthetic, options.ai_interpretive,
                         options.thumbnail, options.summarize];
       if (!services.some(Boolean)) {

@@ -30,11 +30,13 @@ export AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS=2
 export AI_INTERPRETIVE_RETRY_DELAY_SECONDS=5
 export AI_INTERPRETIVE_MAX_FRAMES=3
 export AI_INTERPRETIVE_MAX_OUTPUT_TOKENS=6144
+export WAYSTATION_LOCAL_CLOUD_WORKER=true
 
 printf '%s\n' \
   "Judge calibration: explicit AI on, authority shadow, GMI key set" \
   "  planner/jury/synthesis: google/gemini-3.6-flash" \
   "  visual/audio: google/gemini-3.5-flash" \
-  "  evidence: 3 frames max; specialist output: 6144 tokens max"
+  "  evidence: 3 frames max; specialist output: 6144 tokens max" \
+  "  compute: Cloud checkbox routes to the shipped Docker worker"
 
 exec bash scripts/dev-up.sh

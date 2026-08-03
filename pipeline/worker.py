@@ -533,23 +533,86 @@ def _frame_evidence(src: str, tmp: str, evidence_id: str, at: float,
     return model, public
 
 
+def _frame_sequence_evidence(src: str, tmp: str, evidence_id: str, center: float,
+                             media_duration: float, span_seconds: float = 1.0,
+                             frame_count: int = 5) -> tuple[dict, dict] | None:
+    """Build one bounded left-to-right contact sheet from sequential source frames."""
+    if media_duration <= 0 or frame_count < 2:
+        return None
+    span = min(max(0.2, span_seconds), max(media_duration, 0.2))
+    start = max(0.0, min(center - span / 2, max(media_duration - span, 0.0)))
+    end = min(media_duration, start + span)
+    times = [start + (end - start) * i / (frame_count - 1) for i in range(frame_count)]
+    paths: list[str] = []
+    actual_times: list[float] = []
+    for index, at in enumerate(times, 1):
+        sample_id = f"{evidence_id}-sample-{index:02d}"
+        if _frame_evidence(src, tmp, sample_id, at, scale=320):
+            path = os.path.join(tmp, f"{sample_id}.jpg")
+            if os.path.exists(path):
+                paths.append(path)
+                actual_times.append(round(at, 3))
+    if len(paths) < 2:
+        return None
+    output = os.path.join(tmp, f"{evidence_id}.jpg")
+    inputs = [part for path in paths for part in ("-i", path)]
+    labels = "".join(f"[{index}:v]" for index in range(len(paths)))
+    result = subprocess.run(
+        ["ffmpeg", "-y", *inputs, "-filter_complex",
+         f"{labels}hstack=inputs={len(paths)}[sequence]", "-map", "[sequence]", output],
+        capture_output=True, timeout=120)
+    if result.returncode != 0 or not os.path.exists(output) or os.path.getsize(output) == 0:
+        return None
+    with open(output, "rb") as stream:
+        encoded = base64.b64encode(stream.read()).decode()
+    model = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}
+    public = {
+        "evidence_id": evidence_id,
+        "type": "frame_sequence",
+        "time_seconds": round(center, 3),
+        "sample_times_seconds": actual_times,
+        "sequence_span_seconds": round(actual_times[-1] - actual_times[0], 3),
+        "frame_count": len(actual_times),
+        "layout": "chronological_left_to_right",
+    }
+    return model, public
+
+
 def create_ai_thumbnail(job: Job, src: str, tmp: str, meta: dict,
-                        src_sha: str) -> tuple[list[dict], dict]:
+                        src_sha: str, interpretive_result: dict | None = None) -> tuple[list[dict], dict]:
     """Select one real source frame with GMI, retaining a fail-soft audit record."""
     try:
         duration = max(0.0, float((meta.get("format") or {}).get("duration") or 0))
     except (TypeError, ValueError):
         duration = 0.0
-    scene_scan = 0 < duration <= AI_THUMBNAIL_SCENE_SCAN_MAX_SECONDS
+    shared_evidence = [item for item in (interpretive_result or {}).get("evidence") or []
+                       if item.get("type") == "frame"][:AI_THUMBNAIL_CANDIDATES]
+    scene_scan = not shared_evidence and 0 < duration <= AI_THUMBNAIL_SCENE_SCAN_MAX_SECONDS
     cuts = _scene_cuts(src, duration, cap=12) if scene_scan else []
     candidates: list[dict] = []
     parts: list[dict] = []
     paths: dict[str, str] = {}
-    for index, at in enumerate(qposter.candidate_times(
-            duration, cuts, AI_THUMBNAIL_CANDIDATES), 1):
-        candidate_id = f"poster-candidate-{index:02d}"
-        item = _frame_evidence(src, tmp, candidate_id, at, scale=640)
-        path = os.path.join(tmp, f"{candidate_id}.jpg")
+    if shared_evidence:
+        source_candidates = [(item["evidence_id"], float(item["time_seconds"]), item)
+                             for item in shared_evidence]
+    else:
+        source_candidates = [(f"poster-candidate-{index:02d}", at, None)
+                             for index, at in enumerate(qposter.candidate_times(
+                                 duration, cuts, AI_THUMBNAIL_CANDIDATES), 1)]
+    for candidate_id, at, shared in source_candidates:
+        if shared:
+            path = os.path.join(tmp, os.path.basename(str(shared.get("key") or
+                                                        f"{candidate_id}.jpg")))
+            item = None
+            if os.path.exists(path):
+                with open(path, "rb") as stream:
+                    encoded = base64.b64encode(stream.read()).decode()
+                item = ({"type": "image_url", "image_url": {
+                    "url": f"data:image/jpeg;base64,{encoded}"}},
+                    {"evidence_id": candidate_id, "type": "frame", "time_seconds": round(at, 3)})
+        else:
+            item = _frame_evidence(src, tmp, candidate_id, at, scale=640)
+            path = os.path.join(tmp, f"{candidate_id}.jpg")
         if not item or not os.path.exists(path):
             continue
         model_part, public = item
@@ -565,21 +628,43 @@ def create_ai_thumbnail(job: Job, src: str, tmp: str, meta: dict,
     prompt, prompt_sha = qposter.build_prompt(candidates)
     response = None
     selection = None
+    source_observation = None
     error = None
-    if GMI_API_KEY:
-        try:
-            response = _gmi_chat_response(
-                [{"type": "text", "text": prompt}] + parts,
-                max_tokens=500, model=AI_THUMBNAIL_MODEL,
-                timeout=AI_THUMBNAIL_TIMEOUT_SECONDS, max_attempts=1)
-            selection = qposter.sanitize_selection(_json_from(response.text), candidates)
-            if selection is None:
-                error = "GMI returned no valid allowlisted poster selection"
-        except Exception as exc:
-            error = f"GMI poster selection failed: {str(exc)[:180]}"
-    else:
-        error = "GMI_API_KEY is not configured"
-    method = "gmi_ai" if selection is not None else "deterministic_fallback"
+    preferred_risks = ("aesthetic_quality", "editorial_intent", "creative_intent",
+                       "perceptual_visual_defect")
+    if shared_evidence:
+        observations = list((interpretive_result or {}).get("interpretive_observations") or [])
+        candidate_ids = {item["candidate_id"] for item in candidates}
+        for risk_id in preferred_risks:
+            source_observation = next((item for item in observations
+                                       if item.get("risk_id") == risk_id
+                                       and item.get("finding_state") == "no_concern"
+                                       and any(value in candidate_ids
+                                               for value in item.get("evidence_ids") or [])), None)
+            if source_observation:
+                selected_id = next(value for value in source_observation["evidence_ids"]
+                                   if value in candidate_ids)
+                selection = {"selected_candidate_id": selected_id,
+                             "reason": ("Representative frame cited by the interpretive "
+                                        f"{risk_id} review."),
+                             "confidence": float(source_observation.get("confidence") or 0.0)}
+                break
+    if selection is None:
+        if GMI_API_KEY:
+            try:
+                response = _gmi_chat_response(
+                    [{"type": "text", "text": prompt}] + parts,
+                    max_tokens=500, model=AI_THUMBNAIL_MODEL,
+                    timeout=AI_THUMBNAIL_TIMEOUT_SECONDS, max_attempts=1)
+                selection = qposter.sanitize_selection(_json_from(response.text), candidates)
+                if selection is None:
+                    error = "GMI returned no valid allowlisted poster selection"
+            except Exception as exc:
+                error = f"GMI poster selection failed: {str(exc)[:180]}"
+        else:
+            error = "GMI_API_KEY is not configured"
+    method = ("interpretive_reuse" if source_observation is not None else
+              "gmi_ai" if selection is not None else "deterministic_fallback")
     selection = selection or qposter.deterministic_fallback(candidates)
     chosen = next(item for item in candidates
                   if item["candidate_id"] == selection["selected_candidate_id"])
@@ -596,29 +681,36 @@ def create_ai_thumbnail(job: Job, src: str, tmp: str, meta: dict,
     }
     report = {
         "schema_version": qposter.SCHEMA_VERSION,
-        "state": "complete" if method == "gmi_ai" else "fallback",
+        "state": "complete" if method in {"gmi_ai", "interpretive_reuse"} else "fallback",
         "selection_method": method,
         "source_sha256": src_sha,
         "candidate_policy": {"maximum": AI_THUMBNAIL_CANDIDATES,
                              "timeline_anchors": True,
                              "scene_cut_enrichment": scene_scan,
-                             "scene_scan_max_seconds": AI_THUMBNAIL_SCENE_SCAN_MAX_SECONDS},
+                             "scene_scan_max_seconds": AI_THUMBNAIL_SCENE_SCAN_MAX_SECONDS,
+                             "reused_interpretive_evidence": bool(shared_evidence)},
         "candidates": candidates,
         "selected_candidate_id": chosen["candidate_id"],
         "selected_time_seconds": chosen["time_seconds"],
         "selected_sha256": chosen["sha256"],
         "reason": selection["reason"],
         "confidence": selection["confidence"],
-        "provider": "gmicloud" if response is not None else "waystation",
-        "model": getattr(response, "model", None) or (
-            AI_THUMBNAIL_MODEL if GMI_API_KEY else "deterministic-poster-fallback/1.0"),
-        "prompt_version": qposter.PROMPT_VERSION,
-        "prompt_sha256": prompt_sha,
+        "provider": ((source_observation or {}).get("provider") or
+                     ("gmicloud" if response is not None else "waystation")),
+        "model": ((source_observation or {}).get("model") or getattr(response, "model", None) or (
+            AI_THUMBNAIL_MODEL if GMI_API_KEY else "deterministic-poster-fallback/1.0")),
+        "prompt_version": (qinterpretive_run.PROMPT_VERSION
+                           if source_observation else qposter.PROMPT_VERSION),
+        "prompt_sha256": (next((stage.get("prompt_sha256") for stage in
+                                (interpretive_result or {}).get("timeline") or []
+                                if stage.get("name") == source_observation.get("stage")), None)
+                          if source_observation else prompt_sha),
         "raw_output_sha256": hashlib.sha256(response.text.encode()).hexdigest()
         if response is not None else None,
         "finish_reason": getattr(response, "finish_reason", None),
         "usage": usage,
         "error": error,
+        "source_observation_id": (source_observation or {}).get("observation_id"),
         "generated_image": False,
     }
     body = json.dumps(report, indent=2).encode()
@@ -783,6 +875,43 @@ def _audio_evidence(src: str, tmp: str, evidence_id: str, start: float,
     public = {"evidence_id": evidence_id, "type": "audio_window",
               "start_seconds": round(start, 3), "duration_seconds": round(duration, 3)}
     return model, public, wav
+
+
+def _audio_signal_metrics(path: str, source_start: float) -> dict:
+    """Measure a selected audio window so perception is grounded in signal facts."""
+    try:
+        probe = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", path,
+             "-af", "silencedetect=noise=-50dB:d=0.08,volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120)
+        output = probe.stderr
+    except (OSError, subprocess.SubprocessError):
+        return {"state": "not_checked", "reason": "ffmpeg signal measurement failed"}
+    starts = [float(value) for value in re.findall(r"silence_start:\s*([\d.]+)", output)]
+    ends = [(float(end), float(duration)) for end, duration in
+            re.findall(r"silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)", output)]
+    ranges = []
+    for index, start in enumerate(starts):
+        if index >= len(ends):
+            break
+        end, duration = ends[index]
+        ranges.append({"window_start_seconds": round(start, 3),
+                       "window_end_seconds": round(end, 3),
+                       "source_start_seconds": round(source_start + start, 3),
+                       "source_end_seconds": round(source_start + end, 3),
+                       "duration_seconds": round(duration, 3)})
+    mean = re.search(r"mean_volume:\s*(-?[\d.]+) dB", output)
+    peak = re.search(r"max_volume:\s*(-?[\d.]+) dB", output)
+    return {
+        "state": "measured",
+        "tool": "ffmpeg",
+        "silence_threshold_db": -50.0,
+        "minimum_silence_seconds": 0.08,
+        "silence_ranges": ranges,
+        "continuous_above_threshold": not ranges,
+        "mean_volume_db": float(mean.group(1)) if mean else None,
+        "max_volume_db": float(peak.group(1)) if peak else None,
+    }
 
 
 def run_interpretive_shadow(src: str, tmp: str, packets: list[dict]) -> tuple[dict, list[dict], dict]:
@@ -1320,16 +1449,49 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
     return stage, plan
 
 
+def _bounded_caption_context(src: str, captions_path: str | None, tmp: str) -> dict:
+    """Detach a bounded, hash-identified cue sample for interpretive speech review."""
+    try:
+        text = load_caption_text(src, captions_path, tmp)
+        cues = parse_caption_cues(text) if text else []
+    except (OSError, UnicodeError, subprocess.SubprocessError):
+        return {"state": "not_checked", "cue_count": 0, "cues": [],
+                "reason": "caption sidecar could not be decoded"}
+    if not text or not cues:
+        return {"state": "not_available", "cue_count": 0, "cues": [],
+                "reason": "no decodable caption cues"}
+    maximum = 80
+    bounded = [{"start_seconds": round(float(start), 3),
+                "end_seconds": round(float(end), 3),
+                "text": str(cue)[:320]}
+               for start, end, cue in cues[:maximum]]
+    source_hash = (sha256_file(captions_path) if captions_path and os.path.exists(captions_path)
+                   else hashlib.sha256(text.encode(errors="replace")).hexdigest())
+    return {
+        "state": "available",
+        "source": "sidecar" if captions_path else "embedded",
+        "source_extension": os.path.splitext(captions_path)[1].lower() if captions_path else None,
+        "source_sha256": source_hash,
+        "cue_count": len(cues),
+        "cues": bounded,
+        "truncated": len(cues) > len(bounded),
+        "semantic_scope": "bounded cues for speech comparison; not translation certification",
+    }
+
+
 def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
-                              qc_report: dict | None, src_sha: str, profile: dict) -> tuple[dict, list[dict]]:
+                              qc_report: dict | None, src_sha: str, profile: dict,
+                              captions_path: str | None = None) -> tuple[dict, list[dict]]:
     """Run the explicit dual-key workflow and persist selected evidence to B2."""
     run_id = f"ai-{uuid.uuid4()}"
     started = _iso_now()
     progress(job, {"type": "ai_interpretive_started", "run_id": run_id,
                    "schema_version": qinterpretive_run.SCHEMA_VERSION})
     review_context = qinterpretive_run.normalize_review_context(job.options)
+    caption_context = _bounded_caption_context(src, captions_path, tmp)
     grounding = qinterpretive_run.detached_grounding(
-        copy.deepcopy(qc_report), meta=meta, review_context=review_context)
+        copy.deepcopy(qc_report), meta=meta, review_context=review_context,
+        caption_context=caption_context)
     grounding_hash = qinterpretive_run.canonical_hash(grounding)
     source = {"asset_id": "master", "url": f"s3://{BUCKET}/{job.key}",
               "media_type": "application/octet-stream", "sha256": src_sha,
@@ -1375,6 +1537,15 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
                 model_parts["visual"].extend([{"type": "text", "text":
                     f"Evidence {evidence_id} at source {request['time_seconds']:.3f}s "
                     f"({request['reason']}):"}, model])
+        elif request["type"] == "frame_sequence":
+            item = _frame_sequence_evidence(
+                src, tmp, evidence_id, request["time_seconds"], media_duration)
+            path, mime = os.path.join(tmp, f"{evidence_id}.jpg"), "image/jpeg"
+            if item:
+                model, public = item
+                model_parts["visual"].extend([{"type": "text", "text":
+                    f"Evidence {evidence_id} is a chronological left-to-right sequence at "
+                    f"source times {public['sample_times_seconds']} ({request['reason']}):"}, model])
         else:
             item = _audio_evidence(src, tmp, evidence_id, request["start_seconds"],
                                    request["duration_seconds"])
@@ -1391,9 +1562,11 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
                     "ends_at_source_end": sample_end >= max(media_duration - 0.05, 0.0),
                     "sample_edges_are_not_source_edits": True,
                 }
+                public["signal_metrics"] = _audio_signal_metrics(path, sample_start)
                 model_parts["audio"].extend([{"type": "text", "text":
                     f"Evidence {evidence_id} is an extracted source window "
-                    f"{sample_start:.3f}s-{sample_end:.3f}s. Its sample edges are not source edits:"}, model])
+                    f"{sample_start:.3f}s-{sample_end:.3f}s. Its sample edges are not source edits. "
+                    f"Measured signal facts: {json.dumps(public['signal_metrics'], sort_keys=True)}:"}, model])
         if not item or not os.path.exists(path):
             continue
         public.update({"reason": request["reason"], "packet_id": request.get("packet_id"),
@@ -1426,7 +1599,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
     for name, lane, model in (("gmi_visual_analysis", "visual", AI_INTERPRETIVE_VISUAL_MODEL),
                               ("gmi_audio_analysis", "audio", AI_INTERPRETIVE_AUDIO_MODEL)):
         lane_evidence = [item for item in evidence
-                         if (item["type"] == "frame") == (lane == "visual")]
+                         if (item["type"] in {"frame", "frame_sequence"}) == (lane == "visual")]
         if not lane_evidence:
             stages.append(_interpretive_stage(name, outcome="not_checked", provider="gmicloud",
                                                model=model, error=f"no {lane} evidence",
@@ -1554,6 +1727,19 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         },
         "deterministic_grounding": {"sha256": grounding_hash,
                                      "policy": grounding["deterministic_policy"]},
+        "consolidated_capabilities": {
+            "independent_sweep": "gmi_independent_jury",
+            "adaptive_evidence": "ai_review_planning+evidence_selection",
+            "critic": "synthesis disagreement adjudication",
+            "caption_speech_comparison": caption_context.get("state"),
+            "audio_signal_grounding": True,
+            "temporal_sequence_evidence": any(
+                item.get("type") == "frame_sequence" for item in evidence),
+            "legacy_ai_qc_model_calls": 0,
+        },
+        "caption_context": {key: caption_context.get(key) for key in
+                            ("state", "source", "source_extension", "source_sha256",
+                             "cue_count", "truncated", "semantic_scope", "reason")},
         "review_context": qinterpretive_run.public_review_context(review_context),
         "prompt_packet": {"schema_version": qinterpretive_run.PACKET_SCHEMA_VERSION,
                           "schema_sha256": qinterpretive_run.canonical_hash(
@@ -1574,7 +1760,8 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         "timeline": stages,
         "spend_accounting": {
             "explicit_gmi_model_calls": successful_calls,
-            "triage_and_legacy_ai_calls": "metered separately when those services are selected",
+            "legacy_ai_qc_calls": 0,
+            "synthetic_and_summary_calls": "metered separately when selected",
             "shadow_calls": "separate and disabled by default",
         },
         "genblaze_run": genblaze_run,
@@ -2753,27 +2940,7 @@ def run_pipeline(job: Job) -> None:
             meta = {}
             progress(job, {"type": "step_error", "step": "probe", "error": str(e)})
 
-        # 2. thumbnail — bounded real frames, GMI selection, derivative in B2
-        if opts["thumbnail"]:
-            progress(job, {"type": "step_started", "step": "thumbnail"})
-            try:
-                thumbnail_derivatives, thumbnail_report = create_ai_thumbnail(
-                    job, src, tmp, meta, src_sha)
-                derivatives.extend(thumbnail_derivatives)
-                event = {"type": "step_done", "step": "thumbnail",
-                         "key": thumbnail_derivatives[0]["key"],
-                         "selection_method": thumbnail_report["selection_method"],
-                         "selected_time_seconds": thumbnail_report["selected_time_seconds"],
-                         "model": thumbnail_report["model"],
-                         "gmi_model_calls": thumbnail_report["usage"]["billable_events"],
-                         "billable": {"unit": "run", "units": 1}}
-                progress(job, event)
-            except Exception as e:
-                progress(job, {"type": "step_error", "step": "thumbnail", "error": str(e)})
-        else:
-            progress(job, {"type": "step_skipped", "step": "thumbnail", "reason": "disabled by sender"})
-
-        # 3. QC — deterministic media checks (billable per media-minute).
+        # 2. QC — deterministic media checks (billable per media-minute).
         #    A caption sidecar (.srt/.vtt) uploaded alongside the master rides
         #    into the caption QC; it never triggers its own pipeline run (the
         #    gateway's event filter excludes those extensions).
@@ -3024,7 +3191,7 @@ def run_pipeline(job: Job) -> None:
             else:
                 try:
                     interpretive_result, interpretive_derivatives = run_explicit_interpretive(
-                        job, src, tmp, meta, qc_report, src_sha, profile)
+                        job, src, tmp, meta, qc_report, src_sha, profile, captions_path)
                     derivatives.extend(interpretive_derivatives)
                     result_key = f"derivatives/{tid}/ai_interpretive.json"
                     result_body = json.dumps(interpretive_result, indent=2).encode()
@@ -3077,7 +3244,32 @@ def run_pipeline(job: Job) -> None:
         else:
             progress(job, {"type": "ai_interpretive_skipped", "state": "not_requested"})
 
-        # 3e. one provenance-covered report for deterministic and AI lanes.
+        # 3e. AI-selected source preview. When explicit interpretation ran,
+        # reuse its stored frame evidence and aesthetic observation instead of
+        # extracting frames or billing a redundant poster-selection call.
+        if opts["thumbnail"]:
+            progress(job, {"type": "step_started", "step": "thumbnail"})
+            try:
+                thumbnail_derivatives, thumbnail_report = create_ai_thumbnail(
+                    job, src, tmp, meta, src_sha, interpretive_result)
+                derivatives.extend(thumbnail_derivatives)
+                event = {"type": "step_done", "step": "thumbnail",
+                         "key": thumbnail_derivatives[0]["key"],
+                         "selection_method": thumbnail_report["selection_method"],
+                         "selected_time_seconds": thumbnail_report["selected_time_seconds"],
+                         "model": thumbnail_report["model"],
+                         "reused_interpretive_evidence": thumbnail_report[
+                             "candidate_policy"]["reused_interpretive_evidence"],
+                         "gmi_model_calls": thumbnail_report["usage"]["billable_events"]}
+                if thumbnail_report["usage"]["billable_events"]:
+                    event["billable"] = {"unit": "run", "units": 1}
+                progress(job, event)
+            except Exception as e:
+                progress(job, {"type": "step_error", "step": "thumbnail", "error": str(e)})
+        else:
+            progress(job, {"type": "step_skipped", "step": "thumbnail", "reason": "disabled by sender"})
+
+        # 3f. one provenance-covered report for deterministic and AI lanes.
         if qc_report is not None:
             qc_key = f"derivatives/{tid}/qc_report.json"
             qc_body = json.dumps(qc_report, indent=2).encode()

@@ -1,7 +1,8 @@
 # Explicit AI Interpretive Analysis
 
 Status: source-ready, production disabled. This mode is separate from
-`AI_INTERPRETIVE_SHADOW` and from the older AI QC/Synthetic QC lanes.
+`AI_INTERPRETIVE_SHADOW`. It consolidates the sender-facing capabilities of
+the older AI QC lane; Synthetic QC remains a separate, asset-specific service.
 
 ## What the run does
 
@@ -15,10 +16,12 @@ also allow it and the worker must enable it. The run records these stages:
    risk-targeted evidence plan. Code adds every versioned policy risk, so the
    model cannot omit required coverage. The plan is schema-validated and allowlisted; a
    deterministic fallback plan is recorded if the call is absent or malformed.
-4. `evidence_selection` extracts at most four JPEG frames and one six-second
+4. `evidence_selection` extracts at most four JPEG frames, one bounded
+   chronological frame sequence for temporal questions, and one six-second
    mono WAV window by default. Finding targets are preferred; timeline anchors
-   fill unused capacity. Every object is written beneath the transfer's B2
-   derivative prefix with SHA-256 and size.
+   fill unused capacity. Caption cues and deterministic audio signal metrics
+   are attached as bounded, hashed grounding when available. Every media object
+   is written beneath the transfer's B2 derivative prefix with SHA-256 and size.
 5. `gmi_visual_analysis` and `gmi_audio_analysis` run concurrently when both
    evidence types exist. Each has an independent timeout and attempt ledger.
    Audio evidence labels extraction edges; an interior sample edge cannot be
@@ -49,10 +52,11 @@ agreement is required but does not count as an independent source. Missing risk
 coverage, malformed output, or provider failure produces HOLD/not_checked,
 never READY. AI cannot clear a deterministic rejection.
 
-This pass analyzes bounded stills and mono audio windows, not the entire video
-bitstream in a native video-capable model. Frames are presented in source-time
-order, visual stages must transcribe visible text per frame, and ambiguity
-between creative intent and a defect fails closed to review. Visible image,
+This pass analyzes bounded stills, chronological frame sequences, caption
+context, and mono audio windows, not the entire video bitstream in a native
+video-capable model. Frames are presented in source-time order, visual stages
+must transcribe visible text per frame, and ambiguity between creative intent
+and a defect fails closed to review. Visible image,
 typography, and audible-defect categories can be enforceable in `enforce` mode
 only with two distinct configured provider/model sources, separate synthesis
 agreement, reject severity, and confirmed-defect intent. Typography also needs
@@ -81,14 +85,14 @@ The sender option is a third required condition. Enabling the explicit mode can
 make one planning call, two concurrent analysis calls, and one synthesis call.
 Configuring the optional jury adds one call.
 A media type that is absent is not called. Every successful provider call
-emits one separately metered `run` event. AI QC triage, deeper AI QC,
-Synthetic QC, AI Summary, and
-shadow mode are separate selections and separate spend. Preview thumbnail also
-adds one bounded GMI vision call when selected and configured; its provider
-usage is retained in `thumbnail_selection.json`, outside the explicit run's
-base four-call accounting (or five calls with the jury configured). For the
-first bounded run, turn those services off so the explicit mode's cost and
-output are isolated.
+emits one separately metered `run` event. The current sender never invokes the
+legacy AI QC lane alongside this run; older API clients remain compatible, and
+the gateway suppresses duplicate legacy AI QC when explicit interpretation is
+also requested. Synthetic QC, AI Summary, and shadow evaluation remain
+separate selections and separate spend. Preview thumbnail first reuses a clean,
+model-cited interpretive frame and then costs zero additional model calls. Only
+when no usable interpretive frame exists does it run its standalone bounded GMI
+selector. The path and usage are retained in `thumbnail_selection.json`.
 
 Models are configuration, not code:
 
@@ -125,24 +129,26 @@ Authority modes are staged and reversible:
 - `enforce`: corroborated, evidence-backed findings in enforceable policy
   categories may reject. Deterministic rejection always wins.
 
-The sender can also enter a 2,000-character **AI review brief** containing
-approved text, intended edits, or reference context. It is untrusted prompt
-context, not policy. The public run directly records only whether it was
-provided, its bounded length, and SHA-256. Model observations may naturally
-restate relevant context, so the brief must not contain secrets.
+The sender can also enter 2,000 characters of **Creative and delivery context
+(optional)** containing approved text, intended edits, or reference context.
+It is untrusted prompt context, not policy. The public run directly records
+only whether it was provided, its bounded length, and SHA-256. Model
+observations may naturally restate relevant context, so it must not contain
+secrets.
 
 ## Demo story
 
-1. Upload a short showcase master and select deterministic QC plus **AI
-   Interpretive Analysis**. Disable AI QC, Synthetic QC, and AI Summary for the
-   first take so each visible GMI event belongs to this run.
+1. Upload a short showcase master. Deterministic QC and **AI Interpretive
+   Analysis** are selected by default. Disable Synthetic QC and AI Summary for
+   the first measured take if you need to isolate interpretive spend.
 2. Show live stages: deterministic grounding, B2 evidence selection, parallel
    GMI visual/audio analysis, optional blind jury, synthesis, and artifact
    storage.
 3. Open the recipient link. Keep the deterministic QC badge in view, then open
    the AI panel: dual-key READY/HOLD/REJECT, both gate dispositions, Genblaze
    run ID, stage timeline, provider/model, observations, uncertainty, accepted
-   evidence IDs, and selected B2 frames.
+   evidence IDs, and selected B2 frames. When Preview thumbnail is on, show
+   that its provenance says `interpretive_reuse` and zero added calls.
 4. Open Provenance and verify it. The canonical Genblaze manifest covers the
    master, QC report, AI result JSON, and selected evidence hashes.
 

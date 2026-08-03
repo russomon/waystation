@@ -19,6 +19,7 @@ import json, re, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 RISK_IDS = ["perceptual_visual_defect", "temporal_continuity_defect", "typography_defect",
             "lip_sync_error", "audible_defect", "caption_semantic_mismatch",
+            "spoken_language_mismatch", "caption_text_quality",
             "editorial_intent", "creative_intent", "aesthetic_quality"]
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -30,9 +31,9 @@ class Handler(BaseHTTPRequestHandler):
               "risk_targets":[{"risk_id":"perceptual_visual_defect",
                 "review_question":"Is an artifact visible?"}],
               "evidence_requests":[
-                {"type":"frame","time_seconds":0.6,"start_seconds":None,"duration_seconds":None,
-                 "risk_ids":["perceptual_visual_defect"],
-                 "reason":"visual proof","review_question":"Artifact visible?"},
+                {"type":"frame_sequence","time_seconds":0.6,"start_seconds":None,"duration_seconds":None,
+                 "risk_ids":["temporal_continuity_defect"],
+                 "reason":"temporal proof","review_question":"Continuity defect visible?"},
                 {"type":"audio","time_seconds":None,"start_seconds":0.2,"duration_seconds":1.0,
                  "risk_ids":["audible_defect"],"reason":"audio proof",
                  "review_question":"Defect audible?"}],"coverage_limits":["mock sample"]})
@@ -50,12 +51,13 @@ class Handler(BaseHTTPRequestHandler):
         observations = []
         for risk in risks:
             concern = risk == "perceptual_visual_defect"
+            cited = ["interpretive-evidence-02"] if risk == "aesthetic_quality" else evidence[:1]
             observations.append({"issue_description": f"Mock {stage.replace('_', ' ')} observation",
                 "risk_id": risk, "finding_state": "concern" if concern else "no_concern",
                 "severity": "reject" if concern else "info",
                 "context": "bounded proof evidence", "confidence": 0.96,
                 "uncertainty": "local mock, not a live GMI judgment",
-                "evidence_ids": evidence[:1], "evidence_location": "interior",
+                "evidence_ids": cited, "evidence_location": "interior",
                 "intent_state": "confirmed_defect" if concern else "not_applicable",
                 "evidence_transcriptions": [],
                 "review_question": "Does the cited sample need human follow-up?",
@@ -118,8 +120,11 @@ init=post('/uploads', {'filename':'master.mp4','contentType':'video/mp4','size':
 signed=post('/uploads/parts', {'key':init['key'],'uploadId':init['uploadId'],'partNumbers':[1]})
 url=signed['urls'].get('1') or signed['urls'].get(1)
 urllib.request.urlopen(urllib.request.Request(url,data=data,method='PUT')).read()
+captions=b'1\n00:00:00,200 --> 00:00:01,200\nProof caption\n'
+sidecar=post('/uploads/sidecar-url', {'key':init['key'],'filename':'proof.srt'})
+urllib.request.urlopen(urllib.request.Request(sidecar['url'],data=captions,method='PUT')).read()
 post('/uploads/complete', {'key':init['key'],'uploadId':init['uploadId'],
-    'options': {'qc_av':True,'qc_captions':False,'qc_ai':False,'qc_synthetic':False,
+    'options': {'qc_av':True,'qc_captions':True,'qc_ai':False,'qc_synthetic':False,
                 'ai_interpretive':True,'thumbnail':True,'summarize':False,
                 'review_brief':'Expected title remains TEST CARD.' + ('x' * 2100),
                 'profile':'standard','compute':'local'}})
@@ -160,6 +165,9 @@ assert ai['delivery_decision']['ai_interpretive_gate']['proposed_disposition']==
 assert ai['spend_accounting']['explicit_gmi_model_calls']==4
 assert ai['review_context']['provided'] is True and ai['review_context']['characters'] == 2000
 assert 'brief' not in ai['review_context']
+assert ai['caption_context']['state']=='available' and ai['caption_context']['cue_count']==1
+assert ai['consolidated_capabilities']['legacy_ai_qc_model_calls']==0
+assert ai['consolidated_capabilities']['temporal_sequence_evidence'] is True
 assert ai['compute_route'] == {'requested':'local','actual':'local','request_honored':True}
 assert [stage['name'] for stage in ai['timeline']] == [
  'intake','deterministic_grounding','ai_review_planning','evidence_selection','gmi_visual_analysis',
@@ -167,9 +175,11 @@ assert [stage['name'] for stage in ai['timeline']] == [
 assert next(stage for stage in ai['timeline'] if stage['name']=='gmi_independent_jury')['outcome']=='not_configured'
 assert ai['review_plan']['source']=='ai_planner'
 assert ai['interpretive_observations'] and all(item['authority']=='eligible_for_versioned_policy_reducer' for item in ai['interpretive_observations'])
-assert len(ai['interpretive_observations']) == 9
+assert len(ai['interpretive_observations']) == 11
 audio=next(item for item in ai['evidence'] if item['type']=='audio_window')
 assert audio['sampling_window']['sample_edges_are_not_source_edits'] is True
+assert audio['signal_metrics']['state']=='measured'
+assert any(item['type']=='frame_sequence' for item in ai['evidence'])
 assert all('tier' not in item and 'status' not in item for item in ai['interpretive_observations'])
 assert qc['ai_interpretive_analysis']['deterministic_verdict_unchanged'] is True
 assert qc['delivery_decision']==ai['delivery_decision']
@@ -180,6 +190,10 @@ assert any(step['step_id']=='ai-interpretive/gmi_visual_analysis' for step in st
 assert manifest['run']['metadata']['requested_compute']=='local'
 assert manifest['run']['metadata']['compute']=='local'
 assert manifest['run']['metadata']['compute_request_honored'] is True
+thumb=json.load(urllib.request.urlopen(by_name['thumbnail_selection.json']['url']))
+assert thumb['selection_method']=='interpretive_reuse'
+assert thumb['candidate_policy']['reused_interpretive_evidence'] is True
+assert thumb['usage']['billable_events']==0
 urls={item['key']:item['url'] for item in transfer['derivatives']}
 for step in steps:
   for asset in step.get('assets') or []:

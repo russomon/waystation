@@ -9,6 +9,7 @@ B2_KEY_ID=proof B2_APP_KEY=proof GMI_API_KEY=mock \
 PYTHONPATH="$ROOT/pipeline" "$PY" - <<'PYEOF'
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -40,7 +41,10 @@ worker.progress = lambda _job, event: events.append(deepcopy(event))
 class FakeS3:
     def upload_file(self, path, bucket, key, ExtraArgs=None):
         assert bucket == "proof" and os.path.getsize(path) > 0
-        assert key.startswith("derivatives/proof-transfer/ai-interpretive/evidence/")
+        assert (key.startswith("derivatives/proof-transfer/ai-interpretive/evidence/")
+                or key == "derivatives/proof-transfer/thumb.jpg")
+    def put_object(self, Bucket, Key, Body, ContentType):
+        assert Bucket == "proof" and Key.endswith("thumbnail_selection.json") and Body
 worker.s3 = FakeS3()
 
 def frame(_src, tmp, evidence_id, at, **_kwargs):
@@ -150,6 +154,13 @@ with tempfile.TemporaryDirectory() as tmp:
     result, derivatives = worker.run_explicit_interpretive(
         job, source, tmp, meta, canonical, "a" * 64,
         {"name": "proof", "policy_pack": {"version": "1.0"}})
+    thumb_derivatives, thumb_report = worker.create_ai_thumbnail(
+        job, source, tmp, meta, "a" * 64, result)
+    assert thumb_report["selection_method"] == "interpretive_reuse"
+    assert thumb_report["candidate_policy"]["reused_interpretive_evidence"] is True
+    assert thumb_report["usage"]["billable_events"] == 0
+    assert thumb_report["error"] is None
+    assert len(thumb_derivatives) == 2
 
 assert canonical == before, "explicit run mutated canonical report"
 assert result["raw_model_output_direct_authority"] is False
@@ -161,6 +172,8 @@ assert result["delivery_decision"]["ai_interpretive_gate"]["proposed_disposition
 assert [stage["name"] for stage in result["timeline"]] == list(interpretive_run.STAGE_ORDER)
 assert result["spend_accounting"]["explicit_gmi_model_calls"] == 5
 assert result["review_plan"]["source"] == "ai_planner"
+assert result["consolidated_capabilities"]["legacy_ai_qc_model_calls"] == 0
+assert result["caption_context"]["state"] == "not_available"
 assert peak == 3, "visual, audio, and independent jury analysis did not overlap"
 assert response_formats[0] is interpretive_run.ReviewPlanPayload
 assert all(value is interpretive_run.InterpretiveObservationsPayload
@@ -261,6 +274,35 @@ compact_plan = interpretive_run.sanitize_review_plan({
                            "risk_ids": ["perceptual_visual_defect"]}],
 }, meta, policy)
 assert compact_plan is not None
+
+# Temporal requests become bounded sequential evidence, not isolated stills.
+sequence_plan = interpretive_run.sanitize_review_plan({
+    "review_objective": "temporal review",
+    "risk_targets": [{"risk_id": "temporal_continuity_defect",
+                      "review_question": "Is motion continuous?"}],
+    "evidence_requests": [{"type": "frame", "time_seconds": 6,
+                           "risk_ids": ["temporal_continuity_defect"],
+                           "reason": "freeze target", "review_question": "Frozen?"}],
+}, meta, policy, max_frames=1, max_audio=0)
+sequence_evidence = interpretive_run.build_evidence_plan(
+    meta, interpretive_run.detached_grounding(canonical), sequence_plan,
+    max_frames=1, max_audio=0)
+assert sequence_evidence[0]["type"] == "frame_sequence"
+
+# Caption context is bounded and hash-identified; audio evidence records
+# deterministic signal facts that models must reconcile with perception.
+with tempfile.TemporaryDirectory() as support_tmp:
+    captions = os.path.join(support_tmp, "captions.srt")
+    open(captions, "w").write("1\n00:00:01,000 --> 00:00:02,000\nHello world\n")
+    caption_context = worker._bounded_caption_context("unused", captions, support_tmp)
+    assert caption_context["state"] == "available"
+    assert caption_context["cue_count"] == 1 and len(caption_context["source_sha256"]) == 64
+    wav = os.path.join(support_tmp, "tone.wav")
+    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                    "-ac", "1", "-ar", "16000", wav], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    signal = worker._audio_signal_metrics(wav, 10.0)
+    assert signal["state"] == "measured" and signal["continuous_above_threshold"] is True
 assert set(item["risk_id"] for item in compact_plan["risk_targets"]) == set(policy["risks"])
 
 # Planner priority cannot leave evidence or specialist risks out of timeline
@@ -301,6 +343,7 @@ assert planner_wire.evidence_requests[0].start_seconds is None
 # result, and unresolved intent cannot retain reject severity.
 text_conflict = interpretive_run.sanitize_observations({"observations": [{
     "risk_id": "typography_defect", "finding_state": "no_concern", "severity": "info",
+    "issue_description": "No mutation; the same text remains unchanged.",
     "confidence": 0.9, "evidence_ids": ["early", "late"],
     "evidence_transcriptions": [{"evidence_id": "late", "text": "TICKET5"},
                                 {"evidence_id": "early", "text": "TICKETS"}],
@@ -310,6 +353,16 @@ assert text_conflict[0]["finding_state"] == "not_checked"
 assert text_conflict[0]["text_transition_observed"] is True
 assert text_conflict[0]["output_inconsistency"] is True
 assert [item["evidence_id"] for item in text_conflict[0]["evidence_transcriptions"]] == ["early", "late"]
+different_cards = interpretive_run.sanitize_observations({"observations": [{
+    "risk_id": "typography_defect", "finding_state": "no_concern", "severity": "info",
+    "issue_description": "Different title cards are legible and properly rendered.",
+    "confidence": 0.9, "evidence_ids": ["early", "late"],
+    "evidence_transcriptions": [{"evidence_id": "early", "text": "November, 2014"},
+                                {"evidence_id": "late", "text": "Jack Nance"}],
+}]}, {"early", "late"}, "gmi_visual_analysis", allowed_risk_ids=set(policy["risks"]),
+    evidence_catalog={"early": {"time_seconds": 1.5}, "late": {"time_seconds": 4.5}})
+assert different_cards[0]["finding_state"] == "no_concern"
+assert different_cards[0]["output_inconsistency"] is False
 ambiguous = interpretive_run.sanitize_observations({"observations": [{
     "risk_id": "perceptual_visual_defect", "finding_state": "concern", "severity": "reject",
     "issue_description": "Potential freeze; unsure if intentional.", "confidence": 0.99,
@@ -463,6 +516,13 @@ CHECK="$ROOT/gateway/src/_ai_interpretive_policy_check.ts"
 trap 'rm -f "$CHECK"' EXIT
 cat > "$CHECK" <<'TSEOF'
 import { applyServicePolicy } from "./limits.js";
+if (process.env.ALLOW_AI_INTERPRETIVE === "true") {
+  const combined = applyServicePolicy({ qc_ai: true, ai_interpretive: true });
+  if (combined.options?.ai_interpretive !== true || combined.options?.qc_ai !== false)
+    throw new Error("combined request did not suppress the legacy AI QC lane");
+  console.log("PASS explicit interpretation suppresses duplicate legacy AI QC spend");
+  process.exit(0);
+}
 const requested = applyServicePolicy({ qc_av: true, ai_interpretive: true });
 if (requested.options?.ai_interpretive !== false || !requested.disabled.includes("ai_interpretive"))
   throw new Error("explicit interpretive request was not blocked by the default gateway gate");
@@ -472,5 +532,6 @@ if (implicit.disabled.includes("ai_interpretive"))
 console.log("PASS gateway requires an explicit deployment allow plus sender selection");
 TSEOF
 (cd "$ROOT/gateway" && ALLOW_AI_INTERPRETIVE=false npx tsx src/_ai_interpretive_policy_check.ts)
+(cd "$ROOT/gateway" && ALLOW_AI_INTERPRETIVE=true npx tsx src/_ai_interpretive_policy_check.ts)
 rm -f "$CHECK"
 trap - EXIT

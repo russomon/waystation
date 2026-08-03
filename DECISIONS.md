@@ -5,6 +5,29 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-03 - Sender AI is consolidated and local cloud means Docker
+
+- The current sender exposes one AI QC workflow: **AI Interpretive Analysis**.
+  It consolidates independent sweep, adaptive evidence, critic/jury, synthesis,
+  caption context, temporal sequence evidence, and deterministic audio signal
+  grounding. The legacy `qc_ai` request remains API-compatible but is hidden;
+  when an older client requests both, explicit interpretation wins and legacy
+  AI QC is suppressed to prevent duplicate analysis and spend.
+- Cloud compute remains visible and checked by default. Local development
+  registers a host worker and the shipped Docker worker by default, so checked
+  means a distinct tool-complete Docker process rather than an undisclosed
+  fallback. Hosted forced-compute builds keep the same control visible but
+  disabled at the enforced value.
+- **Creative and delivery context (optional)** is the sender label for the
+  existing bounded `review_brief` contract. Renaming the API field would add
+  migration risk without changing its security or provenance semantics.
+- Thumbnail selection reuses a clean, allowlisted frame cited by the explicit
+  interpretive result whenever possible. Reuse has zero additional provider
+  calls and no duplicate extraction; the standalone GMI selector is retained
+  only as a disclosed fallback.
+- These are source and local-proof decisions. Paid explicit defaults remain
+  disabled, authority defaults to `shadow`, and production was not changed.
+
 ### 2026-08-03 - Judge calibration is a retained profile, not ad hoc shell state
 
 - `scripts/judge-calibration-up.sh` pins the credentialed shadow calibration

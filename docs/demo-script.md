@@ -15,7 +15,7 @@ Object Lock.
 > | API | `https://api.orbitolive.com/api` |
 > | Upload path | browser → **Backblaze B2 directly** (presigned multipart PUT) |
 > | Trigger | **B2 Event Notifications** → the running production gateway through the Cloudflare Tunnel |
-> | Compute | pinned `cloud`; the Local/Cloud selector is hidden in the hosted build |
+> | Compute | pinned `cloud`; the Cloud selector remains visible, checked, and locked in the hosted build |
 >
 > Do **not** run `scripts/live-event-run.sh`, start a `cloudflared` quick-tunnel,
 > or repoint the production B2 event rule. The rule (`waystation-pipeline`,
@@ -31,8 +31,10 @@ Object Lock.
 
 ### Revised interpretive beat after release
 
-On the sender page select deterministic QC plus **AI Interpretive Analysis**;
-turn AI QC, Synthetic QC, and AI Summary off for this first take. Hold on the
+On the sender page keep deterministic QC plus **AI Interpretive Analysis**
+selected; turn Synthetic QC and AI Summary off for this first measured take.
+Keep Cloud compute checked so the tool-complete Docker worker is named in
+progress and provenance. Hold on the
 live stage line through deterministic grounding, B2 evidence selection,
 AI review planning, parallel GMI visual/audio analysis, synthesis, and artifact
 storage. On the recipient page show the deterministic badge first, then the AI
@@ -128,8 +130,9 @@ Recording publishes whatever is on screen. Before you hit record:
 
 **0:15 – 0:45 · The send**
 Sender page. Click through deliberately: pick `demo-master.mp4`, pick the
-captions sidecar, open the profile dropdown → **Netflix strict**, tick
-**AI QC**. Hover the services list for a beat ("every service is the sender's
+captions sidecar, open the profile dropdown → **Netflix strict**, keep
+**AI Interpretive Analysis** checked, and add any approved wording under
+**Creative and delivery context (optional)**. Hover the services list for a beat ("every service is the sender's
 choice — all off, and this is a plain verified transfer tool").
 Click **Send**.
 > "Parallel multipart straight to B2, hashed with BLAKE3 as it uploads,
@@ -138,7 +141,8 @@ Click **Send**.
 **0:45 – 1:10 · The reactive moment**
 Stay on the progress line. When the upload finishes: "the gateway does
 nothing more — Backblaze itself fires an ObjectCreated event at our webhook"
-. Steps stream in live via SSE: qc → qc_ai → qc_synthetic → manifest.
+. Steps stream in live via SSE: qc → AI review planning → evidence selection →
+parallel visual/audio analysis → synthesis → thumbnail reuse → manifest.
 > "No polling, no compute idling. The pipeline exists only while there's
 > work."
 

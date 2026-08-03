@@ -78,7 +78,7 @@ npm run build:wasm                             # needs cargo + wasm-pack
 ( cd pipeline && python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt )  # needs ffmpeg
 
 # every time
-bash scripts/dev-up.sh                          # MinIO + gateway + pipeline + Vite client
+bash scripts/dev-up.sh                          # MinIO + gateway + host and Docker workers + Vite
 #   GMI_API_KEY=... bash scripts/dev-up.sh      # enable configured GMI services
 ```
 
@@ -142,6 +142,12 @@ per checkbox state — manifests record `local` and `cloud-docker`
 respectively, each crunched by a genuinely different process (host python
 vs the shipped container).
 
+Local development registers both workers by default. Cloud compute is visible
+and checked by default, so `bash scripts/dev-up.sh` routes a normal send to the
+tool-complete Docker worker on `:8001`; unchecking it routes to the host worker
+on `:8000`. Set `WAYSTATION_LOCAL_CLOUD_WORKER=false` only for an intentional
+host-only session, where a cloud request is disclosed as fallback.
+
 Multipart is assembled server-side from `ListParts`, so the browser never reads
 part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
 
@@ -195,8 +201,11 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   candidate for the recipient poster. It never generates or edits an image.
   Candidate timecodes/hashes, prompt/model/usage, finish reason, and the chosen
   frame are retained in `thumbnail_selection.json` and the Genblaze manifest.
-  Missing or malformed AI is disclosed as a deterministic fallback, never an
-  implied AI success. Proven without cloud spend by
+  When explicit interpretation already retained a clean model-cited frame,
+  thumbnailing reuses that evidence and adds no extraction or model call.
+  Otherwise the bounded standalone selector remains available. Missing or
+  malformed AI is disclosed as a deterministic fallback, never an implied AI
+  success. Proven without cloud spend by
   `scripts/ai-thumbnail-proof.sh`.
 - ✅ **Explicit AI Interpretive Analysis** (opt-in, spend-off by default) —
   Genblaze records intake, deterministic grounding, an AI-created bounded
@@ -215,13 +224,18 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   records response mode/schema hashes plus bounded transport/output repair,
   every paid attempt, truncation, and expected/observed risk counts,
   prevents an interior audio-sample edge from being mislabeled as a source
-  edit, prevents isolated stills from claiming timeline continuity, and
-  publishes only bounded metadata for an optional sender review brief. Use
+  edit, prevents isolated stills from claiming timeline continuity, adds
+  bounded temporal frame sequences, caption context, and deterministic audio
+  signal metrics, and publishes only bounded metadata for optional creative
+  and delivery context. It consolidates independent sweep, adaptive evidence,
+  critic/jury, and synthesis so the current sender never launches legacy AI QC
+  beside it. Use
   `scripts/judge-calibration-up.sh` for the retained local judge configuration.
 - ✅ **Sender front end with per-service toggles.** The upload page
   (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`
   captions picker, and a services panel — AV QC, Caption QC, AI-selected
-  preview thumbnail, AI summary — plus a **Transfer only** switch that turns
+  consolidated AI Interpretive Analysis, preview thumbnail, AI summary, and
+  Cloud compute — plus a **Transfer only** switch that turns
   everything off and makes Waystation a plain verified file-transfer tool.
   Selections ride the `complete` call, are stored per transfer, and gate
   the pipeline at BOTH triggers (dev-complete and the signed B2 event
@@ -230,7 +244,8 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   `scripts/toggle-proof.sh` (transfer-only produces zero derivatives;
   caption-QC-only report contains no AV checks; no-options default runs
   everything; non-caption sidecar names rejected).
-- ✅ **Agentic AI QC reporter** (`qc_ai` toggle, on by default) via
+- ✅ **Legacy agentic AI QC compatibility lane** (`qc_ai`, no longer exposed by
+  the current sender) via
   Genblaze's `genblaze_gmicloud.chat` SDK wrapper and GMI's multimodal gemini
   (`GMI_MULTIMODAL_MODEL`, default
   `google/gemini-3.5-flash` — accepts both `image_url` AND `input_audio`

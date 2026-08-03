@@ -20,7 +20,8 @@ WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="/Users/Shared/Orbit/Code/OrbitWebsite/orbitolive/public/waystation"
 API_BASE="https://api.orbitolive.com/api"
 PUBLIC_BASE="/waystation/"
-# All-cloud hosted deployment: pin compute and hide the selector.
+# All-cloud hosted deployment: pin compute while leaving the disabled,
+# checked route visible in the client.
 FORCE_COMPUTE="cloud"
 while [ $# -gt 0 ]; do
   case "$1" in

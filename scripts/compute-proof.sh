@@ -14,14 +14,35 @@ DATA=$(mktemp -d); WORK=$(mktemp -d)
 SECRET=evsecret; SHARED=ps; BUCKET=waystation-test
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 
-command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP — docker not available"; exit 0; }
-docker image inspect waystation-worker >/dev/null 2>&1 || { echo "SKIP — build first: docker build -t waystation-worker pipeline/"; exit 0; }
+grep -Eq 'id="opt_cloud" checked' "$WEB/client/index.html" \
+  || { echo "FAIL: Cloud compute is not checked by default"; exit 1; }
+! grep -Eq 'id="opt_qc_ai"' "$WEB/client/index.html" \
+  || { echo "FAIL: legacy AI QC remains visible"; exit 1; }
+grep -Fq 'Creative and delivery context' "$WEB/client/index.html" \
+  || { echo "FAIL: interpretive context label is missing"; exit 1; }
+echo "✓ sender defaults to Cloud compute and exposes only consolidated interpretive AI"
 
-cleanup(){ docker rm -f ws-cloud-worker >/dev/null 2>&1 || true; { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
+command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP — docker not available"; exit 0; }
+
+PIPELINE_FINGERPRINT=$(
+  cd "$WEB"
+  git ls-files -z pipeline \
+    | xargs -0 shasum -a 256 \
+    | shasum -a 256 \
+    | cut -c1-12
+)
+CLOUD_IMAGE="waystation-worker:compute-proof-$PIPELINE_FINGERPRINT"
+if ! docker image inspect "$CLOUD_IMAGE" >/dev/null 2>&1; then
+  echo "▶ building current Docker worker for compute proof…"
+  docker build -t "$CLOUD_IMAGE" "$WEB/pipeline" \
+    || { echo "FAIL: current worker image did not build"; exit 1; }
+fi
+
+cleanup(){ docker rm -f ws-cloud-worker >/dev/null 2>&1 || true; { lsof -ti:8787; lsof -ti:8000; lsof -ti:8001; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
 trap cleanup EXIT
 # clear leftovers WITHOUT nuking the fresh work dirs
 docker rm -f ws-cloud-worker >/dev/null 2>&1 || true
-{ lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true
+{ lsof -ti:8787; lsof -ti:8000; lsof -ti:8001; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true
 
 MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 --console-address :9011 >/tmp/minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://localhost:9000/minio/health/live; do sleep 0.3; done
@@ -37,7 +58,7 @@ docker run -d --name ws-cloud-worker -p 8001:8000 \
   -e B2_S3_ENDPOINT=http://host.docker.internal:9000 -e B2_REGION=us-east-1 \
   -e B2_KEY_ID=minioadmin -e B2_APP_KEY=minioadmin -e B2_BUCKET=$BUCKET \
   -e B2_FORCE_PATH_STYLE=true -e GATEWAY_URL=http://host.docker.internal:8787 \
-  --add-host=host.docker.internal:host-gateway waystation-worker >/dev/null
+  --add-host=host.docker.internal:host-gateway "$CLOUD_IMAGE" >/dev/null
 until curl -sf -o /dev/null --max-time 1 http://localhost:8001/healthz; do sleep 0.5; done
 
 # gateway with BOTH workers registered

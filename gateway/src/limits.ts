@@ -179,6 +179,11 @@ export function applyServicePolicy(options?: Record<string, boolean | string>, s
   if (!ALLOW_AI_QC) forced.qc_ai = false;
   if (!ALLOW_SYNTHETIC_QC) forced.qc_synthetic = false;
   if (!ALLOW_AI_INTERPRETIVE) forced.ai_interpretive = false;
+  // The explicit interpretive workflow now contains the independent sweep,
+  // adaptive evidence, critic, caption/speech and hybrid grounding formerly
+  // reached through legacy AI QC. Never bill both lanes for the same transfer.
+  if (ALLOW_AI_INTERPRETIVE && options?.ai_interpretive === true && options?.qc_ai === true)
+    forced.qc_ai = false;
   if (FORCE_COMPUTE) forced.compute = FORCE_COMPUTE;
   if (sizeBytes !== undefined && sizeBytes > MAX_QC_BYTES) {
     for (const k of PIPELINE_SERVICE_KEYS) forced[k] = false;

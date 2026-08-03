@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-03 (credentialed planted/clean AI gate passed; production unchanged)
+Updated: 2026-08-03 (sender AI consolidation and local cloud routing; production unchanged)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -29,6 +29,31 @@ switches and chat history gaps.
 - The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
+
+## Sender AI consolidation and local cloud routing — 2026-08-03
+
+- Cloud compute remains visible and is checked by default. `scripts/dev-up.sh`
+  starts both the host worker on `:8000` and the current tool-complete Docker
+  worker on `:8001` by default, and registers both with the gateway. Checked
+  routes to Docker; unchecked routes to host. The compute proof builds current
+  source and verifies distinct process/provenance labels.
+- The sender no longer exposes legacy **AI QC**. **AI Interpretive Analysis**
+  owns independent review, adaptive evidence planning, critic/jury, synthesis,
+  bounded caption context, deterministic audio signal grounding, and
+  chronological frame-sequence evidence. Old API clients remain compatible;
+  the gateway suppresses legacy AI QC when both services are requested.
+- The prompt-context label is now **Creative and delivery context (optional)**.
+  The API field remains `review_brief` for compatibility and stays bounded,
+  hash-disclosed, and untrusted.
+- Preview thumbnail prefers a clean, model-cited frame already retained by the
+  interpretive run. That path records `interpretive_reuse`, performs no
+  duplicate extraction, and adds zero model calls. Standalone bounded selection
+  remains the honest fallback when no reusable frame exists.
+- Source schemas are interpretive run `1.7`, packet `1.1`, prompt `1.6`, planner
+  `1.2`, and authority policy `1.2.0`. Focused mock orchestration and full local
+  gateway-worker-MinIO proofs cover the consolidated behavior.
+- Production was not accessed, rebuilt, restarted, or changed. Source defaults
+  for paid explicit runs remain off and authority remains `shadow`.
 
 ## Judge-facing AI reliability pass — 2026-08-03
 

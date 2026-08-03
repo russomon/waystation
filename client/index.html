@@ -9,10 +9,9 @@
          one line without rebuilding. Large media never goes here — it moves
          browser <-> Backblaze B2 directly. -->
     <meta name="waystation-api" content="" />
-    <!-- Pins the compute target and hides the Local/Cloud selector. The hosted
-         MVP is all-cloud (gateway + worker share one host), so the selector
-         would imply a choice that does not exist. Empty = dev, selector shown.
-         The gateway enforces the same pin independently. -->
+    <!-- Pins the compute target while leaving its checked route visible and
+         disabled. Empty = dev, where the sender may select Docker cloud or
+         host-local compute. The gateway enforces the same pin independently. -->
     <meta name="waystation-compute" content="" />
     <title>Waystation</title>
     <style>
@@ -157,14 +156,12 @@
             AV QC <span class="muted">decode &middot; black &middot; freeze &middot; silence &middot; loudness</span></label>
           <label class="svc"><input type="checkbox" id="opt_qc_captions" checked />
             Caption QC <span class="muted">timing &middot; readability &middot; coverage</span></label>
-          <label class="svc"><input type="checkbox" id="opt_qc_ai" checked />
-            AI QC <span class="muted">independent sweep &middot; adaptive evidence &middot; critic</span></label>
           <label class="svc"><input type="checkbox" id="opt_qc_synthetic" checked />
             Synthetic QC <span class="muted">asset blueprint &middot; continuity ledger &middot; typography</span></label>
-          <label class="svc interpretive"><input type="checkbox" id="opt_ai_interpretive" />
-            AI Interpretive Analysis <span class="muted">Genblaze orchestration &middot; GMI review &middot; B2 evidence</span></label>
-          <label class="svc brief-row" id="reviewBriefRow" hidden>
-            <span>AI review brief <span class="muted">optional</span></span>
+          <label class="svc interpretive"><input type="checkbox" id="opt_ai_interpretive" checked />
+            AI Interpretive Analysis <span class="muted">independent review &middot; adaptive evidence &middot; critic &middot; synthesis</span></label>
+          <label class="svc brief-row" id="reviewBriefRow">
+            <strong>Creative and delivery context <span class="muted">(optional)</span></strong>
             <textarea id="review_brief" maxlength="2000"
               placeholder="Expected text, approved editorial intent, or reference notes"></textarea>
           </label>
@@ -172,7 +169,7 @@
             Preview thumbnail <span class="muted">AI-selected poster frame</span></label>
           <label class="svc"><input type="checkbox" id="opt_summarize" checked />
             AI summary <span class="muted">GMI Cloud</span></label>
-          <label class="svc"><input type="checkbox" id="opt_cloud" />
+          <label class="svc"><input type="checkbox" id="opt_cloud" checked />
             Cloud compute <span class="muted">process at the Docker worker &middot; off = this machine</span></label>
         </div>
 

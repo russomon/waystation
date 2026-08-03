@@ -7,6 +7,14 @@ history.
 
 ## Now
 
+- **Run the representative judge asset through the consolidated sender.** Start
+  `bash scripts/judge-calibration-up.sh`; leave Cloud compute and AI Interpretive
+  Analysis checked, attach captions, add truthful creative/delivery context,
+  and retain the manifest plus `thumbnail_selection.json`. Confirm progress and
+  provenance name `cloud-docker-local`, interpretive caption/sequence/audio
+  evidence is present, and thumbnail selection reports `interpretive_reuse`
+  with zero added calls. Production remains a separate release decision.
+
 - ~~**Run the post-fix planted/clean-twin AI calibration pair in shadow.**~~
   **DONE 2026-08-03.** Planted transfer `e69de091…` produced a corroborated
   typography finding and proposed REJECT; clean twin `164e64c6…` produced no

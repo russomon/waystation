@@ -1,7 +1,7 @@
 {
   "schema_version": "waystation-ai-authority-policy/1.0",
   "policy_id": "waystation_ai_interpretive_authority",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Versioned policy for AI authority over perceptual QC. Enforceable findings require independent provider/model sources plus separate synthesis adjudication; deterministic measurements retain their own authority and cannot be cleared by AI.",
   "modes": ["shadow", "hold", "enforce"],
   "defaults": {
@@ -50,6 +50,18 @@
       "label": "Caption and spoken-content mismatch",
       "authority": "hold",
       "minimum_confidence": 0.8,
+      "minimum_independent_sources": 1
+    },
+    "spoken_language_mismatch": {
+      "label": "Spoken language and declared-language mismatch",
+      "authority": "hold",
+      "minimum_confidence": 0.85,
+      "minimum_independent_sources": 1
+    },
+    "caption_text_quality": {
+      "label": "Caption spelling, grammar, or content-quality concern",
+      "authority": "hold",
+      "minimum_confidence": 0.85,
       "minimum_independent_sources": 1
     },
     "editorial_intent": {
