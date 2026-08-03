@@ -13,7 +13,15 @@ export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 \
        B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 
 kill_ports(){ { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; lsof -ti:5173; } 2>/dev/null | xargs kill -9 2>/dev/null || true; }
-trap 'echo; echo "shutting down…"; kill_ports' EXIT INT TERM
+cleanup(){
+  trap - EXIT INT TERM
+  echo
+  echo "shutting down…"
+  kill_ports
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 kill_ports
 
 # preflight

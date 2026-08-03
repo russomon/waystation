@@ -68,6 +68,8 @@ switches and chat history gaps.
   incompatible parameter expansions and printed the configured GMI credential
   after its status label. The banner now reports only `set`/`unset`. Any key
   exposed by the old banner must be revoked and replaced before paid testing.
+  Its signal trap also now exits after one `Ctrl-C` instead of leaving an
+  orphaned infinite wait loop; a real start/stop proved all four ports close.
 
 ## Hackathon AI Interpretive run — 2026-08-02
 
