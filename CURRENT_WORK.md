@@ -32,6 +32,29 @@ switches and chat history gaps.
 
 ## Dual-key AI delivery authority first pass — 2026-08-02
 
+### Provider structured-output completion hardening
+
+- Credentialed local transfer `70148a7a-1340-4420-9b8a-28a183ebc410`
+  ran on local compute in shadow and produced an SDK-verified Genblaze v1.5
+  manifest. Evidence selection was correct: frames at 1.5s, 3.0s, and 4.5s
+  showed `TICKETS`, `TICKET5`, and `TICKET5`. The planner completed with
+  `finish_reason=stop`, but visual analysis consumed 4,092 of 4,096 output
+  tokens and ended `length` without a complete JSON object. Synthesis therefore
+  did not run and the AI gate correctly remained `not_checked`/HOLD. The run
+  had no review brief, audio, captions, or configured jury.
+- The installed `genblaze-gmicloud` 0.3.4 adapter supports Pydantic
+  `response_format`, but Waystation had only requested JSON in prompt prose.
+  Run schema v1.4 now sends strict, bounded JSON schemas for planner and all
+  observation stages. The existing allowlist/sanitizer remains a second,
+  independent boundary; malformed/truncated responses still fail closed.
+- Each stage and the public prompt packet record the response-schema version
+  and SHA-256. Focused SDK-boundary, truncation, authority, full local
+  gateway-worker-MinIO, and rebuilt Docker proofs pass with zero cloud spend.
+  The live GMI catalog confirmed `google/gemini-3.5-flash`,
+  `openai/gpt-4o-mini`, and `openai/gpt-4o` are currently available.
+- **Production was not accessed or changed.** The post-fix planted/clean-twin
+  credentialed calibration pair remains the immediate release gate.
+
 ### Evidence and authority calibration hardening
 
 - Credentialed local transfer `92a6ca73-28b7-4f17-b795-b0404ea511ed`
@@ -41,7 +64,7 @@ switches and chat history gaps.
   The model instead described a possible freeze, marked typography
   `no_concern`, and synthesis repeated that specialist claim. This is useful
   live-provider evidence of a false diagnosis, not a successful defect catch.
-- Interpretive run schema v1.3 and prompt v1.4 now order frame evidence by
+- Interpretive run schema v1.4 and prompt v1.4 now order frame evidence by
   source time, require per-frame exact text transcription/comparison, separate
   text mutation from freeze, and force ambiguous intent or contradictory
   transcription results to HOLD/not_checked. A sender may provide a bounded

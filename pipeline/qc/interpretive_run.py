@@ -9,18 +9,21 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from genblaze_core import RunBuilder, StepBuilder
 from genblaze_core.models import Asset
 from genblaze_core.models.enums import Modality, RunStatus, StepStatus, StepType
+from pydantic import BaseModel, ConfigDict, Field
 
 
-SCHEMA_VERSION = "waystation-ai-interpretive-run/1.3"
+SCHEMA_VERSION = "waystation-ai-interpretive-run/1.4"
 PACKET_SCHEMA_VERSION = "waystation-ai-interpretive-packet/1.0"
 PROMPT_VERSION = "waystation-ai-interpretive-prompt/1.4"
 PLANNER_SCHEMA_VERSION = "waystation-ai-review-plan/1.0"
 PLANNER_PROMPT_VERSION = "waystation-ai-review-planner-prompt/1.1"
+PLANNER_RESPONSE_SCHEMA_VERSION = "waystation-ai-review-plan-response/1.0"
+OBSERVATION_RESPONSE_SCHEMA_VERSION = "waystation-ai-observations-response/1.0"
 STAGE_ORDER = (
     "intake",
     "deterministic_grounding",
@@ -48,9 +51,77 @@ AUDIO_RISK_IDS = {
 MAX_REVIEW_BRIEF_CHARS = 2000
 
 
+class ReviewRiskTargetPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    risk_id: str = Field(max_length=120)
+    review_question: str = Field(max_length=120)
+
+
+class ReviewEvidenceRequestPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["frame", "audio"]
+    time_seconds: float | None
+    start_seconds: float | None
+    duration_seconds: float | None
+    risk_ids: list[str] = Field(max_length=6)
+    reason: str = Field(max_length=120)
+    review_question: str = Field(max_length=120)
+
+
+class ReviewPlanPayload(BaseModel):
+    """Strict provider contract; sanitizer remains the policy boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_objective: str = Field(max_length=120)
+    risk_targets: list[ReviewRiskTargetPayload] = Field(max_length=3)
+    evidence_requests: list[ReviewEvidenceRequestPayload] = Field(max_length=6)
+    coverage_limits: list[str] = Field(max_length=2)
+
+
+class EvidenceTranscriptionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str = Field(max_length=160)
+    text: str = Field(max_length=240)
+
+
+class InterpretiveObservationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    risk_id: str = Field(max_length=120)
+    finding_state: Literal["concern", "no_concern", "not_checked"]
+    severity: Literal["reject", "hold", "review", "info"]
+    issue_description: str = Field(max_length=120)
+    context: str = Field(max_length=80)
+    confidence: float = Field(ge=0, le=1)
+    uncertainty: str = Field(max_length=80)
+    evidence_ids: list[str] = Field(max_length=12)
+    evidence_location: Literal["start_boundary", "interior", "end_boundary", "unknown"]
+    intent_state: Literal["confirmed_defect", "ambiguous", "not_applicable", "unknown"]
+    evidence_transcriptions: list[EvidenceTranscriptionPayload] = Field(max_length=12)
+    review_question: str = Field(max_length=80)
+
+
+class InterpretiveObservationsPayload(BaseModel):
+    """Strict GMI response shape for specialist, jury, and synthesis stages."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    observations: list[InterpretiveObservationPayload] = Field(max_length=12)
+
+
 def canonical_hash(value: Any) -> str:
     body = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(body.encode()).hexdigest()
+
+
+def response_schema_identity(schema: type[BaseModel], version: str) -> dict:
+    generated = schema.model_json_schema()
+    return {"response_schema_version": version,
+            "response_schema_sha256": canonical_hash(generated)}
 
 
 def normalize_review_context(options: dict | None) -> dict:
@@ -632,6 +703,8 @@ def build_genblaze_run(run_id: str, parent_run_id: str, source: dict,
                               expected_risk_count=stage.get("expected_risk_count"),
                               observed_risk_count=stage.get("observed_risk_count"),
                               missing_required_risk_ids=stage.get("missing_required_risk_ids"),
+                              response_schema_version=stage.get("response_schema_version"),
+                              response_schema_sha256=stage.get("response_schema_sha256"),
                               review_role=stage.get("review_role"),
                               authority_source_id=stage.get("authority_source_id"),
                               truncated=stage.get("truncated"),

@@ -56,6 +56,7 @@ def audio(_src, tmp, evidence_id, start, duration):
 
 worker._frame_evidence = frame
 worker._audio_evidence = audio
+real_gmi_chat_response = worker._gmi_chat_response
 
 active = 0
 peak = 0
@@ -63,11 +64,13 @@ lock = threading.Lock()
 calls = []
 prompts = {}
 token_limits = []
+response_formats = []
 failed_visual_primary = False
 def chat(content, *, model, **kwargs):
     global active, peak, failed_visual_primary
     prompt = content[0]["text"]
     token_limits.append(kwargs.get("max_tokens"))
+    response_formats.append(kwargs.get("response_format"))
     if "AI review planner" in prompt:
         calls.append(("ai_review_planning", model))
         payload = {"review_objective": "Inspect bounded human-perception risks",
@@ -153,10 +156,18 @@ assert [stage["name"] for stage in result["timeline"]] == list(interpretive_run.
 assert result["spend_accounting"]["explicit_gmi_model_calls"] == 5
 assert result["review_plan"]["source"] == "ai_planner"
 assert peak == 3, "visual, audio, and independent jury analysis did not overlap"
+assert response_formats[0] is interpretive_run.ReviewPlanPayload
+assert all(value is interpretive_run.InterpretiveObservationsPayload
+           for value in response_formats[1:])
 assert result["review_context"]["provided"] is True
 assert result["review_context"]["characters"] == len("Approved text must remain TICKETS.")
 assert "brief" not in result["review_context"]
 visual = next(stage for stage in result["timeline"] if stage["name"] == "gmi_visual_analysis")
+planner = next(stage for stage in result["timeline"] if stage["name"] == "ai_review_planning")
+assert planner["response_schema_version"] == interpretive_run.PLANNER_RESPONSE_SCHEMA_VERSION
+assert visual["response_schema_version"] == interpretive_run.OBSERVATION_RESPONSE_SCHEMA_VERSION
+assert len(planner["response_schema_sha256"]) == 64
+assert len(visual["response_schema_sha256"]) == 64
 assert len(visual["attempts"]) == 2 and visual["attempts"][1]["fallback"] is True
 assert visual["fallback"]["used"] is True
 assert visual["finish_reason"] == "stop"
@@ -190,9 +201,27 @@ assert run.metadata["raw_model_output_direct_authority"] is False
 visual_step = next(step for step in run.steps if step.step_id == "gmi_visual_analysis")
 assert visual_step.metadata["finish_reason"] == "stop"
 assert visual_step.metadata["output_token_limit"] == worker.AI_INTERPRETIVE_MAX_OUTPUT_TOKENS
+assert visual_step.metadata["response_schema_version"] == interpretive_run.OBSERVATION_RESPONSE_SCHEMA_VERSION
+assert result["prompt_packet"]["planner_response_schema"]["response_schema_version"] == \
+       interpretive_run.PLANNER_RESPONSE_SCHEMA_VERSION
 assert any(event["type"] == "ai_interpretive_started" for event in events)
 assert any(event["type"] == "ai_interpretive_complete" for event in events)
 assert sum(1 for event in events if event.get("billable") == {"unit": "run", "units": 1}) == 5
+
+# The installed Genblaze adapter receives the real JSON-schema class rather
+# than relying only on prose that asks a model to return JSON.
+schema = interpretive_run.InterpretiveObservationsPayload.model_json_schema()
+assert schema["additionalProperties"] is False
+assert schema["properties"]["observations"]["maxItems"] == 12
+wire = {}
+worker.gb_gmi_chat = lambda *args, **kwargs: (
+    wire.update(kwargs) or SimpleNamespace(text='{"observations":[]}', model="proof/wire",
+                                           finish_reason="stop", tokens_in=1, tokens_out=1,
+                                           tokens_cached=0, cost_usd=None))
+worker.AI_QC_MIN_INTERVAL = 0
+real_gmi_chat_response([{"type": "text", "text": "structured"}], max_attempts=1,
+                       response_format=interpretive_run.InterpretiveObservationsPayload)
+assert wire["response_format"] is interpretive_run.InterpretiveObservationsPayload
 
 # Planner output is allowlisted, deduplicated, bounded to the media, and cannot
 # omit policy-required risks or erase the mandatory sampled-coverage caveat.

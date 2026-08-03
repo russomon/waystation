@@ -422,7 +422,8 @@ _gmi_pacing_lock = threading.Lock()
 
 
 def _gmi_chat_response(content: list, max_tokens: int = 2000, model: str | None = None,
-                       timeout: float = 120, max_attempts: int = 4):
+                       timeout: float = 120, max_attempts: int = 4,
+                       response_format: dict | type[BaseModel] | None = None):
     """model=None → the primary multimodal model. The jury lane passes an
     explicit second-family model id; nothing else should."""
     global _gmi_last_call
@@ -440,6 +441,7 @@ def _gmi_chat_response(content: list, max_tokens: int = 2000, model: str | None 
                 model or GMI_MULTIMODAL_MODEL,
                 messages=[{"role": "user", "content": content}],
                 temperature=0, max_tokens=max_tokens,
+                response_format=response_format,
                 api_key=GMI_API_KEY,
                 base_url=f"{GMI_BASE_URL.rstrip('/')}/v1",
                 timeout=timeout,
@@ -862,6 +864,9 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                                   review_role: str = "specialist") -> tuple[dict, list[dict]]:
     """Run one configured GMI stage with explicit, recorded fallback semantics."""
     started = _iso_now()
+    response_schema = qinterpretive_run.response_schema_identity(
+        qinterpretive_run.InterpretiveObservationsPayload,
+        qinterpretive_run.OBSERVATION_RESPONSE_SCHEMA_VERSION)
     progress(job, {"type": "ai_interpretive_stage", "stage": name, "state": "started"})
     attempts: list[dict] = []
     if AI_INTERPRETIVE_PROVIDER != "gmicloud":
@@ -871,7 +876,8 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
             error=f"unsupported configured provider: {AI_INTERPRETIVE_PROVIDER}",
             attempts=[], fallback={"state": "not_configured"},
             prompt_version=qinterpretive_run.PROMPT_VERSION, prompt_sha256=prompt_sha,
-            input_sha256=grounding_hash, usage={"billable_events": 0})
+            input_sha256=grounding_hash, **response_schema,
+            usage={"billable_events": 0})
         progress(job, {"type": "ai_interpretive_stage", "stage": name,
                        "state": "not_checked", "reason": stage["error"]})
         return stage, []
@@ -881,7 +887,8 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
             started_at=started, error="no GMI_API_KEY",
             attempts=[], fallback={"state": "not_configured"},
             prompt_version=qinterpretive_run.PROMPT_VERSION, prompt_sha256=prompt_sha,
-            input_sha256=grounding_hash, usage={"billable_events": 0})
+            input_sha256=grounding_hash, **response_schema,
+            usage={"billable_events": 0})
         progress(job, {"type": "ai_interpretive_stage", "stage": name,
                        "state": "not_checked", "reason": "no GMI_API_KEY"})
         return stage, []
@@ -908,7 +915,8 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                 [{"type": "text", "text": prompt}] + parts,
                 max_tokens=output_limit, model=candidate,
                 timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS,
-                max_attempts=1)
+                max_attempts=1,
+                response_format=qinterpretive_run.InterpretiveObservationsPayload)
             attempt.update({"outcome": "complete", "completed_at": _iso_now(),
                             "duration_ms": round((time.monotonic() - attempt_started) * 1000),
                             "finish_reason": getattr(response, "finish_reason", None)})
@@ -929,7 +937,8 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
             fallback={"configured": len(candidates) > 1,
                       "state": attempts[-1].get("outcome") if attempts else "not_configured"},
             prompt_version=qinterpretive_run.PROMPT_VERSION, prompt_sha256=prompt_sha,
-            input_sha256=grounding_hash, usage={"billable_events": 0})
+            input_sha256=grounding_hash, **response_schema,
+            usage={"billable_events": 0})
         progress(job, {"type": "ai_interpretive_stage", "stage": name,
                        "state": "not_checked", "reason": error})
         return stage, []
@@ -972,6 +981,7 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
         structured_observation_count=len(observations),
         expected_risk_count=len(expected_risk_ids or set()),
         observed_risk_count=len(observed_risks), truncated=truncated,
+        **response_schema,
         review_role=review_role, authority_source_id=authority_source_id,
         usage=usage, cost_usd=response.cost_usd)
     progress(job, {"type": "ai_interpretive_stage", "stage": name,
@@ -1000,7 +1010,8 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
                 [{"type": "text", "text": prompt}],
                 max_tokens=AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
                 model=AI_INTERPRETIVE_PLANNER_MODEL,
-                timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS, max_attempts=1)
+                timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS, max_attempts=1,
+                response_format=qinterpretive_run.ReviewPlanPayload)
             attempts.append({"attempt": 1, "provider": "gmicloud",
                              "model": response.model or AI_INTERPRETIVE_PLANNER_MODEL,
                              "outcome": "complete", "started_at": started,
@@ -1042,6 +1053,9 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
         finish_reason=getattr(response, "finish_reason", None),
         review_plan_sha256=qinterpretive_run.canonical_hash(plan),
         output_token_limit=AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
+        **qinterpretive_run.response_schema_identity(
+            qinterpretive_run.ReviewPlanPayload,
+            qinterpretive_run.PLANNER_RESPONSE_SCHEMA_VERSION),
         prompt_characters=len(prompt),
         raw_output_characters=len(response.text) if response is not None else 0,
         truncated=getattr(response, "finish_reason", None) == "length",
@@ -1296,7 +1310,13 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
                               {"schema_version": qinterpretive_run.PACKET_SCHEMA_VERSION}),
                           "prompt_version": qinterpretive_run.PROMPT_VERSION,
                           "planner_schema_version": qinterpretive_run.PLANNER_SCHEMA_VERSION,
-                          "planner_prompt_version": qinterpretive_run.PLANNER_PROMPT_VERSION},
+                          "planner_prompt_version": qinterpretive_run.PLANNER_PROMPT_VERSION,
+                          "planner_response_schema": qinterpretive_run.response_schema_identity(
+                              qinterpretive_run.ReviewPlanPayload,
+                              qinterpretive_run.PLANNER_RESPONSE_SCHEMA_VERSION),
+                          "observation_response_schema": qinterpretive_run.response_schema_identity(
+                              qinterpretive_run.InterpretiveObservationsPayload,
+                              qinterpretive_run.OBSERVATION_RESPONSE_SCHEMA_VERSION)},
         "review_plan": review_plan,
         "evidence": evidence,
         "interpretive_observations": observations,

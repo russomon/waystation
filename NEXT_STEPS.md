@@ -9,14 +9,19 @@ history.
 
 - **Run the post-fix planted/clean-twin AI calibration pair in shadow.** Source
   is not deployed; both paid-run gates remain false and authority defaults to
-  `shadow`. Use the retained `TICKETS` to `TICKET5` mutation and a matching
-  clean twin. Supply the expected text in the sender's optional review brief,
-  keep every other AI lane off, and configure a genuinely different jury model
-  only if one is available. Require chronological evidence, exact per-frame
+  `shadow`. The latest planted run proved evidence selection but visual output
+  reached the former free-form JSON token ceiling. Run schema v1.4 now uses the
+  Genblaze adapter's strict JSON-schema transport and records the schema hashes.
+  Use the retained `TICKETS` to `TICKET5` mutation and a matching clean twin.
+  Supply `Expected title begins as TICKETS; detect and report any exact
+  character mutation.` in the sender review brief, keep every other AI lane
+  and Preview thumbnail off, use `google/gemini-3.5-flash` for visual,
+  `openai/gpt-4o` for the jury, and `openai/gpt-4o-mini` for planning/synthesis.
+  Require chronological evidence, exact per-frame
   transcriptions, no false freeze diagnosis, planner/synthesis
   `finish_reason=stop`, complete risk coverage, verified manifests, and
-  disclosed billable events. The jury adds at most one call; leaving it unset
-  is valid and must produce `not_configured`, never simulated consensus.
+  disclosed billable events and recorded response-schema hashes. This silent
+  fixture should make four calls: planner, visual, jury, synthesis.
   Promote to `hold` only after the retained pair is reviewed. Do not use
   `enforce` until a larger labeled corpus establishes acceptable false-positive
   behavior for each enforceable category; distinct model names alone do not

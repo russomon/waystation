@@ -210,10 +210,11 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   Synthesis does not count as an independent source. Defaults are
   deployment-off and authority `shadow`. See
   `docs/AI_INTERPRETIVE_RUN.md` and its two zero-cloud proof scripts.
-  Run schema v1.3 requires chronological evidence and exact text comparison,
-  records truncation and expected/observed risk counts, prevents an interior
-  audio-sample edge from being mislabeled as a source edit, and publishes only
-  bounded metadata for an optional sender review brief.
+  Run schema v1.4 requires chronological evidence and exact text comparison,
+  sends strict bounded JSON schemas through the Genblaze GMI adapter, records
+  response-schema hashes plus truncation and expected/observed risk counts,
+  prevents an interior audio-sample edge from being mislabeled as a source
+  edit, and publishes only bounded metadata for an optional sender review brief.
 - ✅ **Sender front end with per-service toggles.** The upload page
   (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`
   captions picker, and a services panel — AV QC, Caption QC, AI-selected

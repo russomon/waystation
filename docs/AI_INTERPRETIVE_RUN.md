@@ -36,7 +36,11 @@ also allow it and the worker must enable it. The run records these stages:
 
 GMI output is parsed as untrusted data. Waystation creates fresh observations,
 clamps confidence, drops unsupported fields, and accepts only evidence IDs
-from the run allowlist. Raw model output cannot create a delivery check, status,
+from the run allowlist. Planner and observation calls also send strict bounded
+Pydantic schemas through Genblaze GMI `response_format`; stage provenance and
+the public prompt packet retain each schema version and SHA-256. Provider
+schema enforcement reduces malformed output but never replaces the sanitizer.
+Raw model output cannot create a delivery check, status,
 tier, score, repair, or pipeline instruction. A separate versioned authority
 reducer may issue an AI HOLD or REJECT only for policy-listed risks after
 evidence, confidence, intent, and corroboration requirements pass. Synthesis
@@ -195,6 +199,14 @@ text comparison, intent-aware fail-closed output, and distinct provider/model
 sources plus separate synthesis adjudication. These revisions are mock- and
 container-proven but still require a credentialed planted/clean-twin shadow
 rerun before any authority-mode change.
+
+Credentialed transfer `70148a7a-1340-4420-9b8a-28a183ebc410` then proved that
+the corrected evidence plan captured `TICKETS` at 1.5s and `TICKET5` at 3.0s
+and 4.5s. Planning stopped normally, but the free-form visual response reached
+4,092 of 4,096 output tokens and contained no complete JSON object. Run schema
+v1.4 now uses the installed Genblaze adapter's native strict response-schema
+transport and records its identity. This source fix is mock- and
+container-proven; the paid planted/clean-twin shadow rerun is still pending.
 
 ## Reversible production release checklist
 

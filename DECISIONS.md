@@ -5,6 +5,22 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - GMI JSON is a transport contract, not a prose request
+
+- Every explicit AI planner, specialist, jury, and synthesis call supplies a
+  strict bounded Pydantic schema through Genblaze GMI `response_format`.
+  Asking for JSON only in prompt text is insufficient: a credentialed visual
+  stage exhausted 4,096 tokens and returned no complete object despite the
+  compact prose contract.
+- Provider schema enforcement does not replace Waystation's sanitizer,
+  evidence allowlist, authority reducer, or fail-closed state. It reduces
+  malformed output; it does not make model content trusted.
+- Run schema v1.4 records response-schema versions and hashes in stage
+  provenance and the prompt packet. Schema rejection, truncation, malformed
+  output, or unsupported provider behavior remains `not_checked`, never pass.
+- Production and paid defaults remain unchanged. A planted/clean-twin live
+  shadow pair is required before release or authority-mode promotion.
+
 ### 2026-08-02 - AI authority requires distinct sources and confirmed intent
 
 - Synthesis is adjudication, not independent evidence. Repeating a specialist
@@ -25,7 +41,7 @@ chat threads.
   as untrusted context. Public provenance directly exposes only presence,
   length, and SHA-256; generated observations may still restate context that is
   relevant to their finding.
-- Policy v1.1.0 and run schema v1.3 implement this boundary. The optional jury
+- Policy v1.1.0 and run schema v1.4 implement this boundary. The optional jury
   model is configuration-only and adds one metered call when set; absent jury
   configuration is explicit and cannot qualify an AI rejection. Production
   and paid modes were not changed.
