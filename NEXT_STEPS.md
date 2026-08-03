@@ -16,12 +16,18 @@ history.
   model events plus one separately recorded AI-thumbnail call when Preview
   thumbnail is selected, and review risk
   coverage, then review retained known-good/known-bad assets per enforceable
-  category. The first credentialed local attempt reached GMI and stored four
-  evidence objects, but planner overload, ceiling-length malformed specialist
-  JSON, and local Object Lock mismatch prevented a valid result. Those integration faults are
-  corrected in source; rerun one short asset with planner/visual/audio/synthesis
-  set to an available model and confirm structured observations plus a verified
-  manifest. Promote to `hold` before considering `enforce`. Do not call bounded
+  category. Two credentialed local attempts fixed credential/Object-Lock and
+  specialist-output failures, then proved AI thumbnailing, nine specialist
+  observations, B2 evidence, and a verified manifest. Planner and synthesis
+  still reached their former length limits, so that run honestly remained
+  `not_checked`. Source now uses compact versioned contracts, complete nine-risk
+  synthesis validation, larger stage-specific bounded ceilings, and audio-edge
+  suppression. Rerun one known-good and one planted-bad short asset in `shadow`;
+  require planner/synthesis `finish_reason=stop`, synthesis 9/9, no interior
+  sample-edge false positive, four explicit calls plus optional thumbnail, and
+  verified manifests. Promote to `hold` only after reviewing both retained
+  results; do not consider `enforce` until a real labeled corpus supports each
+  enforceable category. Do not call bounded
   still/audio sampling a complete human replacement or mock proof live-provider
   validation. The exposed credential has been revoked; keep its replacement
   only in the gitignored `.env`.

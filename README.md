@@ -208,6 +208,9 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   confidence, category, coverage, and corroboration rules pass. Defaults are
   deployment-off and authority `shadow`. See
   `docs/AI_INTERPRETIVE_RUN.md` and its two zero-cloud proof scripts.
+  Run schema v1.2 requires complete unique synthesis coverage for every policy
+  risk, records truncation and expected/observed risk counts, and prevents an
+  interior audio-sample edge from being mislabeled as a source edit.
 - ✅ **Sender front end with per-service toggles.** The upload page
   (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`
   captions picker, and a services panel — AV QC, Caption QC, AI-selected

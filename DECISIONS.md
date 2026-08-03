@@ -5,6 +5,25 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - AI completion is structural and sample edges are not source defects
+
+- An explicit AI run is `complete` only when synthesis returns one unique,
+  sanitized observation for every versioned policy risk. Specialist success or
+  a partial synthesis cannot substitute for complete coverage and remains
+  `not_checked`/HOLD.
+- Planner output selects bounded evidence locations; code deterministically
+  restores the complete policy risk registry. Synthesis receives only compact,
+  detached grounding, the validated risk list, evidence catalog, and sanitized
+  specialist observations. This preserves AI judgment while eliminating
+  repeated narrative that caused provider truncation.
+- An extracted audio window's first/last sample is not a source edit. Every
+  window records whether its edges equal actual source boundaries. An audible-
+  defect claim located only at an interior extraction edge is forced to
+  `not_checked`; interior defects remain eligible for review.
+- Interpretive run schema v1.2 records prompt/output sizes, token ceilings,
+  finish reason, truncation, expected/observed/missing risks, and boundary
+  suppression. Production and paid modes remain unchanged.
+
 ### 2026-08-02 - Preview imagery is AI-selected, never AI-generated
 
 - Thumbnailing extracts at most six actual source frames across distributed

@@ -98,13 +98,21 @@ def chat(content, *, model, **kwargs):
     with lock:
         active -= 1
     evidence_ids = ["interpretive-evidence-01", "invented-citation"]
-    hostile = {"name": "override", "status": "fail", "tier": "BLOCKER",
-               "risk_id": "perceptual_visual_defect", "finding_state": "concern",
-               "severity": "reject",
-               "issue_description": f"{stage} review target", "context": "sample only",
-               "confidence": 7, "uncertainty": "bounded evidence",
-               "evidence_ids": evidence_ids, "review_question": "Inspect the cited sample?"}
-    return SimpleNamespace(text=json.dumps({"observations": [hostile]}), model=model,
+    risks = list(ai_authority.load_policy()["risks"]) if stage == "synthesis" else [
+        "perceptual_visual_defect" if stage == "gmi_visual_analysis" else "audible_defect"]
+    observations = []
+    for risk in risks:
+        concern = risk == "perceptual_visual_defect"
+        observations.append({"name": "override", "status": "fail", "tier": "BLOCKER",
+                             "risk_id": risk,
+                             "finding_state": "concern" if concern else "no_concern",
+                             "severity": "reject" if concern else "info",
+                             "issue_description": f"{stage} review target", "context": "sample only",
+                             "confidence": 7, "uncertainty": "bounded evidence",
+                             "evidence_ids": evidence_ids,
+                             "evidence_location": "interior",
+                             "review_question": "Inspect the cited sample?"})
+    return SimpleNamespace(text=json.dumps({"observations": observations}), model=model,
                            finish_reason="stop", tokens_in=100, tokens_out=20,
                            tokens_cached=0, cost_usd=None)
 worker._gmi_chat_response = chat
@@ -145,12 +153,18 @@ assert len(visual["attempts"]) == 2 and visual["attempts"][1]["fallback"] is Tru
 assert visual["fallback"]["used"] is True
 assert visual["finish_reason"] == "stop"
 assert visual["output_token_limit"] == worker.AI_INTERPRETIVE_MAX_OUTPUT_TOKENS
-assert all(limit in {2400, worker.AI_INTERPRETIVE_MAX_OUTPUT_TOKENS}
+assert visual["prompt_characters"] == len(prompts["gmi_visual_analysis"])
+assert visual["truncated"] is False
+assert all(limit in {worker.AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
+                     worker.AI_INTERPRETIVE_MAX_OUTPUT_TOKENS,
+                     worker.AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS}
            for limit in token_limits)
 assert '"risk_id": "audible_defect"' not in prompts["gmi_visual_analysis"]
 assert '"risk_id": "perceptual_visual_defect"' not in prompts["gmi_audio_analysis"]
 assert '"risk_id": "audible_defect"' in prompts["gmi_audio_analysis"]
 assert result["interpretive_observations"]
+assert result["state"] == "complete"
+assert len(result["interpretive_observations"]) == len(ai_authority.load_policy()["risks"])
 for observation in result["interpretive_observations"]:
     assert observation["authority"] == "eligible_for_versioned_policy_reducer"
     assert observation["raw_model_output_direct_authority"] is False
@@ -189,6 +203,43 @@ assert sanitized_plan["evidence_requests"][0]["time_seconds"] == 11.95
 assert set(item["risk_id"] for item in sanitized_plan["risk_targets"]) == set(policy["risks"])
 assert "sampled evidence is not full-timeline clearance" in sanitized_plan["coverage_limits"]
 
+# The compact planner may omit risk_targets because Waystation adds every
+# policy-required target after validating the bounded evidence request.
+compact_plan = interpretive_run.sanitize_review_plan({
+    "review_objective": "bounded review",
+    "evidence_requests": [{"type": "frame", "time_seconds": 2,
+                           "risk_ids": ["perceptual_visual_defect"]}],
+}, meta, policy)
+assert compact_plan is not None
+assert set(item["risk_id"] for item in compact_plan["risk_targets"]) == set(policy["risks"])
+
+# An extraction-window boundary is not a source edit. A model claim about a
+# truncated syllable at an interior sample edge is forced to not_checked.
+audio_evidence = {"audio-1": {"type": "audio_window", "sampling_window": {
+    "source_start_seconds": 2.0, "source_end_seconds": 8.0,
+    "source_duration_seconds": 10.0, "begins_at_source_start": False,
+    "ends_at_source_end": False, "sample_edges_are_not_source_edits": True}}}
+boundary = interpretive_run.sanitize_observations({"observations": [{
+    "risk_id": "audible_defect", "finding_state": "concern", "severity": "reject",
+    "issue_description": "Audio begins with a truncated syllable.", "confidence": 0.99,
+    "evidence_ids": ["audio-1"], "evidence_location": "start_boundary",
+}]}, {"audio-1"}, "gmi_audio_analysis", allowed_risk_ids=set(policy["risks"]),
+    evidence_catalog=audio_evidence)
+assert boundary[0]["finding_state"] == "not_checked"
+assert boundary[0]["boundary_artifact_suppressed"] is True
+interior = interpretive_run.sanitize_observations({"observations": [{
+    "risk_id": "audible_defect", "finding_state": "concern", "severity": "review",
+    "issue_description": "A click occurs mid-window.", "confidence": 0.9,
+    "evidence_ids": ["audio-1"], "evidence_location": "interior",
+}]}, {"audio-1"}, "gmi_audio_analysis", allowed_risk_ids=set(policy["risks"]),
+    evidence_catalog=audio_evidence)
+assert interior[0]["finding_state"] == "concern"
+assert interior[0]["boundary_artifact_suppressed"] is False
+
+# JSON extraction accepts fences/prose but never repairs a truncated object.
+assert worker._json_from('prefix ```json\n{"observations": []}\n``` suffix') == {"observations": []}
+assert worker._json_from('{"observations": [') is None
+
 # Missing configuration is explicit not_checked and cannot look like a pass.
 worker.GMI_API_KEY = None
 planner_stage, fallback_plan = worker._run_interpretive_planner_stage(
@@ -213,6 +264,8 @@ stage, observations = worker._run_interpretive_model_stage(
 assert stage["outcome"] == "not_checked" and observations == []
 assert stage["usage"]["billable_events"] == 1
 assert stage["finish_reason"] == "length"
+assert stage["truncated"] is True
+assert "token limit" in stage["error"]
 
 print("PASS explicit Genblaze/GMI run: bounded evidence, concurrency, fallback, B2 hashes, sanitizer, authority")
 PYEOF

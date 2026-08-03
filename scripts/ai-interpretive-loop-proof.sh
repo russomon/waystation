@@ -17,6 +17,9 @@ cleanup_ports
 "$PY" - <<'PYEOF' >/tmp/ai-interpretive-mock-gmi.log 2>&1 &
 import json, re, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+RISK_IDS = ["perceptual_visual_defect", "temporal_continuity_defect", "typography_defect",
+            "lip_sync_error", "audible_defect", "caption_semantic_mismatch",
+            "editorial_intent", "creative_intent", "aesthetic_quality"]
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["content-length"])))
@@ -41,15 +44,20 @@ class Handler(BaseHTTPRequestHandler):
         stage = next((name for name in ("gmi_visual_analysis", "gmi_audio_analysis", "synthesis")
                       if f"stage {name}" in text), "analysis")
         evidence = re.findall(r'interpretive-evidence-\d+', text)
-        observation = {"issue_description": f"Mock {stage.replace('_', ' ')} observation",
-                       "risk_id": "perceptual_visual_defect", "finding_state": "concern",
-                       "severity": "reject",
-                       "context": "bounded proof evidence", "confidence": 0.96,
-                       "uncertainty": "local mock, not a live GMI judgment",
-                       "evidence_ids": evidence[:1],
-                       "review_question": "Does the cited sample need human follow-up?",
-                       "status": "fail", "tier": "BLOCKER"}
-        payload = json.dumps({"observations": [observation]})
+        risks = RISK_IDS if stage == "synthesis" else [
+            "perceptual_visual_defect" if stage == "gmi_visual_analysis" else "audible_defect"]
+        observations = []
+        for risk in risks:
+            concern = risk == "perceptual_visual_defect"
+            observations.append({"issue_description": f"Mock {stage.replace('_', ' ')} observation",
+                "risk_id": risk, "finding_state": "concern" if concern else "no_concern",
+                "severity": "reject" if concern else "info",
+                "context": "bounded proof evidence", "confidence": 0.96,
+                "uncertainty": "local mock, not a live GMI judgment",
+                "evidence_ids": evidence[:1], "evidence_location": "interior",
+                "review_question": "Does the cited sample need human follow-up?",
+                "status": "fail", "tier": "BLOCKER"})
+        payload = json.dumps({"observations": observations})
         response = json.dumps({"model": body.get("model"),
                                "choices": [{"finish_reason": "stop", "message": {"content": payload}}],
                                "usage": {"prompt_tokens": 120, "completion_tokens": 30,
@@ -151,6 +159,9 @@ assert [stage['name'] for stage in ai['timeline']] == [
  'gmi_audio_analysis','synthesis','artifact_storage']
 assert ai['review_plan']['source']=='ai_planner'
 assert ai['interpretive_observations'] and all(item['authority']=='eligible_for_versioned_policy_reducer' for item in ai['interpretive_observations'])
+assert len(ai['interpretive_observations']) == 9
+audio=next(item for item in ai['evidence'] if item['type']=='audio_window')
+assert audio['sampling_window']['sample_edges_are_not_source_edits'] is True
 assert all('tier' not in item and 'status' not in item for item in ai['interpretive_observations'])
 assert qc['ai_interpretive_analysis']['deterministic_verdict_unchanged'] is True
 assert qc['delivery_decision']==ai['delivery_decision']

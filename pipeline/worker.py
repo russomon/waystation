@@ -158,6 +158,10 @@ AI_INTERPRETIVE_MAX_AUDIO_WINDOWS = max(0, min(3, int(os.environ.get(
     "AI_INTERPRETIVE_MAX_AUDIO_WINDOWS", "1"))))
 AI_INTERPRETIVE_MAX_OUTPUT_TOKENS = max(512, min(8192, int(os.environ.get(
     "AI_INTERPRETIVE_MAX_OUTPUT_TOKENS", "4096"))))
+AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS = max(512, min(8192, int(os.environ.get(
+    "AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS", "4096"))))
+AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS = max(1024, min(8192, int(os.environ.get(
+    "AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS", "6144"))))
 AI_INTERPRETIVE_AUTHORITY_MODE = qai_authority.normalize_mode(
     os.environ.get("AI_INTERPRETIVE_AUTHORITY_MODE", "shadow"))
 AI_THUMBNAIL_MODEL = (os.environ.get("AI_THUMBNAIL_MODEL") or GMI_MULTIMODAL_MODEL).strip()
@@ -451,14 +455,26 @@ def _gmi_chat(content: list, max_tokens: int = 2000, model: str | None = None) -
 
 
 def _json_from(text: str) -> dict | None:
-    """Extract the first JSON object from a model reply (tolerates fences/prose)."""
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
+    """Extract one complete JSON object without repairing truncated output."""
+    if not isinstance(text, str):
         return None
+    stripped = text.strip()
     try:
-        return json.loads(m.group(0))
-    except Exception:
-        return None
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else None
+    except (TypeError, ValueError):
+        pass
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(text[index:])
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def _norm_words(text: str) -> list:
@@ -840,7 +856,8 @@ def _provider_error_code(exc: Exception) -> str:
 def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                                   prompt_sha: str, parts: list[dict], evidence: list[dict],
                                   grounding_hash: str,
-                                  allowed_risk_ids: set[str] | None = None) -> tuple[dict, list[dict]]:
+                                  allowed_risk_ids: set[str] | None = None,
+                                  expected_risk_ids: set[str] | None = None) -> tuple[dict, list[dict]]:
     """Run one configured GMI stage with explicit, recorded fallback semantics."""
     started = _iso_now()
     progress(job, {"type": "ai_interpretive_stage", "stage": name, "state": "started"})
@@ -873,6 +890,8 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                            AI_INTERPRETIVE_FALLBACK_MODEL, True))
     response = None
     used_model = model
+    output_limit = (AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS
+                    if name == "synthesis" else AI_INTERPRETIVE_MAX_OUTPUT_TOKENS)
     for provider, candidate, fallback in candidates:
         attempt_started = time.monotonic()
         attempt = {"attempt": len(attempts) + 1, "provider": provider, "model": candidate,
@@ -885,7 +904,7 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
         try:
             response = _gmi_chat_response(
                 [{"type": "text", "text": prompt}] + parts,
-                max_tokens=AI_INTERPRETIVE_MAX_OUTPUT_TOKENS, model=candidate,
+                max_tokens=output_limit, model=candidate,
                 timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS,
                 max_attempts=1)
             attempt.update({"outcome": "complete", "completed_at": _iso_now(),
@@ -916,21 +935,36 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
     payload = _json_from(response.text)
     allowed = {item["evidence_id"] for item in evidence}
     observations = qinterpretive_run.sanitize_observations(
-        payload, allowed, name, allowed_risk_ids=allowed_risk_ids)
+        payload, allowed, name, allowed_risk_ids=allowed_risk_ids,
+        evidence_catalog={item["evidence_id"]: item for item in evidence})
     usage = {"tokens_in": response.tokens_in, "tokens_out": response.tokens_out,
              "tokens_cached": response.tokens_cached, "cost_usd": response.cost_usd,
              "billable_events": 1}
-    structured = payload is not None and bool(observations)
+    observed_risks = {item.get("risk_id") for item in observations}
+    missing_expected = sorted((expected_risk_ids or set()) - observed_risks)
+    structured = payload is not None and bool(observations) and not missing_expected
+    truncated = getattr(response, "finish_reason", None) == "length"
+    error = None
+    if payload is None or not observations:
+        error = ("provider output reached the token limit without a valid complete JSON object"
+                 if truncated else "provider returned no valid structured observations")
+    elif missing_expected:
+        error = (f"provider omitted {len(missing_expected)} required risk observation(s)"
+                 + (" after reaching the token limit" if truncated else ""))
     stage = _interpretive_stage(
         name, outcome="complete" if structured else "not_checked",
         provider="gmicloud", model=used_model, started_at=started,
-        error=None if structured else "provider returned no valid structured observations",
+        error=error,
         attempts=attempts, fallback={"configured": len(candidates) > 1,
                                     "used": bool(attempts[-1].get("fallback"))},
         prompt_version=qinterpretive_run.PROMPT_VERSION, prompt_sha256=prompt_sha,
         input_sha256=grounding_hash, raw_output_sha256=hashlib.sha256(response.text.encode()).hexdigest(),
         finish_reason=getattr(response, "finish_reason", None),
-        output_token_limit=AI_INTERPRETIVE_MAX_OUTPUT_TOKENS,
+        output_token_limit=output_limit, missing_required_risk_ids=missing_expected,
+        prompt_characters=len(prompt), raw_output_characters=len(response.text),
+        structured_observation_count=len(observations),
+        expected_risk_count=len(expected_risk_ids or set()),
+        observed_risk_count=len(observed_risks), truncated=truncated,
         usage=usage, cost_usd=response.cost_usd)
     progress(job, {"type": "ai_interpretive_stage", "stage": name,
                    "step": name,
@@ -955,7 +989,8 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
         attempt_started = time.monotonic()
         try:
             response = _gmi_chat_response(
-                [{"type": "text", "text": prompt}], max_tokens=2400,
+                [{"type": "text", "text": prompt}],
+                max_tokens=AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
                 model=AI_INTERPRETIVE_PLANNER_MODEL,
                 timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS, max_attempts=1)
             attempts.append({"attempt": 1, "provider": "gmicloud",
@@ -982,7 +1017,10 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
     billable = 1 if response is not None else 0
     error = None
     if used_fallback:
-        error = "AI planner unavailable or malformed; deterministic bounded plan used"
+        error = ("AI planner reached the token limit without a valid complete plan; "
+                 "deterministic bounded plan used"
+                 if getattr(response, "finish_reason", None) == "length" else
+                 "AI planner unavailable or malformed; deterministic bounded plan used")
     stage = _interpretive_stage(
         name, outcome="fallback" if used_fallback else "complete",
         provider="gmicloud" if response is not None else "waystation",
@@ -995,6 +1033,10 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
         if response is not None else None,
         finish_reason=getattr(response, "finish_reason", None),
         review_plan_sha256=qinterpretive_run.canonical_hash(plan),
+        output_token_limit=AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
+        prompt_characters=len(prompt),
+        raw_output_characters=len(response.text) if response is not None else 0,
+        truncated=getattr(response, "finish_reason", None) == "length",
         fallback={"used": used_fallback, "reason": error},
         usage={"tokens_in": getattr(response, "tokens_in", None),
                "tokens_out": getattr(response, "tokens_out", None),
@@ -1043,6 +1085,10 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         meta, grounding, review_plan, max_frames=AI_INTERPRETIVE_MAX_FRAMES,
         max_audio=AI_INTERPRETIVE_MAX_AUDIO_WINDOWS)
     evidence: list[dict] = []
+    try:
+        media_duration = max(0.0, float((meta.get("format") or {}).get("duration") or 0))
+    except (TypeError, ValueError):
+        media_duration = 0.0
     model_parts: dict[str, list[dict]] = {"visual": [], "audio": []}
     derivatives: list[dict] = []
     for request in plan:
@@ -1062,7 +1108,19 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             path, mime = os.path.join(tmp, f"{evidence_id}.wav"), "audio/wav"
             if item:
                 model, public, path = item
-                model_parts["audio"].extend([{"type": "text", "text": f"Evidence {evidence_id}:"}, model])
+                sample_start = float(request["start_seconds"])
+                sample_end = min(media_duration, sample_start + float(request["duration_seconds"]))
+                public["sampling_window"] = {
+                    "source_start_seconds": round(sample_start, 3),
+                    "source_end_seconds": round(sample_end, 3),
+                    "source_duration_seconds": round(media_duration, 3),
+                    "begins_at_source_start": sample_start <= 0.05,
+                    "ends_at_source_end": sample_end >= max(media_duration - 0.05, 0.0),
+                    "sample_edges_are_not_source_edits": True,
+                }
+                model_parts["audio"].extend([{"type": "text", "text":
+                    f"Evidence {evidence_id} is an extracted source window "
+                    f"{sample_start:.3f}s-{sample_end:.3f}s. Its sample edges are not source edits:"}, model])
         if not item or not os.path.exists(path):
             continue
         public.update({"reason": request["reason"], "packet_id": request.get("packet_id"),
@@ -1127,12 +1185,16 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
     synthesis_prompt, synthesis_sha = qinterpretive_run.build_prompt(
         "synthesis", grounding, evidence, specialist_observations, review_plan)
     synthesis_observations: list[dict] = []
+    synthesis_complete = False
+    required_risk_ids = {item["risk_id"] for item in review_plan.get("risk_targets") or []}
     if specialist_observations:
         synthesis_stage, synthesis_observations = _run_interpretive_model_stage(
             job, "synthesis", AI_INTERPRETIVE_SYNTHESIS_MODEL, synthesis_prompt,
-            synthesis_sha, [], evidence, grounding_hash, allowed_risk_ids)
+            synthesis_sha, [], evidence, grounding_hash, allowed_risk_ids,
+            required_risk_ids)
         stages.append(synthesis_stage)
         stage_observations["synthesis"] = synthesis_observations
+        synthesis_complete = synthesis_stage["outcome"] == "complete"
     else:
         stages.append(_interpretive_stage(
             "synthesis", outcome="not_checked", provider="gmicloud",
@@ -1144,7 +1206,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
                        "state": "not_checked", "reason": "no sanitized analysis observations"})
 
     observations = synthesis_observations or specialist_observations
-    state = "complete" if synthesis_observations else "not_checked"
+    state = "complete" if synthesis_complete else "not_checked"
     delivery_decision = qai_authority.decide(
         deterministic_status=grounding.get("delivery_status"),
         interpretive_state=state,
@@ -1152,7 +1214,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         mode=AI_INTERPRETIVE_AUTHORITY_MODE,
         policy=authority_policy,
         required=True,
-        required_risk_ids=[item["risk_id"] for item in review_plan.get("risk_targets") or []])
+        required_risk_ids=sorted(required_risk_ids))
 
     artifact_stage = _interpretive_stage(
         "artifact_storage", provider="backblaze-b2-s3", model="object-storage",
@@ -1189,6 +1251,8 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             "fallback_provider": AI_INTERPRETIVE_FALLBACK_PROVIDER or None,
             "fallback_model": AI_INTERPRETIVE_FALLBACK_MODEL or None,
             "max_output_tokens": AI_INTERPRETIVE_MAX_OUTPUT_TOKENS,
+            "planner_max_output_tokens": AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
+            "synthesis_max_output_tokens": AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS,
         },
         "deterministic_grounding": {"sha256": grounding_hash,
                                      "policy": grounding["deterministic_policy"]},

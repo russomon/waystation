@@ -12,7 +12,8 @@ also allow it and the worker must enable it. The run records these stages:
 2. `deterministic_grounding` snapshots only bounded deterministic findings,
    policy identity, and valid review packets. It cannot mutate the QC report.
 3. `ai_review_planning` asks a configurable GMI planning model for a bounded,
-   risk-targeted review plan. The plan is schema-validated and allowlisted; a
+   risk-targeted evidence plan. Code adds every versioned policy risk, so the
+   model cannot omit required coverage. The plan is schema-validated and allowlisted; a
    deterministic fallback plan is recorded if the call is absent or malformed.
 4. `evidence_selection` extracts at most four JPEG frames and one six-second
    mono WAV window by default. Finding targets are preferred; timeline anchors
@@ -20,9 +21,12 @@ also allow it and the worker must enable it. The run records these stages:
    derivative prefix with SHA-256 and size.
 5. `gmi_visual_analysis` and `gmi_audio_analysis` run concurrently when both
    evidence types exist. Each has an independent timeout and attempt ledger.
-6. `synthesis` receives the validated plan, deterministic grounding, and
-   sanitized specialist observations,
-   never a mutable delivery report.
+   Audio evidence labels extraction edges; an interior sample edge cannot be
+   treated as a source edit or authority-bearing audible defect.
+6. `synthesis` receives a compact validated risk list, detached deterministic
+   grounding, evidence catalog, and sanitized specialist observations, never a
+   mutable delivery report. The run is complete only with one unique sanitized
+   synthesis observation for every required risk.
 7. `artifact_storage` records B2 artifact references and hashes.
 
 GMI output is parsed as untrusted data. Waystation creates fresh observations,
@@ -83,6 +87,8 @@ AI_INTERPRETIVE_MAX_CONCURRENCY=2
 AI_INTERPRETIVE_MAX_FRAMES=4
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS=1
 AI_INTERPRETIVE_MAX_OUTPUT_TOKENS=4096
+AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS=4096
+AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS=6144
 AI_INTERPRETIVE_AUTHORITY_MODE=shadow
 ```
 
@@ -142,7 +148,23 @@ so synthesis did not run. The final manifest also failed because a production
 was not Object-Lock-enabled. This was not a successful QC run. The follow-up
 source revision lane-scopes specialist plans, requires compact JSON, uses a
 bounded 4,096-token default, records provider `finish_reason`, and forces Object
-Lock off only in `scripts/dev-up.sh`. A clean credentialed rerun remains pending.
+Lock off only in `scripts/dev-up.sh`. That revision led to the credentialed run
+described below.
+
+The next credentialed transfer, `70d34759-a2e4-4e35-ae88-ec9c479ab840`,
+successfully stored an AI-selected thumbnail, three JPEG evidence frames, one
+WAV, nine sanitized specialist observations, `ai_interpretive.json`, and an
+SDK-verified canonical manifest. Planner used fallback after
+`finish_reason=length`; synthesis also ended `length` without complete JSON, so
+the run correctly remained `not_checked`/HOLD in shadow. The audio concern at
+the WAV's 2.0s extraction edge exposed a sample-boundary false positive.
+
+Run schema v1.2, planner prompt v1.1, and interpretive prompt v1.3 address those
+findings with compact contracts, complete-risk synthesis validation, explicit
+audio-window boundary metadata/suppression, stage-specific bounded token caps,
+and direct truncation/coverage diagnostics. These revisions are mock- and
+container-proven but still require a credentialed known-good/known-bad shadow
+rerun before any authority-mode change.
 
 ## Reversible production release checklist
 

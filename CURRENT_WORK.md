@@ -32,6 +32,36 @@ switches and chat history gaps.
 
 ## Dual-key AI delivery authority first pass — 2026-08-02
 
+### Credentialed shadow run and completion hardening
+
+- Local transfer `70d34759-a2e4-4e35-ae88-ec9c479ab840` completed with a
+  canonical Genblaze manifest (`verify_hash() == true`) and an AI-selected
+  thumbnail at 2.625s from `google/gemini-3.5-flash` (confidence 0.90, selected
+  frame hash verified). The explicit run made four model calls: visual returned
+  six valid observations and audio returned three. This proves provider,
+  evidence, storage, sanitizer, and recipient paths.
+- It did **not** validate the complete AI gate. Planner and synthesis both
+  ended `finish_reason=length`; planner used the deterministic bounded fallback
+  and synthesis produced no complete JSON. Interpretive state correctly stayed
+  `not_checked`, AI proposed HOLD in shadow, and deterministic WARN also held
+  the delivery for silence and missing captions.
+- The audio specialist's concern about a truncated opening syllable was a
+  sampling artifact: its six-second WAV began at source time 2.0s. Source schema
+  `waystation-ai-interpretive-run/1.2` now labels every audio extraction edge,
+  instructs models not to treat sample edges as source edits, and
+  deterministically changes an interior boundary-only concern to `not_checked`.
+- Planner prompt v1.1 asks only for bounded evidence placement; Waystation adds
+  all policy risks deterministically. Interpretive prompt v1.3 gives synthesis
+  compact detached inputs, enforces one unique result for every required risk,
+  and records prompt/output character counts, expected/observed/missing risks,
+  token limits, truncation, and finish reason. Planner and synthesis have
+  separate bounded 4,096/6,144 output ceilings.
+- Focused adversarial/boundary proofs, the four-call explicit loop, authority,
+  shadow, triage, thumbnail, delivery/toggle, legacy AI, Synthetic, Netflix,
+  broadcast, captions, audio map, Phase 2, deep-package, calibration, QCTools,
+  TypeScript/Python/Compose checks, and a rebuilt Docker full loop pass. No paid
+  call was made for this correction and production was not accessed or changed.
+
 - The explicit run now follows the intended QC architecture: deterministic
   tools produce immutable grounding; a configurable GMI planner creates a
   bounded, risk-targeted review plan; specialist visual/audio stages run in
@@ -124,13 +154,14 @@ switches and chat history gaps.
   tokens). The deliberately low 220-token cap ended with
   `finish_reason=length`; no valid JSON observation was produced, and the
   sanitizer correctly returned no advisory result. This proves the credential
-  and provider boundary, not a complete explicit run. A normal-cap bounded
-  release-candidate run is still required before recording.
+  and provider boundary, not a complete explicit run. A post-hardening bounded
+  known-good/known-bad release-candidate run is still required before recording.
 - **Production was not accessed or changed.** Production remains worker policy
   v1.1.0 with `AI_INTERPRETIVE_SHADOW=false`; source and production compose
   default `ALLOW_AI_INTERPRETIVE=false` and
-  `AI_INTERPRETIVE_RUN_ENABLED=false`. A credentialed GMI release-candidate run
-  is still pending. See `docs/AI_INTERPRETIVE_RUN.md`.
+  `AI_INTERPRETIVE_RUN_ENABLED=false`. A post-hardening credentialed GMI
+  known-good/known-bad run is still pending. See
+  `docs/AI_INTERPRETIVE_RUN.md`.
 
 ## Deployment reconciliation — 2026-08-01
 
