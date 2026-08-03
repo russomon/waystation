@@ -2,9 +2,10 @@
 Waystation — Genblaze pipeline worker.
 
 Triggered by the gateway when B2 reports a new original media object. Does
-real work on the file (probe + poster frame today; transcribe/summarize via
-GMI Cloud as the key lands), writes derivatives + a provenance manifest back
-to B2 under a `derivatives/` prefix (so it does NOT re-trigger the event),
+real work on the file (probe + AI-selected source poster frame today;
+transcribe/summarize via GMI Cloud as the key lands), writes derivatives + a
+provenance manifest back to B2 under a `derivatives/` prefix (so it does NOT
+re-trigger the event),
 and streams progress to the gateway → SSE → browser.
 
 Run:  uvicorn worker:app --port 8000 --reload
@@ -57,6 +58,7 @@ from qc import interpretive as qinterpretive
 from qc import interpretive_run as qinterpretive_run
 from qc import mediainfo as qmediainfo
 from qc import phase2 as qphase2
+from qc import poster as qposter
 from qc import prompt_compiler as qprompt_compiler
 from qc import profiles as qprofiles
 from qc import qctools as qqctools
@@ -158,6 +160,11 @@ AI_INTERPRETIVE_MAX_OUTPUT_TOKENS = max(512, min(8192, int(os.environ.get(
     "AI_INTERPRETIVE_MAX_OUTPUT_TOKENS", "4096"))))
 AI_INTERPRETIVE_AUTHORITY_MODE = qai_authority.normalize_mode(
     os.environ.get("AI_INTERPRETIVE_AUTHORITY_MODE", "shadow"))
+AI_THUMBNAIL_MODEL = (os.environ.get("AI_THUMBNAIL_MODEL") or GMI_MULTIMODAL_MODEL).strip()
+AI_THUMBNAIL_CANDIDATES = max(3, min(8, int(os.environ.get("AI_THUMBNAIL_CANDIDATES", "6"))))
+AI_THUMBNAIL_TIMEOUT_SECONDS = float(os.environ.get("AI_THUMBNAIL_TIMEOUT_SECONDS", "90"))
+AI_THUMBNAIL_SCENE_SCAN_MAX_SECONDS = max(0.0, float(os.environ.get(
+    "AI_THUMBNAIL_SCENE_SCAN_MAX_SECONDS", "300")))
 
 
 class Job(BaseModel):
@@ -494,6 +501,113 @@ def _frame_evidence(src: str, tmp: str, evidence_id: str, at: float,
     if crop:
         public["crop"] = {"x": crop[0], "y": crop[1], "width": crop[2], "height": crop[3]}
     return model, public
+
+
+def create_ai_thumbnail(job: Job, src: str, tmp: str, meta: dict,
+                        src_sha: str) -> tuple[list[dict], dict]:
+    """Select one real source frame with GMI, retaining a fail-soft audit record."""
+    try:
+        duration = max(0.0, float((meta.get("format") or {}).get("duration") or 0))
+    except (TypeError, ValueError):
+        duration = 0.0
+    scene_scan = 0 < duration <= AI_THUMBNAIL_SCENE_SCAN_MAX_SECONDS
+    cuts = _scene_cuts(src, duration, cap=12) if scene_scan else []
+    candidates: list[dict] = []
+    parts: list[dict] = []
+    paths: dict[str, str] = {}
+    for index, at in enumerate(qposter.candidate_times(
+            duration, cuts, AI_THUMBNAIL_CANDIDATES), 1):
+        candidate_id = f"poster-candidate-{index:02d}"
+        item = _frame_evidence(src, tmp, candidate_id, at, scale=640)
+        path = os.path.join(tmp, f"{candidate_id}.jpg")
+        if not item or not os.path.exists(path):
+            continue
+        model_part, public = item
+        public.update({"candidate_id": candidate_id, "sha256": sha256_file(path),
+                       "size_bytes": os.path.getsize(path), "width": 640})
+        candidates.append(public)
+        paths[candidate_id] = path
+        parts.extend([{"type": "text", "text":
+                       f"Candidate {candidate_id} at {at:.3f} seconds:"}, model_part])
+    if not candidates:
+        raise RuntimeError("no video frames available for poster selection")
+
+    prompt, prompt_sha = qposter.build_prompt(candidates)
+    response = None
+    selection = None
+    error = None
+    if GMI_API_KEY:
+        try:
+            response = _gmi_chat_response(
+                [{"type": "text", "text": prompt}] + parts,
+                max_tokens=500, model=AI_THUMBNAIL_MODEL,
+                timeout=AI_THUMBNAIL_TIMEOUT_SECONDS, max_attempts=1)
+            selection = qposter.sanitize_selection(_json_from(response.text), candidates)
+            if selection is None:
+                error = "GMI returned no valid allowlisted poster selection"
+        except Exception as exc:
+            error = f"GMI poster selection failed: {str(exc)[:180]}"
+    else:
+        error = "GMI_API_KEY is not configured"
+    method = "gmi_ai" if selection is not None else "deterministic_fallback"
+    selection = selection or qposter.deterministic_fallback(candidates)
+    chosen = next(item for item in candidates
+                  if item["candidate_id"] == selection["selected_candidate_id"])
+
+    thumb_key = f"derivatives/{job.transferId}/thumb.jpg"
+    s3.upload_file(paths[chosen["candidate_id"]], BUCKET, thumb_key,
+                   ExtraArgs={"ContentType": "image/jpeg"})
+    usage = {
+        "tokens_in": getattr(response, "tokens_in", None),
+        "tokens_out": getattr(response, "tokens_out", None),
+        "tokens_cached": getattr(response, "tokens_cached", None),
+        "cost_usd": getattr(response, "cost_usd", None),
+        "billable_events": 1 if response is not None else 0,
+    }
+    report = {
+        "schema_version": qposter.SCHEMA_VERSION,
+        "state": "complete" if method == "gmi_ai" else "fallback",
+        "selection_method": method,
+        "source_sha256": src_sha,
+        "candidate_policy": {"maximum": AI_THUMBNAIL_CANDIDATES,
+                             "timeline_anchors": True,
+                             "scene_cut_enrichment": scene_scan,
+                             "scene_scan_max_seconds": AI_THUMBNAIL_SCENE_SCAN_MAX_SECONDS},
+        "candidates": candidates,
+        "selected_candidate_id": chosen["candidate_id"],
+        "selected_time_seconds": chosen["time_seconds"],
+        "selected_sha256": chosen["sha256"],
+        "reason": selection["reason"],
+        "confidence": selection["confidence"],
+        "provider": "gmicloud" if response is not None else "waystation",
+        "model": getattr(response, "model", None) or (
+            AI_THUMBNAIL_MODEL if GMI_API_KEY else "deterministic-poster-fallback/1.0"),
+        "prompt_version": qposter.PROMPT_VERSION,
+        "prompt_sha256": prompt_sha,
+        "raw_output_sha256": hashlib.sha256(response.text.encode()).hexdigest()
+        if response is not None else None,
+        "finish_reason": getattr(response, "finish_reason", None),
+        "usage": usage,
+        "error": error,
+        "generated_image": False,
+    }
+    body = json.dumps(report, indent=2).encode()
+    report_key = f"derivatives/{job.transferId}/thumbnail_selection.json"
+    s3.put_object(Bucket=BUCKET, Key=report_key, Body=body,
+                  ContentType="application/json")
+    metadata = {key: report[key] for key in
+                ("schema_version", "selection_method", "selected_candidate_id",
+                 "selected_time_seconds", "selected_sha256", "provider", "model",
+                 "prompt_version", "prompt_sha256", "finish_reason", "usage",
+                 "generated_image")}
+    return ([
+        {"step": "thumbnail", "key": thumb_key, "sha256": chosen["sha256"],
+         "mime": "image/jpeg", "metadata": metadata},
+        {"step": "thumbnail-selection", "key": report_key,
+         "sha256": hashlib.sha256(body).hexdigest(), "mime": "application/json",
+         "provider": report["provider"], "model": report["model"],
+         "metadata": metadata},
+    ], report)
 
 
 def _scene_cuts(src: str, duration: float, threshold: float = AI_QC_SCENE_THRESHOLD,
@@ -2267,18 +2381,21 @@ def run_pipeline(job: Job) -> None:
             meta = {}
             progress(job, {"type": "step_error", "step": "probe", "error": str(e)})
 
-        # 2. thumbnail — real ffmpeg poster frame → derivative in B2
+        # 2. thumbnail — bounded real frames, GMI selection, derivative in B2
         if opts["thumbnail"]:
             progress(job, {"type": "step_started", "step": "thumbnail"})
             try:
-                thumb = os.path.join(tmp, "thumb.jpg")
-                subprocess.run(["ffmpeg", "-y", "-ss", "1", "-i", src, "-frames:v", "1",
-                                "-vf", "scale=640:-1", thumb], capture_output=True, check=True)
-                key = f"derivatives/{tid}/thumb.jpg"
-                s3.upload_file(thumb, BUCKET, key, ExtraArgs={"ContentType": "image/jpeg"})
-                derivatives.append({"step": "thumbnail", "key": key, "sha256": sha256_file(thumb), "mime": "image/jpeg"})
-                progress(job, {"type": "step_done", "step": "thumbnail", "key": key,
-                               "billable": {"unit": "run", "units": 1}})
+                thumbnail_derivatives, thumbnail_report = create_ai_thumbnail(
+                    job, src, tmp, meta, src_sha)
+                derivatives.extend(thumbnail_derivatives)
+                event = {"type": "step_done", "step": "thumbnail",
+                         "key": thumbnail_derivatives[0]["key"],
+                         "selection_method": thumbnail_report["selection_method"],
+                         "selected_time_seconds": thumbnail_report["selected_time_seconds"],
+                         "model": thumbnail_report["model"],
+                         "gmi_model_calls": thumbnail_report["usage"]["billable_events"],
+                         "billable": {"unit": "run", "units": 1}}
+                progress(job, event)
             except Exception as e:
                 progress(job, {"type": "step_error", "step": "thumbnail", "error": str(e)})
         else:
@@ -2627,14 +2744,18 @@ def run_pipeline(job: Job) -> None:
             media_type="video/mp4", sha256=src_sha, size_bytes=os.path.getsize(src),
             duration=float(meta.get("format", {}).get("duration", 0) or 0) or None)
         STEP_INFO = {   # provider/model/type/modality per pipeline step
-            "thumbnail": ("ffmpeg", "ffmpeg/poster-frame", StepType.TRANSCODE, Modality.IMAGE),
+            "thumbnail": ("ffmpeg", "ffmpeg/selected-poster-frame", StepType.TRANSCODE, Modality.IMAGE),
+            "thumbnail-selection": ("waystation", "ai-poster-selector/1.0",
+                                    StepType.GENERATE, Modality.TEXT),
             "qc": ("waystation", "qc-reporter/deterministic+agentic", StepType.CUSTOM, Modality.TEXT),
             "ai-interpretive": ("genblaze", "ai-interpretive-analysis/1.0", StepType.CUSTOM, Modality.TEXT),
         }
         gb_steps = []
         for i, d in enumerate(derivatives):
             prov, model, stype, mod = STEP_INFO.get(d["step"], ("waystation", d["step"], StepType.CUSTOM, Modality.TEXT))
-            step_metadata = None
+            prov = d.get("provider", prov)
+            model = d.get("model", model)
+            step_metadata = d.get("metadata")
             if d["step"] == "qc" and qc_report:
                 step_metadata = {
                     "report_schema": qc_report.get("schema_version"),

@@ -81,6 +81,15 @@ switches and chat history gaps.
   ceiling to 4,096, records `finish_reason`, and forces
   `MANIFEST_LOCK_DAYS=0` only in `scripts/dev-up.sh`. A second credentialed run
   is required. Production was not accessed or changed.
+- Preview thumbnailing is now AI-selected in source. FFmpeg extracts a bounded
+  set of real source frames from distributed timeline anchors, with scene-cut
+  enrichment capped to short assets; GMI
+  chooses one allowlisted candidate. `thumbnail_selection.json` retains source
+  and candidate hashes, timecodes, prompt/model/usage, finish reason, selected
+  frame, and whether a deterministic fallback was required. The selector never
+  generates or alters imagery. It adds one GMI call when thumbnailing is
+  selected and a key is configured. Focused and full delivery/toggle/explicit
+  loops pass. This source change is not deployed.
 
 ## Hackathon AI Interpretive run — 2026-08-02
 

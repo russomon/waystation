@@ -5,6 +5,21 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - Preview imagery is AI-selected, never AI-generated
+
+- Thumbnailing extracts at most six actual source frames across distributed
+  timeline anchors. Scene-cut enrichment is capped to short assets so a
+  thumbnail-only large transfer never incurs a full-timeline scan. A configured
+  GMI vision model may select only
+  one candidate ID from that allowlist; it cannot create or modify preview
+  imagery.
+- The selected frame, all candidate timecodes and hashes, prompt/model/usage,
+  provider finish reason, and selection method are stored in a provenance-
+  covered `thumbnail_selection.json`. Invalid IDs, malformed output, provider
+  failure, or missing credentials use a disclosed deterministic fallback.
+- Selecting Preview thumbnail now adds one GMI call when a key is configured.
+  Production remains unchanged until a separate deployment decision.
+
 ### 2026-08-02 - Local MinIO is non-retained and specialist prompts are lane-scoped
 
 - Local `scripts/dev-up.sh` always starts the worker with

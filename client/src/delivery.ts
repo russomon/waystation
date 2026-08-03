@@ -59,7 +59,12 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   const gbSteps: any[] = manifest?.run?.steps ?? [];
   const summary: string | undefined = gbSteps.find((s) => s.step_id === "summarize")?.metadata?.summary;
   const keyOf = (url: string) => url.replace(/^s3:\/\/[^/]+\//, "");
-  const thumb = t.derivatives.find((d) => d.mime === "image/jpeg");
+  const thumb = t.derivatives.find((d) => d.key.endsWith("/thumb.jpg"))
+    ?? t.derivatives.find((d) => d.mime === "image/jpeg");
+  const thumbSelectionAsset = t.derivatives.find((d) => d.key.endsWith("thumbnail_selection.json"));
+  const thumbSelection = thumbSelectionAsset
+    ? await fetch(thumbSelectionAsset.url).then((r) => r.json()).catch(() => null)
+    : null;
   const qcAsset = t.derivatives.find((d) => d.key.endsWith("qc_report.json"));
   const qc = qcAsset ? await fetch(qcAsset.url).then((r) => r.json()).catch(() => null) : null;
   const aiAsset = t.derivatives.find((d) => d.key.endsWith("ai_interpretive.json"));
@@ -70,6 +75,13 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   root.textContent = "";
   const card = el(`<div class="deliv"></div>`);
   if (thumb) card.append(el(`<img class="thumb" src="${thumb.url}" alt="preview" />`));
+  if (thumbSelection) {
+    const selectionStatus = el(`<p class="meta"></p>`);
+    selectionStatus.textContent = thumbSelection.selection_method === "gmi_ai"
+      ? `AI-selected preview · ${thumbSelection.model} · ${Number(thumbSelection.selected_time_seconds).toFixed(1)}s`
+      : `Preview fallback · ${thumbSelection.reason}`;
+    card.append(selectionStatus);
+  }
   const h2 = el(`<h2></h2>`);
   h2.textContent = t.original.filename;
   card.append(h2);

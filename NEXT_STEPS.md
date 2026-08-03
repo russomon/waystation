@@ -12,12 +12,13 @@ history.
   synthesis, versioned `shadow|hold|enforce` authority, B2 artifacts, and a
   visible READY/HOLD/REJECT result. It is not deployed; both paid-run gates are
   false and authority defaults to `shadow`. First run one short credentialed
-  asset with all other AI lanes off, verify four-or-fewer model events and risk
+  asset with all other AI lanes off, verify four-or-fewer explicit-analysis
+  model events plus one separately recorded AI-thumbnail call when Preview
+  thumbnail is selected, and review risk
   coverage, then review retained known-good/known-bad assets per enforceable
   category. The first credentialed local attempt reached GMI and stored four
   evidence objects, but planner overload, ceiling-length malformed specialist
-  JSON, and local
-  Object Lock mismatch prevented a valid result. Those integration faults are
+  JSON, and local Object Lock mismatch prevented a valid result. Those integration faults are
   corrected in source; rerun one short asset with planner/visual/audio/synthesis
   set to an available model and confirm structured observations plus a verified
   manifest. Promote to `hold` before considering `enforce`. Do not call bounded

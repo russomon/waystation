@@ -62,7 +62,10 @@ make one planning call, two concurrent analysis calls, and one synthesis call.
 A media type that
 is absent is not called. Every successful provider call emits one separately
 metered `run` event. AI QC triage, deeper AI QC, Synthetic QC, AI Summary, and
-shadow mode are separate selections and separate spend. For the first bounded
+shadow mode are separate selections and separate spend. Preview thumbnail also
+adds one bounded GMI vision call when selected and configured; its provider
+usage is retained in `thumbnail_selection.json`, outside the explicit run's
+four-call accounting. For the first bounded
 run, turn those services off so the explicit mode's cost and output are isolated.
 
 Models are configuration, not code:

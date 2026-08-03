@@ -79,7 +79,7 @@ npm run build:wasm                             # needs cargo + wasm-pack
 
 # every time
 bash scripts/dev-up.sh                          # MinIO + gateway + pipeline + Vite client
-#   GMI_API_KEY=... bash scripts/dev-up.sh      # to enable the real summarize step
+#   GMI_API_KEY=... bash scripts/dev-up.sh      # enable configured GMI services
 ```
 
 Or run pieces individually: `npm run dev:gateway` · `dev:client` · `dev:pipeline`.
@@ -189,6 +189,15 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   caption text + codec/resolution facts, so it describes the actual content.
   Proven live against real B2 + GMI (`scripts/live-run.sh`,
   `GMI_MODEL=google/gemini-3.5-flash`).
+- ✅ **AI-selected preview frame** — FFmpeg extracts at most six real frames
+  from distributed timeline anchors, enriched by scene boundaries only for
+  assets within a bounded scan duration; GMI chooses one allowlisted
+  candidate for the recipient poster. It never generates or edits an image.
+  Candidate timecodes/hashes, prompt/model/usage, finish reason, and the chosen
+  frame are retained in `thumbnail_selection.json` and the Genblaze manifest.
+  Missing or malformed AI is disclosed as a deterministic fallback, never an
+  implied AI success. Proven without cloud spend by
+  `scripts/ai-thumbnail-proof.sh`.
 - ✅ **Explicit AI Interpretive Analysis** (opt-in, spend-off by default) —
   Genblaze records intake, deterministic grounding, an AI-created bounded
   review plan, B2 evidence, concurrent GMI visual/audio analysis, synthesis,
@@ -201,8 +210,8 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   `docs/AI_INTERPRETIVE_RUN.md` and its two zero-cloud proof scripts.
 - ✅ **Sender front end with per-service toggles.** The upload page
   (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`
-  captions picker, and a services panel — AV QC, Caption QC, preview
-  thumbnail, AI summary — plus a **Transfer only** switch that turns
+  captions picker, and a services panel — AV QC, Caption QC, AI-selected
+  preview thumbnail, AI summary — plus a **Transfer only** switch that turns
   everything off and makes Waystation a plain verified file-transfer tool.
   Selections ride the `complete` call, are stored per transfer, and gate
   the pipeline at BOTH triggers (dev-complete and the signed B2 event
