@@ -69,6 +69,9 @@ if (tid) {
   const logEl = $("#log");
   const servicesEl = $("#services");
   const transferOnly = $<HTMLInputElement>("#transferOnly");
+  const interpretive = $<HTMLInputElement>("#opt_ai_interpretive");
+  const reviewBrief = $<HTMLTextAreaElement>("#review_brief");
+  const reviewBriefRow = $("#reviewBriefRow");
   const gb = (n: number) => (n / 1e9).toFixed(2);
 
   fileIn.onchange = () => {
@@ -92,6 +95,7 @@ if (tid) {
 
   // "Transfer only" greys out and overrides the individual services.
   transferOnly.onchange = () => servicesEl.classList.toggle("off", transferOnly.checked);
+  interpretive.onchange = () => { reviewBriefRow.hidden = !interpretive.checked; };
 
   // All-cloud deployments pin the compute target and hide the selector: the
   // gateway and worker share one host, so there is no second machine to route
@@ -110,7 +114,7 @@ if (tid) {
     if (transferOnly.checked)
       return { qc_av: false, qc_captions: false, qc_ai: false, qc_synthetic: false,
                ai_interpretive: false,
-               thumbnail: false, summarize: false, profile, compute };
+               thumbnail: false, summarize: false, review_brief: "", profile, compute };
     return {
       qc_av: val("opt_qc_av"),
       qc_captions: val("opt_qc_captions"),
@@ -119,6 +123,7 @@ if (tid) {
       ai_interpretive: val("opt_ai_interpretive"),
       thumbnail: val("opt_thumbnail"),
       summarize: val("opt_summarize"),
+      review_brief: interpretive.checked ? reviewBrief.value.trim().slice(0, 2000) : "",
       profile,
       compute,
     };

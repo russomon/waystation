@@ -46,6 +46,7 @@ def _deterministic_gate(status: str | None) -> tuple[str, str]:
 def _qualified_findings(stage_observations: dict[str, list[dict]], policy: dict) -> list[dict]:
     defaults = policy.get("defaults") or {}
     grouped: dict[str, list[dict]] = {}
+    synthesis_by_risk: dict[str, list[dict]] = {}
     for stage, observations in (stage_observations or {}).items():
         for observation in observations or []:
             if observation.get("finding_state") != "concern":
@@ -57,36 +58,79 @@ def _qualified_findings(stage_observations: dict[str, list[dict]], policy: dict)
                 continue
             item = deepcopy(observation)
             item["stage"] = stage
-            grouped.setdefault(risk_id, []).append(item)
+            if stage == "synthesis" or item.get("review_role") == "synthesis":
+                synthesis_by_risk.setdefault(risk_id, []).append(item)
+            else:
+                grouped.setdefault(risk_id, []).append(item)
 
     qualified = []
-    for risk_id, observations in grouped.items():
+    for risk_id in sorted(set(grouped) | set(synthesis_by_risk)):
+        observations = grouped.get(risk_id, [])
         rule = policy["risks"][risk_id]
         minimum_confidence = float(rule.get("minimum_confidence",
                                             defaults.get("minimum_confidence", 1.0)))
         minimum_evidence = int(rule.get("minimum_evidence",
                                         defaults.get("minimum_evidence", 1)))
-        minimum_stages = int(rule.get("minimum_corroborating_stages",
-                                      defaults.get("minimum_corroborating_stages", 2)))
-        accepted = [item for item in observations
-                    if float(item.get("confidence", 0.0)) >= minimum_confidence]
+        minimum_sources = int(rule.get(
+            "minimum_independent_sources",
+            rule.get("minimum_corroborating_stages",
+                     defaults.get("minimum_independent_sources",
+                                  defaults.get("minimum_corroborating_stages", 2)))))
+        authority = rule.get("authority", "hold")
+        required_severity = rule.get("required_severity") if authority == "enforce" else None
+        required_intent = rule.get("required_intent_state") if authority == "enforce" else None
+        minimum_transcriptions = int(rule.get("minimum_transcriptions", 0))
+        require_text_transition = bool(rule.get("require_text_transition", False))
+
+        def eligible(item: dict) -> bool:
+            if not item.get("authority_source_id"):
+                return False
+            if float(item.get("confidence", 0.0)) < minimum_confidence:
+                return False
+            if required_severity and item.get("severity") != required_severity:
+                return False
+            if required_intent and item.get("intent_state") != required_intent:
+                return False
+            transcription_ids = {str(value.get("evidence_id"))
+                                 for value in item.get("evidence_transcriptions") or []
+                                 if isinstance(value, dict) and value.get("evidence_id")}
+            if len(transcription_ids) < minimum_transcriptions:
+                return False
+            if require_text_transition and not item.get("text_transition_observed"):
+                return False
+            return True
+
+        accepted = [item for item in observations if eligible(item)]
+        synthesis = [item for item in synthesis_by_risk.get(risk_id, []) if eligible(item)]
         stages = sorted({item["stage"] for item in accepted})
+        source_ids = sorted({str(item["authority_source_id"]) for item in accepted})
         evidence = sorted({evidence_id for item in accepted
                            for evidence_id in item.get("evidence_ids") or []})
+        synthesis_agreement = bool(synthesis)
         qualified.append({
             "risk_id": risk_id,
             "label": rule.get("label", risk_id),
-            "policy_authority": rule.get("authority", "hold"),
-            "qualified": len(stages) >= minimum_stages and len(evidence) >= minimum_evidence,
+            "policy_authority": authority,
+            "qualified": (len(source_ids) >= minimum_sources
+                          and len(evidence) >= minimum_evidence
+                          and synthesis_agreement),
             "corroborating_stages": stages,
+            "independent_sources": source_ids,
+            "synthesis_agreement": synthesis_agreement,
             "evidence_ids": evidence,
             "maximum_confidence": max((float(item.get("confidence", 0.0))
-                                       for item in accepted), default=0.0),
+                                       for item in observations + synthesis_by_risk.get(risk_id, [])),
+                                      default=0.0),
             "requirements": {"minimum_confidence": minimum_confidence,
                              "minimum_evidence": minimum_evidence,
-                             "minimum_corroborating_stages": minimum_stages},
+                             "minimum_independent_sources": minimum_sources,
+                             "synthesis_agreement": True,
+                             "required_severity": required_severity,
+                             "required_intent_state": required_intent,
+                             "minimum_transcriptions": minimum_transcriptions,
+                             "require_text_transition": require_text_transition},
         })
-    return sorted(qualified, key=lambda item: item["risk_id"])
+    return qualified
 
 
 def decide(*, deterministic_status: str | None, interpretive_state: str,
@@ -168,7 +212,7 @@ def decide(*, deterministic_status: str | None, interpretive_state: str,
                           "missing": missing_risks,
                           "not_checked": unresolved_risks,
                           "complete": not missing_risks and not unresolved_risks},
-        "corroboration_basis": "distinct_pipeline_stages_not_independent_model_consensus",
+        "corroboration_basis": "distinct_provider_model_sources_plus_non_independent_synthesis_adjudication",
         "reasons": reasons,
         "policy": {"policy_id": policy["policy_id"], "version": policy["version"],
                    "schema_version": policy["schema_version"], "sha256": policy["sha256"]},

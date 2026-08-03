@@ -15,6 +15,7 @@ export interface ServiceOptions {
   qc_av: boolean; qc_captions: boolean; qc_ai: boolean; qc_synthetic: boolean;
   ai_interpretive: boolean;
   thumbnail: boolean; summarize: boolean;
+  review_brief: string;
   profile: string;      // standard | broadcast/house XDCAM | netflix
   compute: string;      // "local" | "cloud" — where the waystation crunches
 }

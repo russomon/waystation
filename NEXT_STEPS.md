@@ -7,30 +7,21 @@ history.
 
 ## Now
 
-- **Review and calibrate the dual-key Genblaze/GMI workflow before release.**
-  Source now includes an AI review planner, specialist visual/audio stages,
-  synthesis, versioned `shadow|hold|enforce` authority, B2 artifacts, and a
-  visible READY/HOLD/REJECT result. It is not deployed; both paid-run gates are
-  false and authority defaults to `shadow`. First run one short credentialed
-  asset with all other AI lanes off, verify four-or-fewer explicit-analysis
-  model events plus one separately recorded AI-thumbnail call when Preview
-  thumbnail is selected, and review risk
-  coverage, then review retained known-good/known-bad assets per enforceable
-  category. Two credentialed local attempts fixed credential/Object-Lock and
-  specialist-output failures, then proved AI thumbnailing, nine specialist
-  observations, B2 evidence, and a verified manifest. Planner and synthesis
-  still reached their former length limits, so that run honestly remained
-  `not_checked`. Source now uses compact versioned contracts, complete nine-risk
-  synthesis validation, larger stage-specific bounded ceilings, and audio-edge
-  suppression. Rerun one known-good and one planted-bad short asset in `shadow`;
-  require planner/synthesis `finish_reason=stop`, synthesis 9/9, no interior
-  sample-edge false positive, four explicit calls plus optional thumbnail, and
-  verified manifests. Promote to `hold` only after reviewing both retained
-  results; do not consider `enforce` until a real labeled corpus supports each
-  enforceable category. Do not call bounded
-  still/audio sampling a complete human replacement or mock proof live-provider
-  validation. The exposed credential has been revoked; keep its replacement
-  only in the gitignored `.env`.
+- **Run the post-fix planted/clean-twin AI calibration pair in shadow.** Source
+  is not deployed; both paid-run gates remain false and authority defaults to
+  `shadow`. Use the retained `TICKETS` to `TICKET5` mutation and a matching
+  clean twin. Supply the expected text in the sender's optional review brief,
+  keep every other AI lane off, and configure a genuinely different jury model
+  only if one is available. Require chronological evidence, exact per-frame
+  transcriptions, no false freeze diagnosis, planner/synthesis
+  `finish_reason=stop`, complete risk coverage, verified manifests, and
+  disclosed billable events. The jury adds at most one call; leaving it unset
+  is valid and must produce `not_configured`, never simulated consensus.
+  Promote to `hold` only after the retained pair is reviewed. Do not use
+  `enforce` until a larger labeled corpus establishes acceptable false-positive
+  behavior for each enforceable category; distinct model names alone do not
+  establish scientific independence. Keep the replacement credential only in
+  the gitignored `.env`.
 
 - ~~Deploy the 350 GiB large-file build~~ — **DONE 2026-08-01.** Gateway is at
   `7291c80`, banner reports `max=350.0GiB verifiedRangeMax=16.0GiB

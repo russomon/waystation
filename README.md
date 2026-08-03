@@ -200,17 +200,20 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   `scripts/ai-thumbnail-proof.sh`.
 - ✅ **Explicit AI Interpretive Analysis** (opt-in, spend-off by default) —
   Genblaze records intake, deterministic grounding, an AI-created bounded
-  review plan, B2 evidence, concurrent GMI visual/audio analysis, synthesis,
-  and artifact storage. The delivery page shows a dual-key READY/HOLD/REJECT
+  review plan, B2 evidence, concurrent GMI visual/audio analysis, an optional
+  separately configured blind jury, synthesis, and artifact storage. The
+  delivery page shows a dual-key READY/HOLD/REJECT
   decision, both gate dispositions, the run timeline, uncertainty, evidence
   citations, and selected frames. Raw provider text is never authoritative;
   the versioned reducer can hold or reject only after allowlisted evidence,
-  confidence, category, coverage, and corroboration rules pass. Defaults are
+  confidence, category, intent, and distinct-source corroboration rules pass.
+  Synthesis does not count as an independent source. Defaults are
   deployment-off and authority `shadow`. See
   `docs/AI_INTERPRETIVE_RUN.md` and its two zero-cloud proof scripts.
-  Run schema v1.2 requires complete unique synthesis coverage for every policy
-  risk, records truncation and expected/observed risk counts, and prevents an
-  interior audio-sample edge from being mislabeled as a source edit.
+  Run schema v1.3 requires chronological evidence and exact text comparison,
+  records truncation and expected/observed risk counts, prevents an interior
+  audio-sample edge from being mislabeled as a source edit, and publishes only
+  bounded metadata for an optional sender review brief.
 - ✅ **Sender front end with per-service toggles.** The upload page
   (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`
   captions picker, and a services panel — AV QC, Caption QC, AI-selected

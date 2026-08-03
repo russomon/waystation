@@ -283,8 +283,13 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     (decisionBox.querySelector("p") as HTMLElement).textContent = (decision.reasons ?? []).join(" · ") || "No decision reason was recorded.";
     const deterministicGate = decision.deterministic_gate?.disposition ?? "HOLD";
     const aiGate = decision.ai_interpretive_gate?.disposition ?? "HOLD";
+    const proposed = decision.ai_interpretive_gate?.proposed_disposition ?? "HOLD";
+    const qualified = decision.qualified_ai_findings ?? [];
+    const independentSources = Math.max(0, ...qualified.map((item: any) =>
+      Number(item.independent_sources?.length ?? 0)));
     (decisionBox.querySelector("p.meta") as HTMLElement).textContent =
-      `deterministic gate ${deterministicGate} · AI gate ${aiGate} · raw model output has no direct authority`;
+      `deterministic gate ${deterministicGate} · AI gate ${aiGate} · proposed ${proposed} · ` +
+      `independent sources ${independentSources} · raw model output has no direct authority`;
     panel.append(decisionBox);
 
     const timeline = el(`<div class="timeline"></div>`);
@@ -293,7 +298,8 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       name.textContent = String(stage.name ?? "stage").replaceAll("_", " ");
       const state = el(`<span class="mono"></span>`);
       const provider = stage.provider ? ` · ${stage.provider}/${stage.model ?? ""}` : "";
-      state.textContent = `${stage.outcome ?? "not_checked"} · ${Number(stage.duration_ms ?? 0)} ms${provider}`;
+      const role = stage.review_role ? ` · ${stage.review_role}` : "";
+      state.textContent = `${stage.outcome ?? "not_checked"} · ${Number(stage.duration_ms ?? 0)} ms${provider}${role}`;
       timeline.append(name, state);
     }
     panel.append(timeline);
@@ -309,8 +315,14 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       (item.querySelector("strong") as HTMLElement).textContent = observation.issue_description ?? "Review observation";
       (item.querySelector("p") as HTMLElement).textContent = observation.context || observation.review_question || "Human review requested.";
       const evidence = (observation.evidence_ids ?? []).join(", ") || "no accepted citation";
+      const intent = observation.intent_state ?? "unknown";
+      const transcriptions = (observation.evidence_transcriptions ?? [])
+        .map((entry: any) => `${entry.evidence_id}="${entry.text}"`).join(" → ");
       (item.querySelector("p.meta") as HTMLElement).textContent =
-        `${observation.risk_id ?? "unclassified"} · ${observation.finding_state ?? "not_checked"}/${observation.severity ?? "review"} · confidence ${Number(observation.confidence ?? 0).toFixed(2)} · evidence ${evidence} · ${observation.uncertainty ?? "uncertainty not supplied"}`;
+        `${observation.risk_id ?? "unclassified"} · ${observation.finding_state ?? "not_checked"}/${observation.severity ?? "review"} · ` +
+        `intent ${intent} · confidence ${Number(observation.confidence ?? 0).toFixed(2)} · evidence ${evidence} · ` +
+        `${observation.uncertainty ?? "uncertainty not supplied"}` +
+        (transcriptions ? ` · text ${transcriptions}` : "");
       panel.append(item);
     }
 
@@ -328,7 +340,11 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       panel.append(gallery);
     }
     const provenance = el(`<p class="mono"></p>`);
-    provenance.textContent = `result sha256 ${String(aiManifestAsset?.sha256 ?? "unavailable")} · packet schema ${aiRun.prompt_packet?.schema_version ?? "unknown"} · schema sha256 ${String(aiRun.prompt_packet?.schema_sha256 ?? "").slice(0, 20)}…`;
+    const reviewContext = aiRun.review_context ?? {};
+    const brief = reviewContext.provided
+      ? ` · review brief ${reviewContext.characters ?? 0} chars sha256 ${String(reviewContext.sha256 ?? "").slice(0, 20)}…`
+      : " · no review brief";
+    provenance.textContent = `result sha256 ${String(aiManifestAsset?.sha256 ?? "unavailable")} · packet schema ${aiRun.prompt_packet?.schema_version ?? "unknown"} · schema sha256 ${String(aiRun.prompt_packet?.schema_sha256 ?? "").slice(0, 20)}…${brief}`;
     panel.append(provenance);
     card.append(panel);
   }

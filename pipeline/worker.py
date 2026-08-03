@@ -148,11 +148,12 @@ AI_INTERPRETIVE_AUDIO_MODEL = (os.environ.get("AI_INTERPRETIVE_AUDIO_MODEL")
                                 or GMI_MULTIMODAL_MODEL).strip()
 AI_INTERPRETIVE_SYNTHESIS_MODEL = (os.environ.get("AI_INTERPRETIVE_SYNTHESIS_MODEL")
                                     or GMI_MODEL).strip()
+AI_INTERPRETIVE_JURY_MODEL = os.environ.get("AI_INTERPRETIVE_JURY_MODEL", "").strip()
 AI_INTERPRETIVE_FALLBACK_PROVIDER = os.environ.get("AI_INTERPRETIVE_FALLBACK_PROVIDER", "").strip()
 AI_INTERPRETIVE_FALLBACK_MODEL = os.environ.get("AI_INTERPRETIVE_FALLBACK_MODEL", "").strip()
 AI_INTERPRETIVE_TIMEOUT_SECONDS = float(os.environ.get("AI_INTERPRETIVE_TIMEOUT_SECONDS", "120"))
-AI_INTERPRETIVE_MAX_CONCURRENCY = max(1, min(2, int(os.environ.get(
-    "AI_INTERPRETIVE_MAX_CONCURRENCY", "2"))))
+AI_INTERPRETIVE_MAX_CONCURRENCY = max(1, min(3, int(os.environ.get(
+    "AI_INTERPRETIVE_MAX_CONCURRENCY", "3"))))
 AI_INTERPRETIVE_MAX_FRAMES = max(0, min(8, int(os.environ.get("AI_INTERPRETIVE_MAX_FRAMES", "4"))))
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS = max(0, min(3, int(os.environ.get(
     "AI_INTERPRETIVE_MAX_AUDIO_WINDOWS", "1"))))
@@ -857,7 +858,8 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                                   prompt_sha: str, parts: list[dict], evidence: list[dict],
                                   grounding_hash: str,
                                   allowed_risk_ids: set[str] | None = None,
-                                  expected_risk_ids: set[str] | None = None) -> tuple[dict, list[dict]]:
+                                  expected_risk_ids: set[str] | None = None,
+                                  review_role: str = "specialist") -> tuple[dict, list[dict]]:
     """Run one configured GMI stage with explicit, recorded fallback semantics."""
     started = _iso_now()
     progress(job, {"type": "ai_interpretive_stage", "stage": name, "state": "started"})
@@ -937,6 +939,11 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
     observations = qinterpretive_run.sanitize_observations(
         payload, allowed, name, allowed_risk_ids=allowed_risk_ids,
         evidence_catalog={item["evidence_id"]: item for item in evidence})
+    authority_source_id = f"gmicloud:{used_model}"
+    for observation in observations:
+        observation.update({"provider": "gmicloud", "model": used_model,
+                            "review_role": review_role,
+                            "authority_source_id": authority_source_id})
     usage = {"tokens_in": response.tokens_in, "tokens_out": response.tokens_out,
              "tokens_cached": response.tokens_cached, "cost_usd": response.cost_usd,
              "billable_events": 1}
@@ -965,6 +972,7 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
         structured_observation_count=len(observations),
         expected_risk_count=len(expected_risk_ids or set()),
         observed_risk_count=len(observed_risks), truncated=truncated,
+        review_role=review_role, authority_source_id=authority_source_id,
         usage=usage, cost_usd=response.cost_usd)
     progress(job, {"type": "ai_interpretive_stage", "stage": name,
                    "step": name,
@@ -1058,7 +1066,9 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
     started = _iso_now()
     progress(job, {"type": "ai_interpretive_started", "run_id": run_id,
                    "schema_version": qinterpretive_run.SCHEMA_VERSION})
-    grounding = qinterpretive_run.detached_grounding(copy.deepcopy(qc_report))
+    review_context = qinterpretive_run.normalize_review_context(job.options)
+    grounding = qinterpretive_run.detached_grounding(
+        copy.deepcopy(qc_report), meta=meta, review_context=review_context)
     grounding_hash = qinterpretive_run.canonical_hash(grounding)
     source = {"asset_id": "master", "url": f"s3://{BUCKET}/{job.key}",
               "media_type": "application/octet-stream", "sha256": src_sha,
@@ -1101,7 +1111,9 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             path, mime = os.path.join(tmp, f"{evidence_id}.jpg"), "image/jpeg"
             if item:
                 model, public = item
-                model_parts["visual"].extend([{"type": "text", "text": f"Evidence {evidence_id}:"}, model])
+                model_parts["visual"].extend([{"type": "text", "text":
+                    f"Evidence {evidence_id} at source {request['time_seconds']:.3f}s "
+                    f"({request['reason']}):"}, model])
         else:
             item = _audio_evidence(src, tmp, evidence_id, request["start_seconds"],
                                    request["duration_seconds"])
@@ -1163,19 +1175,40 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             continue
         prompt, prompt_sha = qinterpretive_run.build_prompt(
             name, grounding, lane_evidence, review_plan=review_plan)
-        jobs.append((name, model, prompt, prompt_sha, model_parts[lane], lane_evidence))
+        jobs.append((name, model, prompt, prompt_sha, model_parts[lane], lane_evidence,
+                     "specialist"))
+
+    if AI_INTERPRETIVE_JURY_MODEL and evidence:
+        jury_prompt, jury_sha = qinterpretive_run.build_prompt(
+            "gmi_independent_jury", grounding, evidence, review_plan=review_plan)
+        jobs.append(("gmi_independent_jury", AI_INTERPRETIVE_JURY_MODEL,
+                     jury_prompt, jury_sha,
+                     model_parts["visual"] + model_parts["audio"], evidence,
+                     "independent_jury"))
+    elif not AI_INTERPRETIVE_JURY_MODEL:
+        stages.append(_interpretive_stage(
+            "gmi_independent_jury", outcome="not_configured", provider="gmicloud",
+            model="not_configured", error="no AI_INTERPRETIVE_JURY_MODEL",
+            attempts=[], review_role="independent_jury", usage={"billable_events": 0}))
+        progress(job, {"type": "ai_interpretive_stage", "stage": "gmi_independent_jury",
+                       "state": "not_checked", "reason": "jury model not configured"})
+    else:
+        stages.append(_interpretive_stage(
+            "gmi_independent_jury", outcome="not_checked", provider="gmicloud",
+            model=AI_INTERPRETIVE_JURY_MODEL, error="no evidence for independent jury",
+            attempts=[], review_role="independent_jury", usage={"billable_events": 0}))
 
     specialist_observations: list[dict] = []
     stage_observations: dict[str, list[dict]] = {}
     if jobs:
         with ThreadPoolExecutor(max_workers=min(AI_INTERPRETIVE_MAX_CONCURRENCY, len(jobs))) as pool:
-            futures = {pool.submit(_run_interpretive_model_stage, job, *args, grounding_hash,
-                                   allowed_risk_ids): args[0]
+            futures = {pool.submit(_run_interpretive_model_stage, job, *args[:6], grounding_hash,
+                                   allowed_risk_ids, None, args[6]): args[0]
                        for args in jobs}
             completed: dict[str, tuple[dict, list[dict]]] = {}
             for future in as_completed(futures):
                 completed[futures[future]] = future.result()
-        for name in ("gmi_visual_analysis", "gmi_audio_analysis"):
+        for name in ("gmi_visual_analysis", "gmi_audio_analysis", "gmi_independent_jury"):
             if name in completed:
                 stage, found = completed[name]
                 stages.append(stage)
@@ -1191,7 +1224,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         synthesis_stage, synthesis_observations = _run_interpretive_model_stage(
             job, "synthesis", AI_INTERPRETIVE_SYNTHESIS_MODEL, synthesis_prompt,
             synthesis_sha, [], evidence, grounding_hash, allowed_risk_ids,
-            required_risk_ids)
+            required_risk_ids, "synthesis")
         stages.append(synthesis_stage)
         stage_observations["synthesis"] = synthesis_observations
         synthesis_complete = synthesis_stage["outcome"] == "complete"
@@ -1248,6 +1281,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             "visual_model": AI_INTERPRETIVE_VISUAL_MODEL,
             "audio_model": AI_INTERPRETIVE_AUDIO_MODEL,
             "synthesis_model": AI_INTERPRETIVE_SYNTHESIS_MODEL,
+            "jury_model": AI_INTERPRETIVE_JURY_MODEL or None,
             "fallback_provider": AI_INTERPRETIVE_FALLBACK_PROVIDER or None,
             "fallback_model": AI_INTERPRETIVE_FALLBACK_MODEL or None,
             "max_output_tokens": AI_INTERPRETIVE_MAX_OUTPUT_TOKENS,
@@ -1256,6 +1290,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
         },
         "deterministic_grounding": {"sha256": grounding_hash,
                                      "policy": grounding["deterministic_policy"]},
+        "review_context": qinterpretive_run.public_review_context(review_context),
         "prompt_packet": {"schema_version": qinterpretive_run.PACKET_SCHEMA_VERSION,
                           "schema_sha256": qinterpretive_run.canonical_hash(
                               {"schema_version": qinterpretive_run.PACKET_SCHEMA_VERSION}),

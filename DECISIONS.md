@@ -5,6 +5,31 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - AI authority requires distinct sources and confirmed intent
+
+- Synthesis is adjudication, not independent evidence. Repeating a specialist
+  observation can never satisfy corroboration by itself. Enforceable AI risks
+  require two distinct configured provider/model source identities plus a
+  separate synthesis agreement; identical model identities used in different
+  stages count once, and output missing that provenance is ineligible.
+- An enforceable finding must also carry allowlisted stored evidence, policy
+  confidence, `reject` severity, and `confirmed_defect` intent. Ambiguous
+  creative/editorial intent is a review hold, never an AI rejection.
+- Visual evidence is source-time ordered and the model must transcribe visible
+  text per frame before judging mutation. Typography rejection requires two
+  distinct transcribed evidence IDs and an observed text transition.
+  Contradictory `no_concern` typography
+  output fails closed to `not_checked`; static composition alone is not a
+  freeze diagnosis.
+- The optional sender review brief is bounded to 2,000 characters and treated
+  as untrusted context. Public provenance directly exposes only presence,
+  length, and SHA-256; generated observations may still restate context that is
+  relevant to their finding.
+- Policy v1.1.0 and run schema v1.3 implement this boundary. The optional jury
+  model is configuration-only and adds one metered call when set; absent jury
+  configuration is explicit and cannot qualify an AI rejection. Production
+  and paid modes were not changed.
+
 ### 2026-08-02 - AI completion is structural and sample edges are not source defects
 
 - An explicit AI run is `complete` only when synthesis returns one unique,

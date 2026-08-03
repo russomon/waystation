@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-02 (dual-key AI delivery authority first pass; production unchanged)
+Updated: 2026-08-02 (AI evidence/authority calibration hardening; production unchanged)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -31,6 +31,38 @@ switches and chat history gaps.
   the showcase-asset spec.
 
 ## Dual-key AI delivery authority first pass — 2026-08-02
+
+### Evidence and authority calibration hardening
+
+- Credentialed local transfer `92a6ca73-28b7-4f17-b795-b0404ea511ed`
+  completed with a verified canonical manifest and preserved three visual
+  evidence frames. The planted source mutation was `TICKETS` to `TICKET5` at
+  3.08s; captured frames at 1.5s, 3.0s, and 4.5s contained both exact forms.
+  The model instead described a possible freeze, marked typography
+  `no_concern`, and synthesis repeated that specialist claim. This is useful
+  live-provider evidence of a false diagnosis, not a successful defect catch.
+- Interpretive run schema v1.3 and prompt v1.4 now order frame evidence by
+  source time, require per-frame exact text transcription/comparison, separate
+  text mutation from freeze, and force ambiguous intent or contradictory
+  transcription results to HOLD/not_checked. A sender may provide a bounded
+  optional review brief (expected text/editorial intent); only its length and
+  SHA-256 are published directly, although model observations may restate
+  relevant context.
+- Authority policy v1.1.0 no longer counts synthesis restating a specialist as
+  corroboration. An enforceable AI rejection requires two distinct configured
+  provider/model identities, separate synthesis agreement, allowlisted
+  evidence, reject severity, and confirmed-defect intent. Distinct model IDs
+  are an auditable source boundary, not proof of independent training weights.
+  A separately configured jury stage supplies the second blind review; when it
+  is unset the stage is explicitly `not_configured`, costs zero, and the result
+  cannot qualify for AI rejection.
+- Focused authority/orchestration proofs and the full local
+  gateway-worker-MinIO loop pass with zero cloud spend. The loop proves the
+  review-brief API bound, public hash-only metadata, explicit absent-jury state,
+  B2-compatible artifact hashes, and SDK manifest verification. A post-fix
+  credentialed planted/clean-twin pair remains required in shadow mode.
+- **Production was not accessed or changed.** Explicit interpretation and AI
+  shadow remain disabled in production; this source pass made no paid GMI call.
 
 ### Credentialed shadow run and completion hardening
 
@@ -73,7 +105,7 @@ switches and chat history gaps.
   only allowlisted categories with stored evidence, confidence, and cross-stage
   corroboration. Missing category coverage is HOLD, never READY. There is no
   composite score.
-- Policy `waystation_ai_interpretive_authority` v1.0.0 makes visible image,
+- Policy `waystation_ai_interpretive_authority` v1.1.0 makes visible image,
   typography, and audible defects enforceable. Temporal continuity, lip sync,
   caption semantics, editorial/creative intent, and aesthetics are HOLD-only
   in this first pass because the current bounded still/audio evidence is not a

@@ -41,6 +41,9 @@
       .svc input { transform: translateY(1px); }
       .svc .muted { color: var(--mut); font-size: 12.5px; margin-left: auto; text-align: right; }
       .svc.interpretive { background: #f0fdf4; }
+      .brief-row { align-items: stretch; flex-direction: column; cursor: default; background: #f8fffa; }
+      .brief-row textarea { width: 100%; min-height: 74px; resize: vertical; font: inherit;
+                            padding: .5rem .6rem; border: 1px solid #bbf7d0; border-radius: 6px; }
       .services.off .svc { opacity: .4; pointer-events: none; }
       .profile-row { font-weight: 500; cursor: default; justify-content: space-between; }
       .profile-row select { font: inherit; padding: .25rem .5rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
@@ -160,6 +163,11 @@
             Synthetic QC <span class="muted">asset blueprint &middot; continuity ledger &middot; typography</span></label>
           <label class="svc interpretive"><input type="checkbox" id="opt_ai_interpretive" />
             AI Interpretive Analysis <span class="muted">Genblaze orchestration &middot; GMI review &middot; B2 evidence</span></label>
+          <label class="svc brief-row" id="reviewBriefRow" hidden>
+            <span>AI review brief <span class="muted">optional</span></span>
+            <textarea id="review_brief" maxlength="2000"
+              placeholder="Expected text, approved editorial intent, or reference notes"></textarea>
+          </label>
           <label class="svc"><input type="checkbox" id="opt_thumbnail" checked />
             Preview thumbnail <span class="muted">AI-selected poster frame</span></label>
           <label class="svc"><input type="checkbox" id="opt_summarize" checked />

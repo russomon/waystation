@@ -1,65 +1,74 @@
 {
   "schema_version": "waystation-ai-authority-policy/1.0",
   "policy_id": "waystation_ai_interpretive_authority",
-  "version": "1.0.0",
-  "description": "Versioned first-pass policy for AI authority over perceptual QC. Deterministic measurements retain their own authority and cannot be cleared by AI.",
+  "version": "1.1.0",
+  "description": "Versioned policy for AI authority over perceptual QC. Enforceable findings require independent provider/model sources plus separate synthesis adjudication; deterministic measurements retain their own authority and cannot be cleared by AI.",
   "modes": ["shadow", "hold", "enforce"],
   "defaults": {
     "minimum_confidence": 0.85,
     "minimum_evidence": 1,
-    "minimum_corroborating_stages": 2
+    "minimum_independent_sources": 2
   },
   "risks": {
     "perceptual_visual_defect": {
       "label": "Visible image defect",
       "authority": "enforce",
-      "minimum_confidence": 0.9
+      "minimum_confidence": 0.9,
+      "required_severity": "reject",
+      "required_intent_state": "confirmed_defect"
     },
     "temporal_continuity_defect": {
       "label": "Temporal or editorial continuity defect",
       "authority": "hold",
       "minimum_confidence": 0.8,
-      "minimum_corroborating_stages": 1
+      "minimum_independent_sources": 1
     },
     "typography_defect": {
       "label": "Unreadable, malformed, or mutating typography",
       "authority": "enforce",
-      "minimum_confidence": 0.92
+      "minimum_confidence": 0.92,
+      "minimum_evidence": 2,
+      "minimum_transcriptions": 2,
+      "require_text_transition": true,
+      "required_severity": "reject",
+      "required_intent_state": "confirmed_defect"
     },
     "lip_sync_error": {
       "label": "Perceptible lip-sync error",
       "authority": "hold",
       "minimum_confidence": 0.8,
-      "minimum_corroborating_stages": 1
+      "minimum_independent_sources": 1
     },
     "audible_defect": {
       "label": "Perceptible audio defect",
       "authority": "enforce",
-      "minimum_confidence": 0.9
+      "minimum_confidence": 0.9,
+      "required_severity": "reject",
+      "required_intent_state": "confirmed_defect"
     },
     "caption_semantic_mismatch": {
       "label": "Caption and spoken-content mismatch",
       "authority": "hold",
       "minimum_confidence": 0.8,
-      "minimum_corroborating_stages": 1
+      "minimum_independent_sources": 1
     },
     "editorial_intent": {
       "label": "Editorial intent or continuity ambiguity",
       "authority": "hold",
       "minimum_confidence": 0.75,
-      "minimum_corroborating_stages": 1
+      "minimum_independent_sources": 1
     },
     "creative_intent": {
       "label": "Creative-intent ambiguity",
       "authority": "hold",
       "minimum_confidence": 0.75,
-      "minimum_corroborating_stages": 1
+      "minimum_independent_sources": 1
     },
     "aesthetic_quality": {
       "label": "Subjective aesthetic concern",
       "authority": "hold",
       "minimum_confidence": 0.8,
-      "minimum_corroborating_stages": 1
+      "minimum_independent_sources": 1
     }
   }
 }

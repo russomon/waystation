@@ -207,10 +207,25 @@ api.post("/uploads/sidecar-url", requireSession, enforceOrigin, limiter("sign", 
 const anyServiceOn = (o?: Record<string, boolean | string>) =>
   !o || SERVICE_KEYS.some((k) => o[k] !== false) || o["qc_synthetic"] === true
   || o["ai_interpretive"] === true;
-const OPTION_KEYS = new Set([...SERVICE_KEYS, "qc_synthetic", "ai_interpretive", "profile", "compute"]);
-const sanitizeOptions = (o?: Record<string, boolean | string>) => o
-  ? Object.fromEntries(Object.entries(o).filter(([key]) => OPTION_KEYS.has(key)))
-  : undefined;
+const OPTION_KEYS = new Set([
+  ...SERVICE_KEYS, "qc_synthetic", "ai_interpretive", "profile", "compute", "review_brief",
+]);
+const BOOLEAN_OPTIONS = new Set([...SERVICE_KEYS, "qc_synthetic", "ai_interpretive"]);
+const sanitizeOptions = (o?: Record<string, unknown>): Record<string, boolean | string> | undefined => {
+  if (!o || typeof o !== "object" || Array.isArray(o)) return undefined;
+  const clean: Record<string, boolean | string> = {};
+  for (const [key, value] of Object.entries(o)) {
+    if (!OPTION_KEYS.has(key)) continue;
+    if (BOOLEAN_OPTIONS.has(key)) {
+      if (typeof value === "boolean") clean[key] = value;
+    } else if (key === "review_brief") {
+      if (typeof value === "string") clean[key] = value.trim().slice(0, 2000);
+    } else if (typeof value === "string") {
+      clean[key] = value.slice(0, 120);
+    }
+  }
+  return clean;
+};
 
 api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   const b = await c.req.json().catch(() => ({}) as Record<string, any>);
@@ -226,7 +241,7 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   const transferId = owned.row.transferId;
   // Unknown and retired options (including legacy self_heal) never enter the
   // transfer store or dispatch payload.
-  const requested = sanitizeOptions(b.options as Record<string, boolean | string> | undefined);
+  const requested = sanitizeOptions(b.options as Record<string, unknown> | undefined);
   // Service allowlist: a disabled service is forced OFF in the stored options,
   // not merely hidden in the UI — the API is authoritative. Applied before the
   // record is written so the policy survives a restart and the B2 event path

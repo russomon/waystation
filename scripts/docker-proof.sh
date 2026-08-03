@@ -44,9 +44,9 @@ assert caption_transport.SCHEMA_VERSION == "waystation-caption-transport/1.0"
 assert deep_package.SCHEMA_VERSION == "waystation-deep-package-evidence/1.0"
 assert benchmark.SCHEMA_VERSION == "waystation-commercial-qc-benchmark/1.0"
 assert shadow_evaluation.SCHEMA_VERSION == "waystation-ai-shadow-review/1.0"
-assert interpretive_run.SCHEMA_VERSION == "waystation-ai-interpretive-run/1.2"
-assert ai_authority.load_policy()["version"] == "1.0.0"
-print("policy 1.4.0 + deep package/caption/benchmark/shadow + dual-key interpretive adapters")
+assert interpretive_run.SCHEMA_VERSION == "waystation-ai-interpretive-run/1.3"
+assert ai_authority.load_policy()["version"] == "1.1.0"
+print("policy 1.4.0 + deep package/caption/benchmark/shadow + dual-key interpretive 1.3 adapters")
 PY
 ' || { echo "FAIL: worker toolchain assertion"; exit 1; }
 

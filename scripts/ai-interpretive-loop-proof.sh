@@ -118,6 +118,7 @@ urllib.request.urlopen(urllib.request.Request(url,data=data,method='PUT')).read(
 post('/uploads/complete', {'key':init['key'],'uploadId':init['uploadId'],
     'options': {'qc_av':True,'qc_captions':False,'qc_ai':False,'qc_synthetic':False,
                 'ai_interpretive':True,'thumbnail':True,'summarize':False,
+                'review_brief':'Expected title remains TEST CARD.' + ('x' * 2100),
                 'profile':'standard','compute':'local'}})
 print(init['transferId'])
 PYEOF
@@ -152,11 +153,14 @@ gb=parse_manifest(manifest); assert gb.verify_hash()
 assert ai['state']=='complete' and ai['raw_model_output_direct_authority'] is False
 assert ai['delivery_authority']=='dual_key_deterministic_and_ai_policy'
 assert ai['authority_mode']=='shadow'
-assert ai['delivery_decision']['ai_interpretive_gate']['proposed_disposition']=='REJECT', json.dumps(ai['delivery_decision'], indent=2)
+assert ai['delivery_decision']['ai_interpretive_gate']['proposed_disposition']=='HOLD', json.dumps(ai['delivery_decision'], indent=2)
 assert ai['spend_accounting']['explicit_gmi_model_calls']==4
+assert ai['review_context']['provided'] is True and ai['review_context']['characters'] == 2000
+assert 'brief' not in ai['review_context']
 assert [stage['name'] for stage in ai['timeline']] == [
  'intake','deterministic_grounding','ai_review_planning','evidence_selection','gmi_visual_analysis',
- 'gmi_audio_analysis','synthesis','artifact_storage']
+ 'gmi_audio_analysis','gmi_independent_jury','synthesis','artifact_storage']
+assert next(stage for stage in ai['timeline'] if stage['name']=='gmi_independent_jury')['outcome']=='not_configured'
 assert ai['review_plan']['source']=='ai_planner'
 assert ai['interpretive_observations'] and all(item['authority']=='eligible_for_versioned_policy_reducer' for item in ai['interpretive_observations'])
 assert len(ai['interpretive_observations']) == 9

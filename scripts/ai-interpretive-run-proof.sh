@@ -29,7 +29,8 @@ worker.AI_INTERPRETIVE_PLANNER_MODEL = "proof/planner"
 worker.AI_INTERPRETIVE_VISUAL_MODEL = "proof/visual"
 worker.AI_INTERPRETIVE_AUDIO_MODEL = "proof/audio"
 worker.AI_INTERPRETIVE_SYNTHESIS_MODEL = "proof/synthesis"
-worker.AI_INTERPRETIVE_MAX_CONCURRENCY = 2
+worker.AI_INTERPRETIVE_JURY_MODEL = "proof/jury"
+worker.AI_INTERPRETIVE_MAX_CONCURRENCY = 3
 
 events = []
 worker.progress = lambda _job, event: events.append(deepcopy(event))
@@ -84,7 +85,8 @@ def chat(content, *, model, **kwargs):
         return SimpleNamespace(text=json.dumps(payload), model=model,
                                finish_reason="stop", tokens_in=80, tokens_out=20,
                                tokens_cached=0, cost_usd=None)
-    stage = next(name for name in ("gmi_visual_analysis", "gmi_audio_analysis", "synthesis")
+    stage = next(name for name in ("gmi_visual_analysis", "gmi_audio_analysis",
+                                   "gmi_independent_jury", "synthesis")
                  if f"stage {name}" in prompt)
     calls.append((stage, model))
     prompts[stage] = prompt
@@ -98,7 +100,8 @@ def chat(content, *, model, **kwargs):
     with lock:
         active -= 1
     evidence_ids = ["interpretive-evidence-01", "invented-citation"]
-    risks = list(ai_authority.load_policy()["risks"]) if stage == "synthesis" else [
+    risks = list(ai_authority.load_policy()["risks"]) if stage in {
+        "gmi_independent_jury", "synthesis"} else [
         "perceptual_visual_defect" if stage == "gmi_visual_analysis" else "audible_defect"]
     observations = []
     for risk in risks:
@@ -111,6 +114,7 @@ def chat(content, *, model, **kwargs):
                              "confidence": 7, "uncertainty": "bounded evidence",
                              "evidence_ids": evidence_ids,
                              "evidence_location": "interior",
+                             "intent_state": "confirmed_defect",
                              "review_question": "Inspect the cited sample?"})
     return SimpleNamespace(text=json.dumps({"observations": observations}), model=model,
                            finish_reason="stop", tokens_in=100, tokens_out=20,
@@ -128,7 +132,8 @@ canonical = {"status": "warn", "profile": "proof", "profile_label": "Proof",
 before = deepcopy(canonical)
 job = worker.Job(bucket="proof", key="transfers/proof-transfer/master.mov",
                  transferId="proof-transfer", gatewayUrl="http://unused",
-                 options={"ai_interpretive": True})
+                 options={"ai_interpretive": True,
+                          "review_brief": "Approved text must remain TICKETS."})
 
 with tempfile.TemporaryDirectory() as tmp:
     source = os.path.join(tmp, "master.mov")
@@ -145,9 +150,12 @@ assert result["authority_mode"] == "shadow"
 assert result["delivery_decision"]["disposition"] == "HOLD"
 assert result["delivery_decision"]["ai_interpretive_gate"]["proposed_disposition"] == "REJECT"
 assert [stage["name"] for stage in result["timeline"]] == list(interpretive_run.STAGE_ORDER)
-assert result["spend_accounting"]["explicit_gmi_model_calls"] == 4
+assert result["spend_accounting"]["explicit_gmi_model_calls"] == 5
 assert result["review_plan"]["source"] == "ai_planner"
-assert peak == 2, "visual and audio analysis did not overlap"
+assert peak == 3, "visual, audio, and independent jury analysis did not overlap"
+assert result["review_context"]["provided"] is True
+assert result["review_context"]["characters"] == len("Approved text must remain TICKETS.")
+assert "brief" not in result["review_context"]
 visual = next(stage for stage in result["timeline"] if stage["name"] == "gmi_visual_analysis")
 assert len(visual["attempts"]) == 2 and visual["attempts"][1]["fallback"] is True
 assert visual["fallback"]["used"] is True
@@ -160,8 +168,10 @@ assert all(limit in {worker.AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
                      worker.AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS}
            for limit in token_limits)
 assert '"risk_id": "audible_defect"' not in prompts["gmi_visual_analysis"]
+assert '"risk_id": "typography_defect"' in prompts["gmi_visual_analysis"]
 assert '"risk_id": "perceptual_visual_defect"' not in prompts["gmi_audio_analysis"]
 assert '"risk_id": "audible_defect"' in prompts["gmi_audio_analysis"]
+assert "blind independent juror" in prompts["gmi_independent_jury"]
 assert result["interpretive_observations"]
 assert result["state"] == "complete"
 assert len(result["interpretive_observations"]) == len(ai_authority.load_policy()["risks"])
@@ -182,7 +192,7 @@ assert visual_step.metadata["finish_reason"] == "stop"
 assert visual_step.metadata["output_token_limit"] == worker.AI_INTERPRETIVE_MAX_OUTPUT_TOKENS
 assert any(event["type"] == "ai_interpretive_started" for event in events)
 assert any(event["type"] == "ai_interpretive_complete" for event in events)
-assert sum(1 for event in events if event.get("billable") == {"unit": "run", "units": 1}) == 4
+assert sum(1 for event in events if event.get("billable") == {"unit": "run", "units": 1}) == 5
 
 # Planner output is allowlisted, deduplicated, bounded to the media, and cannot
 # omit policy-required risks or erase the mandatory sampled-coverage caveat.
@@ -212,6 +222,49 @@ compact_plan = interpretive_run.sanitize_review_plan({
 }, meta, policy)
 assert compact_plan is not None
 assert set(item["risk_id"] for item in compact_plan["risk_targets"]) == set(policy["risks"])
+
+# Planner priority cannot leave evidence or specialist risks out of timeline
+# order. All visual risks remain available whenever frame evidence exists.
+chronological = interpretive_run.build_evidence_plan(meta, {}, {
+    "evidence_requests": [
+        {"type": "frame", "time_seconds": 9, "risk_ids": ["perceptual_visual_defect"]},
+        {"type": "frame", "time_seconds": 1, "risk_ids": ["typography_defect"]},
+        {"type": "frame", "time_seconds": 5, "risk_ids": []},
+    ]}, max_frames=4, max_audio=0)
+times = [item["time_seconds"] for item in chronological]
+assert times == sorted(times)
+scoped = interpretive_run.stage_review_plan("gmi_visual_analysis", compact_plan, [{
+    "evidence_id": "frame-1", "type": "frame", "time_seconds": 2,
+    "risk_ids": ["perceptual_visual_defect"]}])
+assert {item["risk_id"] for item in scoped["risk_targets"]} == interpretive_run.VISUAL_RISK_IDS
+comparison_prompt, _ = interpretive_run.build_prompt(
+    "gmi_visual_analysis", {"review_context": {"brief": "Expected TICKETS"}},
+    [{"evidence_id": "late", "type": "frame", "time_seconds": 4.5},
+     {"evidence_id": "early", "type": "frame", "time_seconds": 1.5}],
+    review_plan=compact_plan)
+assert comparison_prompt.index('"evidence_id": "early"') < comparison_prompt.index('"evidence_id": "late"')
+assert "transcribe its exact characters" in comparison_prompt
+
+# Contradictory exact transcriptions cannot be accepted as a clean typography
+# result, and unresolved intent cannot retain reject severity.
+text_conflict = interpretive_run.sanitize_observations({"observations": [{
+    "risk_id": "typography_defect", "finding_state": "no_concern", "severity": "info",
+    "confidence": 0.9, "evidence_ids": ["early", "late"],
+    "evidence_transcriptions": [{"evidence_id": "late", "text": "TICKET5"},
+                                {"evidence_id": "early", "text": "TICKETS"}],
+}]}, {"early", "late"}, "gmi_visual_analysis", allowed_risk_ids=set(policy["risks"]),
+    evidence_catalog={"early": {"time_seconds": 1.5}, "late": {"time_seconds": 4.5}})
+assert text_conflict[0]["finding_state"] == "not_checked"
+assert text_conflict[0]["text_transition_observed"] is True
+assert text_conflict[0]["output_inconsistency"] is True
+assert [item["evidence_id"] for item in text_conflict[0]["evidence_transcriptions"]] == ["early", "late"]
+ambiguous = interpretive_run.sanitize_observations({"observations": [{
+    "risk_id": "perceptual_visual_defect", "finding_state": "concern", "severity": "reject",
+    "issue_description": "Potential freeze; unsure if intentional.", "confidence": 0.99,
+    "evidence_ids": ["early"], "intent_state": "confirmed_defect",
+}]}, {"early"}, "gmi_visual_analysis", allowed_risk_ids=set(policy["risks"]))
+assert ambiguous[0]["severity"] == "hold"
+assert ambiguous[0]["intent_state"] == "ambiguous"
 
 # An extraction-window boundary is not a source edit. A model claim about a
 # truncated syllable at an interior sample edge is forced to not_checked.
