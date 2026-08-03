@@ -64,6 +64,10 @@ switches and chat history gaps.
 - **Production was not accessed or changed.** Paid-run gates remain false and
   `AI_INTERPRETIVE_AUTHORITY_MODE=shadow` in production Compose. Source must be
   reviewed and live-provider calibrated before any separate deployment decision.
+- Local-launch security correction: `scripts/dev-up.sh` previously combined
+  incompatible parameter expansions and printed the configured GMI credential
+  after its status label. The banner now reports only `set`/`unset`. Any key
+  exposed by the old banner must be revoked and replaced before paid testing.
 
 ## Hackathon AI Interpretive run — 2026-08-02
 

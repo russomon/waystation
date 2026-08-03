@@ -53,13 +53,19 @@ echo "▶ client (vite)…"
 ( cd "$WEB/client" && npm run dev >/tmp/ox-client.log 2>&1 ) &
 until curl -sf -o /dev/null --max-time 1 http://localhost:5173/; do sleep 0.5; done
 
+if [ -n "${GMI_API_KEY:-}" ]; then
+  GMI_STATUS="set (real GMI enabled)"
+else
+  GMI_STATUS="unset (GMI steps skip)"
+fi
+
 cat <<MSG
 
   ✅ Waystation is up.
        open  →  http://localhost:5173
        logs  →  /tmp/ox-{minio,gw,pipe,client}.log
        data  →  $DATA  (persists across runs)
-       GMI   →  ${GMI_API_KEY:+set (real summarize)}${GMI_API_KEY:-unset (summarize step skips)}
+       GMI   →  $GMI_STATUS
 
   Drag in a small video → watch the pipeline → open the share link → Verify.
   Ctrl-C to stop everything.

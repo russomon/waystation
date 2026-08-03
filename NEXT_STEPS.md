@@ -16,7 +16,8 @@ history.
   coverage, then review retained known-good/known-bad assets per enforceable
   category. Promote to `hold` before considering `enforce`. Do not call bounded
   still/audio sampling a complete human replacement or mock proof live-provider
-  validation.
+  validation. Revoke the GMI credential exposed by the former local-launch
+  banner and place its replacement only in the gitignored `.env` before this run.
 
 - ~~Deploy the 350 GiB large-file build~~ — **DONE 2026-08-01.** Gateway is at
   `7291c80`, banner reports `max=350.0GiB verifiedRangeMax=16.0GiB
