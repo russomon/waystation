@@ -16,7 +16,9 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import worker
+from genblaze_core.exceptions import ProviderError
 from genblaze_core.models import Run
+from genblaze_core.models.enums import ProviderErrorCode
 from qc import ai_authority, interpretive_run
 
 assert worker.AI_INTERPRETIVE_RUN_ENABLED is False
@@ -75,13 +77,14 @@ def chat(content, *, model, **kwargs):
         calls.append(("ai_review_planning", model))
         payload = {"review_objective": "Inspect bounded human-perception risks",
                    "risk_targets": [{"risk_id": "perceptual_visual_defect",
-                                      "hypothesis": "visible artifact",
                                       "review_question": "Is a visible artifact present?"}],
                    "evidence_requests": [
                        {"type": "frame", "time_seconds": 3,
+                        "start_seconds": None, "duration_seconds": None,
                         "risk_ids": ["perceptual_visual_defect"],
                         "reason": "review target", "review_question": "Visible artifact?"},
-                       {"type": "audio", "start_seconds": 3, "duration_seconds": 4,
+                       {"type": "audio", "time_seconds": None,
+                        "start_seconds": 3, "duration_seconds": 4,
                         "risk_ids": ["audible_defect"],
                         "reason": "audio review target", "review_question": "Audible defect?"}],
                    "coverage_limits": ["bounded sample"]}
@@ -109,15 +112,15 @@ def chat(content, *, model, **kwargs):
     observations = []
     for risk in risks:
         concern = risk == "perceptual_visual_defect"
-        observations.append({"name": "override", "status": "fail", "tier": "BLOCKER",
-                             "risk_id": risk,
+        observations.append({"risk_id": risk,
                              "finding_state": "concern" if concern else "no_concern",
                              "severity": "reject" if concern else "info",
                              "issue_description": f"{stage} review target", "context": "sample only",
-                             "confidence": 7, "uncertainty": "bounded evidence",
+                             "confidence": 1.0, "uncertainty": "bounded evidence",
                              "evidence_ids": evidence_ids,
                              "evidence_location": "interior",
                              "intent_state": "confirmed_defect",
+                             "evidence_transcriptions": [],
                              "review_question": "Inspect the cited sample?"})
     return SimpleNamespace(text=json.dumps({"observations": observations}), model=model,
                            finish_reason="stop", tokens_in=100, tokens_out=20,
@@ -348,6 +351,51 @@ assert stage["usage"]["billable_events"] == 1
 assert stage["finish_reason"] == "length"
 assert stage["truncated"] is True
 assert "token limit" in stage["error"]
+
+# Gemini uses provider-supported JSON-object mode, then the exact same strict
+# schema is enforced locally. A transient 429 is retried and every attempt is
+# retained instead of disappearing inside the SDK helper.
+wire_format, wire_mode = worker._interpretive_response_format(
+    "google/gemini-3.5-flash", interpretive_run.InterpretiveObservationsPayload)
+assert wire_format == {"type": "json_object"}
+assert wire_mode == "provider_json_object_plus_local_schema"
+valid_payload = {"observations": [{
+    "risk_id": "perceptual_visual_defect", "finding_state": "no_concern",
+    "severity": "info", "issue_description": "No sampled concern",
+    "context": "bounded evidence", "confidence": 0.9,
+    "uncertainty": "sampled only", "evidence_ids": [],
+    "evidence_location": "unknown", "intent_state": "not_applicable",
+    "evidence_transcriptions": [], "review_question": "Review sample?",
+}]}
+validated, validation_error = worker._validate_interpretive_payload(
+    json.dumps(valid_payload), interpretive_run.InterpretiveObservationsPayload)
+assert validated == valid_payload and validation_error is None
+invalid = deepcopy(valid_payload)
+invalid["observations"][0]["status"] = "fail"
+validated, validation_error = worker._validate_interpretive_payload(
+    json.dumps(invalid), interpretive_run.InterpretiveObservationsPayload)
+assert validated is None and "failed local response schema" in validation_error
+
+retry_calls = []
+def retrying_chat(*_args, **kwargs):
+    retry_calls.append(kwargs.get("response_format"))
+    if len(retry_calls) == 1:
+        raise ProviderError("overloaded", error_code=ProviderErrorCode.RATE_LIMIT,
+                            retry_after=0)
+    return SimpleNamespace(text=json.dumps(valid_payload), model="google/gemini-3.5-flash",
+                           tokens_in=2, tokens_out=2, tokens_cached=0,
+                           cost_usd=None, finish_reason="stop")
+worker._gmi_chat_response = retrying_chat
+worker.AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS = 2
+worker.AI_INTERPRETIVE_RETRY_DELAY_SECONDS = 0
+stage, observations = worker._run_interpretive_model_stage(
+    job, "gmi_visual_analysis", "google/gemini-3.5-flash", "prompt",
+    "1" * 64, [], [], "2" * 64)
+assert stage["outcome"] == "complete" and observations
+assert len(stage["attempts"]) == 2 and stage["attempts"][0]["retry_scheduled"] is True
+assert stage["response_format_mode"] == "provider_json_object_plus_local_schema"
+assert stage["response_validation"] == "complete"
+assert retry_calls == [{"type": "json_object"}, {"type": "json_object"}]
 
 print("PASS explicit Genblaze/GMI run: bounded evidence, concurrency, fallback, B2 hashes, sanitizer, authority")
 PYEOF

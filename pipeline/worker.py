@@ -39,7 +39,7 @@ from genblaze_core.models.enums import Modality, RunStatus, StepStatus, StepType
 from genblaze_core.exceptions import ProviderError
 from genblaze_core.models.enums import RETRYABLE_ERROR_CODES
 from genblaze_gmicloud import chat as gb_gmi_chat
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from qc import agentic as qagentic
 from qc import ai_authority as qai_authority
@@ -154,6 +154,10 @@ AI_INTERPRETIVE_FALLBACK_MODEL = os.environ.get("AI_INTERPRETIVE_FALLBACK_MODEL"
 AI_INTERPRETIVE_TIMEOUT_SECONDS = float(os.environ.get("AI_INTERPRETIVE_TIMEOUT_SECONDS", "120"))
 AI_INTERPRETIVE_MAX_CONCURRENCY = max(1, min(3, int(os.environ.get(
     "AI_INTERPRETIVE_MAX_CONCURRENCY", "3"))))
+AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS = max(1, min(3, int(os.environ.get(
+    "AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS", "2"))))
+AI_INTERPRETIVE_RETRY_DELAY_SECONDS = max(0.0, min(30.0, float(os.environ.get(
+    "AI_INTERPRETIVE_RETRY_DELAY_SECONDS", "5"))))
 AI_INTERPRETIVE_MAX_FRAMES = max(0, min(8, int(os.environ.get("AI_INTERPRETIVE_MAX_FRAMES", "4"))))
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS = max(0, min(3, int(os.environ.get(
     "AI_INTERPRETIVE_MAX_AUDIO_WINDOWS", "1"))))
@@ -856,6 +860,24 @@ def _provider_error_code(exc: Exception) -> str:
     return str(getattr(code, "value", code) or type(exc).__name__).lower()[:120]
 
 
+def _interpretive_response_format(model: str, schema: type[BaseModel]) -> tuple[dict | type[BaseModel], str]:
+    """Use Gemini-compatible JSON mode; enforce the full schema locally."""
+    if model.startswith("google/gemini"):
+        return {"type": "json_object"}, "provider_json_object_plus_local_schema"
+    return schema, "provider_json_schema_plus_local_schema"
+
+
+def _validate_interpretive_payload(text: str, schema: type[BaseModel]) -> tuple[dict | None, str | None]:
+    raw = _json_from(text)
+    if raw is None:
+        return None, "provider returned no complete JSON object"
+    try:
+        return schema.model_validate(raw).model_dump(mode="json"), None
+    except ValidationError as exc:
+        first = exc.errors(include_url=False)[:3]
+        return None, f"provider JSON failed local response schema: {json.dumps(first, default=str)[:600]}"
+
+
 def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                                   prompt_sha: str, parts: list[dict], evidence: list[dict],
                                   grounding_hash: str,
@@ -877,6 +899,7 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
             attempts=[], fallback={"state": "not_configured"},
             prompt_version=qinterpretive_run.PROMPT_VERSION, prompt_sha256=prompt_sha,
             input_sha256=grounding_hash, **response_schema,
+            review_role=review_role,
             usage={"billable_events": 0})
         progress(job, {"type": "ai_interpretive_stage", "stage": name,
                        "state": "not_checked", "reason": stage["error"]})
@@ -888,6 +911,7 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
             attempts=[], fallback={"state": "not_configured"},
             prompt_version=qinterpretive_run.PROMPT_VERSION, prompt_sha256=prompt_sha,
             input_sha256=grounding_hash, **response_schema,
+            review_role=review_role,
             usage={"billable_events": 0})
         progress(job, {"type": "ai_interpretive_stage", "stage": name,
                        "state": "not_checked", "reason": "no GMI_API_KEY"})
@@ -899,35 +923,57 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                            AI_INTERPRETIVE_FALLBACK_MODEL, True))
     response = None
     used_model = model
+    used_response_format_mode = None
     output_limit = (AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS
                     if name == "synthesis" else AI_INTERPRETIVE_MAX_OUTPUT_TOKENS)
     for provider, candidate, fallback in candidates:
-        attempt_started = time.monotonic()
-        attempt = {"attempt": len(attempts) + 1, "provider": provider, "model": candidate,
-                   "fallback": fallback, "started_at": _iso_now()}
+        response_format, response_format_mode = _interpretive_response_format(
+            candidate, qinterpretive_run.InterpretiveObservationsPayload)
         if provider != "gmicloud":
+            attempt = {"attempt": len(attempts) + 1, "provider": provider,
+                       "model": candidate, "fallback": fallback,
+                       "response_format_mode": response_format_mode,
+                       "started_at": _iso_now()}
             attempt.update({"outcome": "not_configured", "error_code": "unsupported_provider",
                             "completed_at": _iso_now(), "duration_ms": 0})
             attempts.append(attempt)
             continue
-        try:
-            response = _gmi_chat_response(
-                [{"type": "text", "text": prompt}] + parts,
-                max_tokens=output_limit, model=candidate,
-                timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS,
-                max_attempts=1,
-                response_format=qinterpretive_run.InterpretiveObservationsPayload)
-            attempt.update({"outcome": "complete", "completed_at": _iso_now(),
-                            "duration_ms": round((time.monotonic() - attempt_started) * 1000),
-                            "finish_reason": getattr(response, "finish_reason", None)})
-            attempts.append(attempt)
-            used_model = response.model or candidate
+        for candidate_attempt in range(1, AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS + 1):
+            attempt_started = time.monotonic()
+            attempt = {"attempt": len(attempts) + 1, "provider_attempt": candidate_attempt,
+                       "provider": provider, "model": candidate, "fallback": fallback,
+                       "response_format_mode": response_format_mode,
+                       "started_at": _iso_now()}
+            try:
+                response = _gmi_chat_response(
+                    [{"type": "text", "text": prompt}] + parts,
+                    max_tokens=output_limit, model=candidate,
+                    timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS,
+                    max_attempts=1, response_format=response_format)
+                attempt.update({"outcome": "complete", "completed_at": _iso_now(),
+                                "duration_ms": round((time.monotonic() - attempt_started) * 1000),
+                                "finish_reason": getattr(response, "finish_reason", None)})
+                attempts.append(attempt)
+                used_model = response.model or candidate
+                used_response_format_mode = response_format_mode
+                break
+            except Exception as exc:
+                retryable = (getattr(exc, "error_code", None) in RETRYABLE_ERROR_CODES
+                             and candidate_attempt < AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS)
+                attempt.update({"outcome": "failed", "error_code": _provider_error_code(exc),
+                                "error": str(exc)[:600], "completed_at": _iso_now(),
+                                "duration_ms": round((time.monotonic() - attempt_started) * 1000),
+                                "retry_scheduled": retryable})
+                attempts.append(attempt)
+                if retryable:
+                    delay = min(30.0, float(getattr(exc, "retry_after", None)
+                                            or AI_INTERPRETIVE_RETRY_DELAY_SECONDS))
+                    attempt["retry_delay_seconds"] = delay
+                    time.sleep(delay)
+                else:
+                    break
+        if response is not None:
             break
-        except Exception as exc:
-            attempt.update({"outcome": "failed", "error_code": _provider_error_code(exc),
-                            "error": str(exc)[:240], "completed_at": _iso_now(),
-                            "duration_ms": round((time.monotonic() - attempt_started) * 1000)})
-            attempts.append(attempt)
 
     if response is None:
         error = attempts[-1].get("error") if attempts else "provider attempt failed"
@@ -938,12 +984,15 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                       "state": attempts[-1].get("outcome") if attempts else "not_configured"},
             prompt_version=qinterpretive_run.PROMPT_VERSION, prompt_sha256=prompt_sha,
             input_sha256=grounding_hash, **response_schema,
+            response_format_mode=(attempts[-1].get("response_format_mode") if attempts else None),
+            review_role=review_role,
             usage={"billable_events": 0})
         progress(job, {"type": "ai_interpretive_stage", "stage": name,
                        "state": "not_checked", "reason": error})
         return stage, []
 
-    payload = _json_from(response.text)
+    payload, validation_error = _validate_interpretive_payload(
+        response.text, qinterpretive_run.InterpretiveObservationsPayload)
     allowed = {item["evidence_id"] for item in evidence}
     observations = qinterpretive_run.sanitize_observations(
         payload, allowed, name, allowed_risk_ids=allowed_risk_ids,
@@ -963,7 +1012,7 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
     error = None
     if payload is None or not observations:
         error = ("provider output reached the token limit without a valid complete JSON object"
-                 if truncated else "provider returned no valid structured observations")
+                 if truncated else validation_error or "provider returned no valid structured observations")
     elif missing_expected:
         error = (f"provider omitted {len(missing_expected)} required risk observation(s)"
                  + (" after reaching the token limit" if truncated else ""))
@@ -982,6 +1031,9 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
         expected_risk_count=len(expected_risk_ids or set()),
         observed_risk_count=len(observed_risks), truncated=truncated,
         **response_schema,
+        response_format_mode=used_response_format_mode,
+        response_validation="complete" if validation_error is None else "failed",
+        response_validation_error=validation_error,
         review_role=review_role, authority_source_id=authority_source_id,
         usage=usage, cost_usd=response.cost_usd)
     progress(job, {"type": "ai_interpretive_stage", "stage": name,
@@ -1003,30 +1055,47 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
     progress(job, {"type": "ai_interpretive_stage", "stage": name, "state": "started"})
     attempts: list[dict] = []
     response = None
+    response_format, response_format_mode = _interpretive_response_format(
+        AI_INTERPRETIVE_PLANNER_MODEL, qinterpretive_run.ReviewPlanPayload)
     if AI_INTERPRETIVE_PROVIDER == "gmicloud" and GMI_API_KEY:
-        attempt_started = time.monotonic()
-        try:
-            response = _gmi_chat_response(
-                [{"type": "text", "text": prompt}],
-                max_tokens=AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
-                model=AI_INTERPRETIVE_PLANNER_MODEL,
-                timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS, max_attempts=1,
-                response_format=qinterpretive_run.ReviewPlanPayload)
-            attempts.append({"attempt": 1, "provider": "gmicloud",
-                             "model": response.model or AI_INTERPRETIVE_PLANNER_MODEL,
-                             "outcome": "complete", "started_at": started,
-                             "completed_at": _iso_now(),
-                             "finish_reason": getattr(response, "finish_reason", None),
-                             "duration_ms": round((time.monotonic() - attempt_started) * 1000)})
-        except Exception as exc:
-            attempts.append({"attempt": 1, "provider": "gmicloud",
-                             "model": AI_INTERPRETIVE_PLANNER_MODEL,
-                             "outcome": "failed", "error_code": _provider_error_code(exc),
-                             "error": str(exc)[:240], "started_at": started,
-                             "completed_at": _iso_now(),
-                             "duration_ms": round((time.monotonic() - attempt_started) * 1000)})
+        for provider_attempt in range(1, AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS + 1):
+            attempt_started = time.monotonic()
+            attempt = {"attempt": len(attempts) + 1, "provider_attempt": provider_attempt,
+                       "provider": "gmicloud", "model": AI_INTERPRETIVE_PLANNER_MODEL,
+                       "response_format_mode": response_format_mode,
+                       "started_at": _iso_now()}
+            try:
+                response = _gmi_chat_response(
+                    [{"type": "text", "text": prompt}],
+                    max_tokens=AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
+                    model=AI_INTERPRETIVE_PLANNER_MODEL,
+                    timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS, max_attempts=1,
+                    response_format=response_format)
+                attempt.update({"model": response.model or AI_INTERPRETIVE_PLANNER_MODEL,
+                                "outcome": "complete", "completed_at": _iso_now(),
+                                "finish_reason": getattr(response, "finish_reason", None),
+                                "duration_ms": round((time.monotonic() - attempt_started) * 1000)})
+                attempts.append(attempt)
+                break
+            except Exception as exc:
+                retryable = (getattr(exc, "error_code", None) in RETRYABLE_ERROR_CODES
+                             and provider_attempt < AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS)
+                attempt.update({"outcome": "failed", "error_code": _provider_error_code(exc),
+                                "error": str(exc)[:600], "completed_at": _iso_now(),
+                                "duration_ms": round((time.monotonic() - attempt_started) * 1000),
+                                "retry_scheduled": retryable})
+                attempts.append(attempt)
+                if retryable:
+                    delay = min(30.0, float(getattr(exc, "retry_after", None)
+                                            or AI_INTERPRETIVE_RETRY_DELAY_SECONDS))
+                    attempt["retry_delay_seconds"] = delay
+                    time.sleep(delay)
+                else:
+                    break
 
-    payload = _json_from(response.text) if response is not None else None
+    payload, validation_error = ((None, None) if response is None else
+                                 _validate_interpretive_payload(
+                                     response.text, qinterpretive_run.ReviewPlanPayload))
     plan = qinterpretive_run.sanitize_review_plan(
         payload, meta, authority_policy,
         max_frames=AI_INTERPRETIVE_MAX_FRAMES,
@@ -1039,7 +1108,8 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
         error = ("AI planner reached the token limit without a valid complete plan; "
                  "deterministic bounded plan used"
                  if getattr(response, "finish_reason", None) == "length" else
-                 "AI planner unavailable or malformed; deterministic bounded plan used")
+                 (validation_error or "AI planner unavailable or malformed")
+                 + "; deterministic bounded plan used")
     stage = _interpretive_stage(
         name, outcome="fallback" if used_fallback else "complete",
         provider="gmicloud" if response is not None else "waystation",
@@ -1056,6 +1126,10 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
         **qinterpretive_run.response_schema_identity(
             qinterpretive_run.ReviewPlanPayload,
             qinterpretive_run.PLANNER_RESPONSE_SCHEMA_VERSION),
+        response_format_mode=response_format_mode,
+        response_validation=("not_attempted" if response is None else
+                             "complete" if validation_error is None else "failed"),
+        response_validation_error=validation_error,
         prompt_characters=len(prompt),
         raw_output_characters=len(response.text) if response is not None else 0,
         truncated=getattr(response, "finish_reason", None) == "length",
@@ -1301,6 +1375,8 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             "max_output_tokens": AI_INTERPRETIVE_MAX_OUTPUT_TOKENS,
             "planner_max_output_tokens": AI_INTERPRETIVE_PLANNER_MAX_OUTPUT_TOKENS,
             "synthesis_max_output_tokens": AI_INTERPRETIVE_SYNTHESIS_MAX_OUTPUT_TOKENS,
+            "stage_max_attempts": AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS,
+            "retry_delay_seconds": AI_INTERPRETIVE_RETRY_DELAY_SECONDS,
         },
         "deterministic_grounding": {"sha256": grounding_hash,
                                      "policy": grounding["deterministic_policy"]},

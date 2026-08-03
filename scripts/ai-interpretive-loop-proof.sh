@@ -27,12 +27,13 @@ class Handler(BaseHTTPRequestHandler):
         text = " ".join(item.get("text", "") for item in content if isinstance(item, dict))
         if "AI review planner" in text:
             payload = json.dumps({"review_objective":"bounded proof review",
-              "risk_targets":[{"risk_id":"perceptual_visual_defect","hypothesis":"artifact",
+              "risk_targets":[{"risk_id":"perceptual_visual_defect",
                 "review_question":"Is an artifact visible?"}],
               "evidence_requests":[
-                {"type":"frame","time_seconds":0.6,"risk_ids":["perceptual_visual_defect"],
+                {"type":"frame","time_seconds":0.6,"start_seconds":None,"duration_seconds":None,
+                 "risk_ids":["perceptual_visual_defect"],
                  "reason":"visual proof","review_question":"Artifact visible?"},
-                {"type":"audio","start_seconds":0.2,"duration_seconds":1.0,
+                {"type":"audio","time_seconds":None,"start_seconds":0.2,"duration_seconds":1.0,
                  "risk_ids":["audible_defect"],"reason":"audio proof",
                  "review_question":"Defect audible?"}],"coverage_limits":["mock sample"]})
             response = json.dumps({"model": body.get("model"),
@@ -55,8 +56,10 @@ class Handler(BaseHTTPRequestHandler):
                 "context": "bounded proof evidence", "confidence": 0.96,
                 "uncertainty": "local mock, not a live GMI judgment",
                 "evidence_ids": evidence[:1], "evidence_location": "interior",
+                "intent_state": "confirmed_defect" if concern else "not_applicable",
+                "evidence_transcriptions": [],
                 "review_question": "Does the cited sample need human follow-up?",
-                "status": "fail", "tier": "BLOCKER"})
+                })
         payload = json.dumps({"observations": observations})
         response = json.dumps({"model": body.get("model"),
                                "choices": [{"finish_reason": "stop", "message": {"content": payload}}],

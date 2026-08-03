@@ -299,7 +299,10 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       const state = el(`<span class="mono"></span>`);
       const provider = stage.provider ? ` · ${stage.provider}/${stage.model ?? ""}` : "";
       const role = stage.review_role ? ` · ${stage.review_role}` : "";
-      state.textContent = `${stage.outcome ?? "not_checked"} · ${Number(stage.duration_ms ?? 0)} ms${provider}${role}`;
+      const response = stage.response_format_mode
+        ? ` · ${stage.response_format_mode} · schema ${stage.response_validation ?? "not_checked"}`
+        : "";
+      state.textContent = `${stage.outcome ?? "not_checked"} · ${Number(stage.duration_ms ?? 0)} ms${provider}${role}${response}`;
       timeline.append(name, state);
     }
     panel.append(timeline);

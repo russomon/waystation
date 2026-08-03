@@ -34,6 +34,17 @@ switches and chat history gaps.
 
 ### Provider structured-output completion hardening
 
+- Credentialed local transfer `8fe07b2e-673b-4bf6-86bf-5bc624a2d39d`
+  proved run schema v1.4 and response-schema hashes reached the report, but it
+  made zero successful model calls. Gemini rejected the strict OpenAI
+  JSON-schema envelope with HTTP 400; the configured GPT-4o-mini planner and
+  GPT-4o jury both returned temporary-overload HTTP 429. The fallback evidence
+  still captured `TICKETS`, `TICKET5`, `TICKET5`. No review brief was submitted.
+- Run schema v1.5 is provider-aware: Gemini receives supported JSON-object
+  mode, then the response must pass the same strict Pydantic schema locally
+  before sanitization. Other compatible endpoints receive strict provider
+  JSON-schema mode plus the same local validation. HTTP 429/server/timeout
+  failures receive two bounded, provenance-visible attempts by default.
 - Credentialed local transfer `70148a7a-1340-4420-9b8a-28a183ebc410`
   ran on local compute in shadow and produced an SDK-verified Genblaze v1.5
   manifest. Evidence selection was correct: frames at 1.5s, 3.0s, and 4.5s
@@ -44,9 +55,10 @@ switches and chat history gaps.
   had no review brief, audio, captions, or configured jury.
 - The installed `genblaze-gmicloud` 0.3.4 adapter supports Pydantic
   `response_format`, but Waystation had only requested JSON in prompt prose.
-  Run schema v1.4 now sends strict, bounded JSON schemas for planner and all
-  observation stages. The existing allowlist/sanitizer remains a second,
-  independent boundary; malformed/truncated responses still fail closed.
+  Run schema v1.5 now uses provider-supported structured output plus strict,
+  bounded local schemas for planner and all observation stages. The existing
+  allowlist/sanitizer remains a second, independent boundary;
+  malformed/truncated responses still fail closed.
 - Each stage and the public prompt packet record the response-schema version
   and SHA-256. Focused SDK-boundary, truncation, authority, full local
   gateway-worker-MinIO, and rebuilt Docker proofs pass with zero cloud spend.
@@ -64,7 +76,7 @@ switches and chat history gaps.
   The model instead described a possible freeze, marked typography
   `no_concern`, and synthesis repeated that specialist claim. This is useful
   live-provider evidence of a false diagnosis, not a successful defect catch.
-- Interpretive run schema v1.4 and prompt v1.4 now order frame evidence by
+- Interpretive run schema v1.5 and prompt v1.4 now order frame evidence by
   source time, require per-frame exact text transcription/comparison, separate
   text mutation from freeze, and force ambiguous intent or contradictory
   transcription results to HOLD/not_checked. A sender may provide a bounded

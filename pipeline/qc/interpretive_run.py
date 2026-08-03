@@ -17,7 +17,7 @@ from genblaze_core.models.enums import Modality, RunStatus, StepStatus, StepType
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SCHEMA_VERSION = "waystation-ai-interpretive-run/1.4"
+SCHEMA_VERSION = "waystation-ai-interpretive-run/1.5"
 PACKET_SCHEMA_VERSION = "waystation-ai-interpretive-packet/1.0"
 PROMPT_VERSION = "waystation-ai-interpretive-prompt/1.4"
 PLANNER_SCHEMA_VERSION = "waystation-ai-review-plan/1.0"
@@ -705,6 +705,9 @@ def build_genblaze_run(run_id: str, parent_run_id: str, source: dict,
                               missing_required_risk_ids=stage.get("missing_required_risk_ids"),
                               response_schema_version=stage.get("response_schema_version"),
                               response_schema_sha256=stage.get("response_schema_sha256"),
+                              response_format_mode=stage.get("response_format_mode"),
+                              response_validation=stage.get("response_validation"),
+                              response_validation_error=stage.get("response_validation_error"),
                               review_role=stage.get("review_role"),
                               authority_source_id=stage.get("authority_source_id"),
                               truncated=stage.get("truncated"),

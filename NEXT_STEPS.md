@@ -10,13 +10,16 @@ history.
 - **Run the post-fix planted/clean-twin AI calibration pair in shadow.** Source
   is not deployed; both paid-run gates remain false and authority defaults to
   `shadow`. The latest planted run proved evidence selection but visual output
-  reached the former free-form JSON token ceiling. Run schema v1.4 now uses the
-  Genblaze adapter's strict JSON-schema transport and records the schema hashes.
+  reached the former free-form JSON token ceiling. A subsequent run proved that
+  Gemini rejects the strict OpenAI schema envelope and current OpenAI endpoints
+  were overloaded. Run schema v1.5 now uses Gemini JSON-object mode plus strict
+  local schema validation, bounded visible retries, and recorded schema hashes.
   Use the retained `TICKETS` to `TICKET5` mutation and a matching clean twin.
   Supply `Expected title begins as TICKETS; detect and report any exact
   character mutation.` in the sender review brief, keep every other AI lane
-  and Preview thumbnail off, use `google/gemini-3.5-flash` for visual,
-  `openai/gpt-4o` for the jury, and `openai/gpt-4o-mini` for planning/synthesis.
+  and Preview thumbnail off, use `google/gemini-3.5-flash` for visual and
+  `google/gemini-3.6-flash` for planner, jury, and synthesis. Confirm the UI
+  reports a non-empty review-brief hash before judging the result.
   Require chronological evidence, exact per-frame
   transcriptions, no false freeze diagnosis, planner/synthesis
   `finish_reason=stop`, complete risk coverage, verified manifests, and

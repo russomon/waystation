@@ -36,10 +36,11 @@ also allow it and the worker must enable it. The run records these stages:
 
 GMI output is parsed as untrusted data. Waystation creates fresh observations,
 clamps confidence, drops unsupported fields, and accepts only evidence IDs
-from the run allowlist. Planner and observation calls also send strict bounded
-Pydantic schemas through Genblaze GMI `response_format`; stage provenance and
-the public prompt packet retain each schema version and SHA-256. Provider
-schema enforcement reduces malformed output but never replaces the sanitizer.
+from the run allowlist. Planner and observation calls use provider-supported
+Genblaze GMI `response_format`: Gemini receives JSON-object mode, while
+compatible endpoints receive the strict schema. Every result must then pass
+the strict bounded local Pydantic schema before sanitization. Stage provenance
+retains response mode, local validation state, schema version, and SHA-256.
 Raw model output cannot create a delivery check, status,
 tier, score, repair, or pipeline instruction. A separate versioned authority
 reducer may issue an AI HOLD or REJECT only for policy-listed risks after
@@ -102,6 +103,8 @@ AI_INTERPRETIVE_FALLBACK_PROVIDER=
 AI_INTERPRETIVE_FALLBACK_MODEL=
 AI_INTERPRETIVE_TIMEOUT_SECONDS=120
 AI_INTERPRETIVE_MAX_CONCURRENCY=3
+AI_INTERPRETIVE_STAGE_MAX_ATTEMPTS=2
+AI_INTERPRETIVE_RETRY_DELAY_SECONDS=5
 AI_INTERPRETIVE_MAX_FRAMES=4
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS=1
 AI_INTERPRETIVE_MAX_OUTPUT_TOKENS=4096
@@ -204,9 +207,13 @@ Credentialed transfer `70148a7a-1340-4420-9b8a-28a183ebc410` then proved that
 the corrected evidence plan captured `TICKETS` at 1.5s and `TICKET5` at 3.0s
 and 4.5s. Planning stopped normally, but the free-form visual response reached
 4,092 of 4,096 output tokens and contained no complete JSON object. Run schema
-v1.4 now uses the installed Genblaze adapter's native strict response-schema
-transport and records its identity. This source fix is mock- and
-container-proven; the paid planted/clean-twin shadow rerun is still pending.
+v1.4 attempted the installed Genblaze adapter's native strict response-schema
+transport and recorded its identity. The next credentialed run showed Gemini
+rejecting that OpenAI schema envelope with HTTP 400 while GPT-4o endpoints were
+temporarily overloaded with HTTP 429. Run schema v1.5 uses provider-compatible
+JSON mode, strict local validation, and provenance-visible bounded retries.
+This fix is mock- and container-proven; the paid planted/clean-twin shadow
+rerun is still pending.
 
 ## Reversible production release checklist
 
