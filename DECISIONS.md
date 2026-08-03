@@ -5,6 +5,20 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - Local MinIO is non-retained and specialist prompts are lane-scoped
+
+- Local `scripts/dev-up.sh` always starts the worker with
+  `MANIFEST_LOCK_DAYS=0`. A production `.env` retention value must not make a
+  local MinIO bucket pretend to support B2 Object Lock. Production and Compose
+  retain their explicit environment behavior.
+- Visual and audio specialists receive only the validated risks and evidence
+  relevant to their lane. Synthesis alone receives the complete review plan.
+  Provider output is compact JSON with a bounded configurable ceiling, and
+  `finish_reason` is retained so truncation is directly auditable.
+- The first credentialed local explicit run was an integration diagnostic, not
+  QC validation: evidence storage and two paid provider calls succeeded, but no
+  structured observation or final manifest did.
+
 ### 2026-08-02 - Explicit AI interpretation becomes a constrained delivery gate
 
 - Product decision: Waystation uses dual-key delivery authority. Deterministic

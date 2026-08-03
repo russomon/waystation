@@ -70,6 +70,17 @@ switches and chat history gaps.
   exposed by the old banner must be revoked and replaced before paid testing.
   Its signal trap also now exits after one `Ctrl-C` instead of leaving an
   orphaned infinite wait loop; a real start/stop proved all four ports close.
+- First credentialed local explicit run (`16761b80…`) reached GMI and stored
+  three JPEG evidence objects plus one WAV in MinIO, but it did **not** validate
+  interpretive QC. The planner model returned 429; both Gemini specialist calls
+  reached 2,396 output tokens against a 2,400 cap and produced no parseable
+  structured observations; synthesis therefore skipped. Final manifest writing
+  then failed because the production `.env` requested Object Lock on a local
+  MinIO bucket created without it. Source now gives each specialist only its
+  evidence-backed risk lane, requests compact JSON, raises the bounded output
+  ceiling to 4,096, records `finish_reason`, and forces
+  `MANIFEST_LOCK_DAYS=0` only in `scripts/dev-up.sh`. A second credentialed run
+  is required. Production was not accessed or changed.
 
 ## Hackathon AI Interpretive run — 2026-08-02
 

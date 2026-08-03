@@ -154,6 +154,8 @@ AI_INTERPRETIVE_MAX_CONCURRENCY = max(1, min(2, int(os.environ.get(
 AI_INTERPRETIVE_MAX_FRAMES = max(0, min(8, int(os.environ.get("AI_INTERPRETIVE_MAX_FRAMES", "4"))))
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS = max(0, min(3, int(os.environ.get(
     "AI_INTERPRETIVE_MAX_AUDIO_WINDOWS", "1"))))
+AI_INTERPRETIVE_MAX_OUTPUT_TOKENS = max(512, min(8192, int(os.environ.get(
+    "AI_INTERPRETIVE_MAX_OUTPUT_TOKENS", "4096"))))
 AI_INTERPRETIVE_AUTHORITY_MODE = qai_authority.normalize_mode(
     os.environ.get("AI_INTERPRETIVE_AUTHORITY_MODE", "shadow"))
 
@@ -769,10 +771,12 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
         try:
             response = _gmi_chat_response(
                 [{"type": "text", "text": prompt}] + parts,
-                max_tokens=2400, model=candidate, timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS,
+                max_tokens=AI_INTERPRETIVE_MAX_OUTPUT_TOKENS, model=candidate,
+                timeout=AI_INTERPRETIVE_TIMEOUT_SECONDS,
                 max_attempts=1)
             attempt.update({"outcome": "complete", "completed_at": _iso_now(),
-                            "duration_ms": round((time.monotonic() - attempt_started) * 1000)})
+                            "duration_ms": round((time.monotonic() - attempt_started) * 1000),
+                            "finish_reason": getattr(response, "finish_reason", None)})
             attempts.append(attempt)
             used_model = response.model or candidate
             break
@@ -811,6 +815,8 @@ def _run_interpretive_model_stage(job: Job, name: str, model: str, prompt: str,
                                     "used": bool(attempts[-1].get("fallback"))},
         prompt_version=qinterpretive_run.PROMPT_VERSION, prompt_sha256=prompt_sha,
         input_sha256=grounding_hash, raw_output_sha256=hashlib.sha256(response.text.encode()).hexdigest(),
+        finish_reason=getattr(response, "finish_reason", None),
+        output_token_limit=AI_INTERPRETIVE_MAX_OUTPUT_TOKENS,
         usage=usage, cost_usd=response.cost_usd)
     progress(job, {"type": "ai_interpretive_stage", "stage": name,
                    "step": name,
@@ -842,6 +848,7 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
                              "model": response.model or AI_INTERPRETIVE_PLANNER_MODEL,
                              "outcome": "complete", "started_at": started,
                              "completed_at": _iso_now(),
+                             "finish_reason": getattr(response, "finish_reason", None),
                              "duration_ms": round((time.monotonic() - attempt_started) * 1000)})
         except Exception as exc:
             attempts.append({"attempt": 1, "provider": "gmicloud",
@@ -872,6 +879,7 @@ def _run_interpretive_planner_stage(job: Job, meta: dict, grounding: dict,
         prompt_sha256=prompt_sha, input_sha256=grounding_hash,
         raw_output_sha256=hashlib.sha256(response.text.encode()).hexdigest()
         if response is not None else None,
+        finish_reason=getattr(response, "finish_reason", None),
         review_plan_sha256=qinterpretive_run.canonical_hash(plan),
         fallback={"used": used_fallback, "reason": error},
         usage={"tokens_in": getattr(response, "tokens_in", None),
@@ -1066,6 +1074,7 @@ def run_explicit_interpretive(job: Job, src: str, tmp: str, meta: dict,
             "synthesis_model": AI_INTERPRETIVE_SYNTHESIS_MODEL,
             "fallback_provider": AI_INTERPRETIVE_FALLBACK_PROVIDER or None,
             "fallback_model": AI_INTERPRETIVE_FALLBACK_MODEL or None,
+            "max_output_tokens": AI_INTERPRETIVE_MAX_OUTPUT_TOKENS,
         },
         "deterministic_grounding": {"sha256": grounding_hash,
                                      "policy": grounding["deterministic_policy"]},

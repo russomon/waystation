@@ -54,6 +54,7 @@ until curl -sf -o /dev/null --max-time 1 http://localhost:8787/; do sleep 0.3; d
 
 echo "▶ pipeline…"
 ( cd "$WEB/pipeline" && PIPELINE_SHARED_SECRET=$SHARED GMI_API_KEY="${GMI_API_KEY:-}" \
+   MANIFEST_LOCK_DAYS=0 \
    ./.venv/bin/uvicorn worker:app --port 8000 >/tmp/ox-pipe.log 2>&1 ) &
 until curl -sf -o /dev/null --max-time 1 http://localhost:8000/healthz; do sleep 0.3; done
 
@@ -74,6 +75,7 @@ cat <<MSG
        logs  →  /tmp/ox-{minio,gw,pipe,client}.log
        data  →  $DATA  (persists across runs)
        GMI   →  $GMI_STATUS
+       lock  →  off (local MinIO)
 
   Drag in a small video → watch the pipeline → open the share link → Verify.
   Ctrl-C to stop everything.

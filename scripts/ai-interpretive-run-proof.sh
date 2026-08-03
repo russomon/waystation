@@ -60,10 +60,13 @@ active = 0
 peak = 0
 lock = threading.Lock()
 calls = []
+prompts = {}
+token_limits = []
 failed_visual_primary = False
-def chat(content, *, model, **_kwargs):
+def chat(content, *, model, **kwargs):
     global active, peak, failed_visual_primary
     prompt = content[0]["text"]
+    token_limits.append(kwargs.get("max_tokens"))
     if "AI review planner" in prompt:
         calls.append(("ai_review_planning", model))
         payload = {"review_objective": "Inspect bounded human-perception risks",
@@ -79,10 +82,12 @@ def chat(content, *, model, **_kwargs):
                         "reason": "audio review target", "review_question": "Audible defect?"}],
                    "coverage_limits": ["bounded sample"]}
         return SimpleNamespace(text=json.dumps(payload), model=model,
-                               tokens_in=80, tokens_out=20, tokens_cached=0, cost_usd=None)
+                               finish_reason="stop", tokens_in=80, tokens_out=20,
+                               tokens_cached=0, cost_usd=None)
     stage = next(name for name in ("gmi_visual_analysis", "gmi_audio_analysis", "synthesis")
                  if f"stage {name}" in prompt)
     calls.append((stage, model))
+    prompts[stage] = prompt
     if stage == "gmi_visual_analysis" and model == "proof/visual" and not failed_visual_primary:
         failed_visual_primary = True
         raise RuntimeError("primary unavailable")
@@ -100,7 +105,8 @@ def chat(content, *, model, **_kwargs):
                "confidence": 7, "uncertainty": "bounded evidence",
                "evidence_ids": evidence_ids, "review_question": "Inspect the cited sample?"}
     return SimpleNamespace(text=json.dumps({"observations": [hostile]}), model=model,
-                           tokens_in=100, tokens_out=20, tokens_cached=0, cost_usd=None)
+                           finish_reason="stop", tokens_in=100, tokens_out=20,
+                           tokens_cached=0, cost_usd=None)
 worker._gmi_chat_response = chat
 
 meta = {"format": {"duration": "12.0"}, "streams": [
@@ -137,6 +143,13 @@ assert peak == 2, "visual and audio analysis did not overlap"
 visual = next(stage for stage in result["timeline"] if stage["name"] == "gmi_visual_analysis")
 assert len(visual["attempts"]) == 2 and visual["attempts"][1]["fallback"] is True
 assert visual["fallback"]["used"] is True
+assert visual["finish_reason"] == "stop"
+assert visual["output_token_limit"] == worker.AI_INTERPRETIVE_MAX_OUTPUT_TOKENS
+assert all(limit in {2400, worker.AI_INTERPRETIVE_MAX_OUTPUT_TOKENS}
+           for limit in token_limits)
+assert '"risk_id": "audible_defect"' not in prompts["gmi_visual_analysis"]
+assert '"risk_id": "perceptual_visual_defect"' not in prompts["gmi_audio_analysis"]
+assert '"risk_id": "audible_defect"' in prompts["gmi_audio_analysis"]
 assert result["interpretive_observations"]
 for observation in result["interpretive_observations"]:
     assert observation["authority"] == "eligible_for_versioned_policy_reducer"
@@ -150,6 +163,9 @@ assert len(derivatives) == len(result["evidence"])
 run = Run.model_validate(result["genblaze_run"])
 assert run.run_id == result["run_id"] and len(run.steps) == len(interpretive_run.STAGE_ORDER)
 assert run.metadata["raw_model_output_direct_authority"] is False
+visual_step = next(step for step in run.steps if step.step_id == "gmi_visual_analysis")
+assert visual_step.metadata["finish_reason"] == "stop"
+assert visual_step.metadata["output_token_limit"] == worker.AI_INTERPRETIVE_MAX_OUTPUT_TOKENS
 assert any(event["type"] == "ai_interpretive_started" for event in events)
 assert any(event["type"] == "ai_interpretive_complete" for event in events)
 assert sum(1 for event in events if event.get("billable") == {"unit": "run", "units": 1}) == 4
@@ -191,11 +207,12 @@ worker.AI_INTERPRETIVE_FALLBACK_PROVIDER = ""
 worker.AI_INTERPRETIVE_FALLBACK_MODEL = ""
 worker._gmi_chat_response = lambda *_args, **_kwargs: SimpleNamespace(
     text="not json", model="proof/model", tokens_in=2, tokens_out=2,
-    tokens_cached=0, cost_usd=None)
+    tokens_cached=0, cost_usd=None, finish_reason="length")
 stage, observations = worker._run_interpretive_model_stage(
     job, "gmi_visual_analysis", "proof/model", "prompt", "d" * 64, [], [], "e" * 64)
 assert stage["outcome"] == "not_checked" and observations == []
 assert stage["usage"]["billable_events"] == 1
+assert stage["finish_reason"] == "length"
 
 print("PASS explicit Genblaze/GMI run: bounded evidence, concurrency, fallback, B2 hashes, sanitizer, authority")
 PYEOF

@@ -14,10 +14,16 @@ history.
   false and authority defaults to `shadow`. First run one short credentialed
   asset with all other AI lanes off, verify four-or-fewer model events and risk
   coverage, then review retained known-good/known-bad assets per enforceable
-  category. Promote to `hold` before considering `enforce`. Do not call bounded
+  category. The first credentialed local attempt reached GMI and stored four
+  evidence objects, but planner overload, ceiling-length malformed specialist
+  JSON, and local
+  Object Lock mismatch prevented a valid result. Those integration faults are
+  corrected in source; rerun one short asset with planner/visual/audio/synthesis
+  set to an available model and confirm structured observations plus a verified
+  manifest. Promote to `hold` before considering `enforce`. Do not call bounded
   still/audio sampling a complete human replacement or mock proof live-provider
-  validation. Revoke the GMI credential exposed by the former local-launch
-  banner and place its replacement only in the gitignored `.env` before this run.
+  validation. The exposed credential has been revoked; keep its replacement
+  only in the gitignored `.env`.
 
 - ~~Deploy the 350 GiB large-file build~~ — **DONE 2026-08-01.** Gateway is at
   `7291c80`, banner reports `max=350.0GiB verifiedRangeMax=16.0GiB

@@ -79,6 +79,7 @@ AI_INTERPRETIVE_TIMEOUT_SECONDS=120
 AI_INTERPRETIVE_MAX_CONCURRENCY=2
 AI_INTERPRETIVE_MAX_FRAMES=4
 AI_INTERPRETIVE_MAX_AUDIO_WINDOWS=1
+AI_INTERPRETIVE_MAX_OUTPUT_TOKENS=4096
 AI_INTERPRETIVE_AUTHORITY_MODE=shadow
 ```
 
@@ -128,6 +129,17 @@ On 2026-08-02 one local-only 1x1-image SDK call reached real GMI
 low 220-token cap ended at `finish_reason=length`, so no structured observation
 was accepted. That confirms the live credential/provider boundary and the
 fail-closed sanitizer, but it is not an end-to-end explicit-run validation.
+
+A later credentialed local upload reached the full explicit pipeline and stored
+three JPEG frames plus one WAV evidence object. The configured planner returned
+429, while the two Gemini specialist calls each stopped at 2,396 output tokens
+against the former 2,400-token ceiling; neither yielded valid structured JSON,
+so synthesis did not run. The final manifest also failed because a production
+`MANIFEST_LOCK_DAYS=1` value had leaked into local MinIO, whose existing bucket
+was not Object-Lock-enabled. This was not a successful QC run. The follow-up
+source revision lane-scopes specialist plans, requires compact JSON, uses a
+bounded 4,096-token default, records provider `finish_reason`, and forces Object
+Lock off only in `scripts/dev-up.sh`. A clean credentialed rerun remains pending.
 
 ## Reversible production release checklist
 
