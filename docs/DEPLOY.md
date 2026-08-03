@@ -285,10 +285,16 @@ is spend-disabled by default and must remain explicit:
 ```text
 AI_INTERPRETIVE_SHADOW=false
 AI_INTERPRETIVE_SHADOW_MAX_PACKETS=4
+ALLOW_AI_INTERPRETIVE=false
+AI_INTERPRETIVE_RUN_ENABLED=false
 ```
 
 When enabled, the AI Interpretive Pass is shadow/advisory and cannot change the
 deterministic delivery status or tier counts.
+
+The separate user-visible explicit run is also spend-disabled by default. It
+requires gateway permission, worker permission, and sender selection. Its
+staged release and rollback procedure is in `docs/AI_INTERPRETIVE_RUN.md`.
 
 ### Production worker record — 2026-08-02
 

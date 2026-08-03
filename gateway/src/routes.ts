@@ -202,11 +202,12 @@ api.post("/uploads/sidecar-url", requireSession, enforceOrigin, limiter("sign", 
 // also carries non-service keys (QC profile and compute target) that must not
 // count as "a service is on". undefined options = everything on.
 // Default-ON services: a missing key means "on" (matches the worker).
-// qc_synthetic is OPT-IN (worker defaults it off), so it only counts as
+// qc_synthetic and ai_interpretive are OPT-IN (worker defaults them off), so they only count as
 // "a service is on" when explicitly true.
 const anyServiceOn = (o?: Record<string, boolean | string>) =>
-  !o || SERVICE_KEYS.some((k) => o[k] !== false) || o["qc_synthetic"] === true;
-const OPTION_KEYS = new Set([...SERVICE_KEYS, "qc_synthetic", "profile", "compute"]);
+  !o || SERVICE_KEYS.some((k) => o[k] !== false) || o["qc_synthetic"] === true
+  || o["ai_interpretive"] === true;
+const OPTION_KEYS = new Set([...SERVICE_KEYS, "qc_synthetic", "ai_interpretive", "profile", "compute"]);
 const sanitizeOptions = (o?: Record<string, boolean | string>) => o
   ? Object.fromEntries(Object.entries(o).filter(([key]) => OPTION_KEYS.has(key)))
   : undefined;

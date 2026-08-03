@@ -109,12 +109,14 @@ if (tid) {
     const compute = FORCED_COMPUTE || (val("opt_cloud") ? "cloud" : "local");
     if (transferOnly.checked)
       return { qc_av: false, qc_captions: false, qc_ai: false, qc_synthetic: false,
+               ai_interpretive: false,
                thumbnail: false, summarize: false, profile, compute };
     return {
       qc_av: val("opt_qc_av"),
       qc_captions: val("opt_qc_captions"),
       qc_ai: val("opt_qc_ai"),
       qc_synthetic: val("opt_qc_synthetic"),
+      ai_interpretive: val("opt_ai_interpretive"),
       thumbnail: val("opt_thumbnail"),
       summarize: val("opt_summarize"),
       profile,
@@ -145,7 +147,8 @@ if (tid) {
       // before we could subscribe — no stream to wait on, say so directly.
       // (Only the service booleans count — `profile` is a string, always truthy.)
       const services = [options.qc_av, options.qc_captions, options.qc_ai,
-                        options.qc_synthetic, options.thumbnail, options.summarize];
+                        options.qc_synthetic, options.ai_interpretive,
+                        options.thumbnail, options.summarize];
       if (!services.some(Boolean)) {
         pipe.textContent = "transfer only — no waystation services";
         sendBtn.disabled = false;
@@ -158,7 +161,8 @@ if (tid) {
         const ev = JSON.parse(e.data);
         if (ev.type === "pipeline_skipped") { pipe.textContent = "transfer only — no waystation services"; es.close(); return; }
         if (ev.type === "pipeline_started" && ev.compute) where = ` @ ${ev.compute}`;
-        pipe.textContent = `waystation${where}: ${ev.type}${ev.step ? " · " + ev.step : ""}`;
+        const stage = ev.stage ? " · " + String(ev.stage).replaceAll("_", " ") : "";
+        pipe.textContent = `waystation${where}: ${ev.type}${ev.step ? " · " + ev.step : ""}${stage}`;
         if (ev.type === "pipeline_complete") { pipe.textContent = `waystation${where} ✓ — open the share link`; es.close(); }
       };
     } catch (err) {

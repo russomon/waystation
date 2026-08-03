@@ -40,6 +40,7 @@
       .svc:last-child { border-bottom: 0; }
       .svc input { transform: translateY(1px); }
       .svc .muted { color: var(--mut); font-size: 12.5px; margin-left: auto; text-align: right; }
+      .svc.interpretive { background: #f0fdf4; }
       .services.off .svc { opacity: .4; pointer-events: none; }
       .profile-row { font-weight: 500; cursor: default; justify-content: space-between; }
       .profile-row select { font: inherit; padding: .25rem .5rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
@@ -66,6 +67,16 @@
       .qc-section { margin: .9rem 0 0; }
       .qc-section h3 { font-size: 13px; margin: 0 0 .25rem; }
       .qc-lines { white-space: pre-wrap; word-break: break-word; margin: 0; }
+      .ai-run { margin-top: 1.1rem; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a;
+                padding: .85rem 1rem; background: #f0fdf4; border-radius: 6px; }
+      .ai-run h3 { font-size: 15px; margin: 0 0 .2rem; }
+      .ai-run .timeline { display: grid; grid-template-columns: minmax(130px, 1fr) auto;
+                          gap: .2rem .8rem; margin: .6rem 0; }
+      .ai-run .observation { background: #fff; border: 1px solid #dcfce7; padding: .65rem .75rem;
+                             border-radius: 6px; margin-top: .55rem; }
+      .ai-evidence { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+                     gap: .5rem; margin-top: .7rem; }
+      .ai-evidence img { width: 100%; display: block; border-radius: 4px; }
       /* Download progress. A 26 GB transfer runs for tens of minutes, so the
          page has to say how far along it is and roughly how long is left —
          a spinner would be indistinguishable from a hang. */
@@ -147,6 +158,8 @@
             AI QC <span class="muted">independent sweep &middot; adaptive evidence &middot; critic</span></label>
           <label class="svc"><input type="checkbox" id="opt_qc_synthetic" checked />
             Synthetic QC <span class="muted">asset blueprint &middot; continuity ledger &middot; typography</span></label>
+          <label class="svc interpretive"><input type="checkbox" id="opt_ai_interpretive" />
+            AI Interpretive Analysis <span class="muted">Genblaze orchestration &middot; GMI review &middot; B2 evidence</span></label>
           <label class="svc"><input type="checkbox" id="opt_thumbnail" checked />
             Preview thumbnail <span class="muted">poster frame</span></label>
           <label class="svc"><input type="checkbox" id="opt_summarize" checked />

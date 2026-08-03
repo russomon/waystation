@@ -22,6 +22,25 @@ Object Lock.
 > prefix `transfers/`) is already live and pointed at the production gateway;
 > repointing it would break the deployment mid-recording.
 
+> **Explicit AI Interpretive Analysis release gate:** the source-ready
+> Genblaze/GMI timeline and green recipient panel are not in the currently
+> recorded production image. Before recording that beat, complete the reversible
+> checklist in `docs/AI_INTERPRETIVE_RUN.md` and retain one bounded credentialed
+> result. Until then, this document's older AI QC beats describe the live system;
+> do not narrate the new explicit mode as deployed.
+
+### Revised interpretive beat after release
+
+On the sender page select deterministic QC plus **AI Interpretive Analysis**;
+turn AI QC, Synthetic QC, and AI Summary off for this first take. Hold on the
+live stage line through deterministic grounding, B2 evidence selection,
+parallel GMI visual/audio analysis, synthesis, and artifact storage. On the
+recipient page show the deterministic badge first, then the green AI panel:
+Genblaze run ID, provider/models, stage timing, advisory observations,
+uncertainty, cited B2 evidence, and selected frames. Finish by verifying the
+canonical provenance manifest. The narration must call AI advisory and
+deterministic policy the sole delivery authority.
+
 ## ⚠ Never on camera
 
 Recording publishes whatever is on screen. Before you hit record:

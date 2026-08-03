@@ -7,6 +7,14 @@ history.
 
 ## Now
 
+- **Release and record the explicit Genblaze/GMI workflow.** Source now includes
+  the dedicated opt-in run, B2 evidence artifacts, stage/provenance timeline,
+  and compact recipient view. It is not deployed and both production gates are
+  false. Follow `docs/AI_INTERPRETIVE_RUN.md`: deploy first with gates false,
+  enable reversibly, make one bounded credentialed GMI run with other AI lanes
+  off, verify hashes/metering/authority, then record. Do not claim the mock proof
+  as live-provider validation.
+
 - ~~Deploy the 350 GiB large-file build~~ — **DONE 2026-08-01.** Gateway is at
   `7291c80`, banner reports `max=350.0GiB verifiedRangeMax=16.0GiB
   rootOnly=true maxQC=100.0GiB`.

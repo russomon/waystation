@@ -131,6 +131,8 @@ export const ALLOW_SYNTHETIC_QC = flag(env.ALLOW_SYNTHETIC_QC, true);
 // VMAF/MOS result). The hosted deployment turns it OFF explicitly in
 // docker-compose.prod.yml, where the cost actually matters.
 export const ALLOW_EXPENSIVE_REFERENCE_QC = flag(env.ALLOW_EXPENSIVE_REFERENCE_QC, true);
+// Dedicated Genblaze/GMI interpretive runs are paid and explicitly opt-in.
+export const ALLOW_AI_INTERPRETIVE = flag(env.ALLOW_AI_INTERPRETIVE, false);
 
 /** Lifetime of a recipient capability link, in days. 0 disables expiry.
  *  A bearer link that never expires can only be taken back by revocation. */
@@ -145,7 +147,8 @@ export const RECIPIENT_LINK_TTL_DAYS = Number(env.RECIPIENT_LINK_TTL_DAYS ?? 14)
 export const FORCE_COMPUTE = (env.WAYSTATION_FORCE_COMPUTE || "").trim();
 
 export const SERVICE_KEYS = ["qc_av", "qc_captions", "qc_ai", "thumbnail", "summarize"] as const;
-export const PIPELINE_SERVICE_KEYS = [...SERVICE_KEYS, "qc_synthetic"] as const;
+export const OPT_IN_SERVICE_KEYS = ["qc_synthetic", "ai_interpretive"] as const;
+export const PIPELINE_SERVICE_KEYS = [...SERVICE_KEYS, ...OPT_IN_SERVICE_KEYS] as const;
 
 export function verificationModeForSize(size: number): Invalid | { verificationMode: VerificationMode } {
   if (size <= VERIFIED_RANGE_MAX_BYTES) return { verificationMode: "range" };
@@ -175,6 +178,7 @@ export function applyServicePolicy(options?: Record<string, boolean | string>, s
   const forced: Record<string, boolean | string> = {};
   if (!ALLOW_AI_QC) forced.qc_ai = false;
   if (!ALLOW_SYNTHETIC_QC) forced.qc_synthetic = false;
+  if (!ALLOW_AI_INTERPRETIVE) forced.ai_interpretive = false;
   if (FORCE_COMPUTE) forced.compute = FORCE_COMPUTE;
   if (sizeBytes !== undefined && sizeBytes > MAX_QC_BYTES) {
     for (const k of PIPELINE_SERVICE_KEYS) forced[k] = false;
@@ -186,7 +190,9 @@ export function applyServicePolicy(options?: Record<string, boolean | string>, s
   // pinned routing target, not a disabled service — listing it here would emit
   // a misleading "services_disabled" event.
   const disabled = Object.keys(forced).filter(
-    (k) => k !== "compute" && (options === undefined || options[k] !== false),
+    (k) => k !== "compute" && (k === "ai_interpretive" || k === "qc_synthetic"
+      ? options?.[k] === true
+      : options === undefined || options[k] !== false),
   );
   return { options: merged, disabled };
 }
@@ -198,6 +204,7 @@ export const policyBanner = (): string =>
   `rootOnly=${ALLOW_ROOT_ONLY_UPLOADS} maxQC=${(MAX_QC_BYTES / GiB).toFixed(1)}GiB ` +
   `active/session=${MAX_ACTIVE_UPLOADS_PER_SESSION} jobs/session=${MAX_JOBS_PER_SESSION} ` +
   `jobs/day=${MAX_DAILY_JOBS} ai=${ALLOW_AI_QC} synthetic=${ALLOW_SYNTHETIC_QC} ` +
+  `interpretive=${ALLOW_AI_INTERPRETIVE} ` +
   `referenceQC=${ALLOW_EXPENSIVE_REFERENCE_QC} ` +
   `linkTTL=${RECIPIENT_LINK_TTL_DAYS || "never"}d` +
   (FORCE_COMPUTE ? ` compute=PINNED:${FORCE_COMPUTE}` : "");

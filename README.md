@@ -50,6 +50,8 @@ bash scripts/broadcast-qc-proof.sh # U.S. XDCAM baseline: real good/bad media + 
 bash scripts/broadcast-qc-docker-proof.sh # MediaConch 25.04 metadata-policy good/bad outcomes
 bash scripts/phase2-quality-proof.sh # Phase 2 visual/audio/caption/metadata advisory reducers
 bash scripts/qc-calibration-proof.sh # corpus intake gate; synthetic data cannot claim acceptance
+bash scripts/ai-interpretive-run-proof.sh # explicit Genblaze run, concurrency/fallback/sanitizer (mock, zero spend)
+bash scripts/ai-interpretive-loop-proof.sh # gateway upload -> mock GMI -> B2 artifacts -> SDK manifest
 ```
 
 ## Layout
@@ -186,6 +188,13 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   caption text + codec/resolution facts, so it describes the actual content.
   Proven live against real B2 + GMI (`scripts/live-run.sh`,
   `GMI_MODEL=google/gemini-3.5-flash`).
+- ✅ **Explicit AI Interpretive Analysis** (opt-in, spend-off by default) —
+  Genblaze records intake, deterministic grounding, bounded B2 evidence,
+  concurrent GMI visual/audio analysis, synthesis, and artifact storage. The
+  delivery page shows the run timeline, advisory observations, uncertainty,
+  evidence citations, and selected frames separately from deterministic QC.
+  Provider output is allowlisted and cannot create a delivery failure. See
+  `docs/AI_INTERPRETIVE_RUN.md` and its two zero-cloud proof scripts.
 - ✅ **Sender front end with per-service toggles.** The upload page
   (`client/index.html`) has a master picker, an optional `.srt`/`.vtt`
   captions picker, and a services panel — AV QC, Caption QC, preview

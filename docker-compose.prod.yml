@@ -73,6 +73,7 @@ services:
       ALLOW_AI_QC: "true"
       ALLOW_SYNTHETIC_QC: "true"
       ALLOW_EXPENSIVE_REFERENCE_QC: "false"  # reference VMAF ~1x duration
+      ALLOW_AI_INTERPRETIVE: "false"         # explicit paid Genblaze/GMI run; release gate
       RECIPIENT_LINK_TTL_DAYS: "14"
       # All-cloud: gateway and worker share this host, so there is no second
       # machine to route to. The client hides its selector; this makes the API
@@ -115,6 +116,7 @@ services:
       # until an operator explicitly changes this runtime setting.
       AI_INTERPRETIVE_SHADOW: "false"
       AI_INTERPRETIVE_SHADOW_MAX_PACKETS: "4"
+      AI_INTERPRETIVE_RUN_ENABLED: "false"   # sender option alone cannot start paid calls
 
       # ── scratch: every heavy write lands on the 390 GB data disk ──
       # The worker's real scratch usage is two tempfile.TemporaryDirectory()

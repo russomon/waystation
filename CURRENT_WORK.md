@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-02 (Phase 3-4 source complete; production unchanged)
+Updated: 2026-08-02 (explicit Genblaze/GMI run source-ready; production unchanged)
 Machine: Mac Studio
 Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
 
@@ -29,6 +29,46 @@ switches and chat history gaps.
 - The rehearsal used a deliberately cheap fixture (10 s, 640×360). It is the
   **infrastructure rehearsal asset, not the demo asset** — see NEXT_STEPS.md for
   the showcase-asset spec.
+
+## Hackathon AI Interpretive run — 2026-08-02
+
+- Source now has a dedicated sender-selected **AI Interpretive Analysis** mode,
+  separate from disabled shadow evaluation and from legacy AI QC/Synthetic QC.
+  It uses the installed `genblaze_gmicloud.chat` boundary for configured GMI
+  calls and Genblaze Core run/step builders for an explicit stage ledger.
+- Stages expose intake, detached deterministic grounding, bounded B2 evidence
+  selection, concurrent visual/audio GMI analysis, synthesis, and artifact
+  storage. Primary/fallback attempts, timing, provider/model, token usage,
+  prompt/input hashes, evidence SHA-256, and billable events are retained.
+- Hostile model fields and unsupported evidence citations are discarded into a
+  fresh `advisory_observations` namespace. The run cannot mutate canonical
+  checks/status/tiers; deterministic policy remains the only delivery authority.
+- The recipient page renders the Genblaze run ID, timeline, observations,
+  uncertainty, accepted evidence, and selected B2 frames beside the separate
+  deterministic result. The existing canonical manifest embeds the stage run
+  and covers the AI result/evidence derivatives.
+- The network-free orchestration proof passes, and the full local explicit loop
+  passes: browser-style multipart through the gateway, three distinct metered
+  mock-GMI calls, three B2 evidence objects, recipient API result shape, and an
+  SDK-verified canonical manifest. That loop caught and fixed a metering
+  idempotency collision by giving every paid stage its own event identity.
+- Authority/shadow/triage/agentic/AI/synthetic/broadcast/QCTools/Phase 2/
+  caption/audio/deep-package/Standard/Netflix/delivery regressions pass, as do
+  Python compile, gateway/client builds, production Compose validation, the
+  rebuilt Docker tool/module proof, and the signed-event gateway-worker-MinIO
+  loop.
+- One local-only, tiny-image call reached real GMI
+  `google/gemini-3.5-flash` through the installed SDK (1,396 input / 216 output
+  tokens). The deliberately low 220-token cap ended with
+  `finish_reason=length`; no valid JSON observation was produced, and the
+  sanitizer correctly returned no advisory result. This proves the credential
+  and provider boundary, not a complete explicit run. A normal-cap bounded
+  release-candidate run is still required before recording.
+- **Production was not accessed or changed.** Production remains worker policy
+  v1.1.0 with `AI_INTERPRETIVE_SHADOW=false`; source and production compose
+  default `ALLOW_AI_INTERPRETIVE=false` and
+  `AI_INTERPRETIVE_RUN_ENABLED=false`. A credentialed GMI release-candidate run
+  is still pending. See `docs/AI_INTERPRETIVE_RUN.md`.
 
 ## Deployment reconciliation — 2026-08-01
 

@@ -5,6 +5,26 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-08-02 - Explicit Genblaze/GMI interpretation is visible but never delivery authority
+
+- Decision: add a dedicated sender-selected AI Interpretive Analysis run rather
+  than repurposing hidden shadow evaluation. The real GMI call boundary is
+  `genblaze_gmicloud.chat`; Genblaze Core run/step builders record orchestration
+  and the existing delivery manifest covers B2 result/evidence artifacts.
+- Decision: visual and audio stages may overlap under a bounded concurrency of
+  two, followed by synthesis. Provider/model/timeout/fallback are configuration.
+  A fallback is attempted only when explicitly configured and every attempt,
+  usage event, timing, and outcome is recorded. Unsupported or missing provider
+  configuration is `not_checked`.
+- Authority boundary: output is sanitized into fresh `advisory_observations`;
+  citations are limited to stored evidence IDs. AI cannot create checks,
+  status, tiers, BLOCKERs, repairs, or a composite score. Canonical QC is never
+  passed by reference to provider or sanitizer code.
+- Spend/deployment boundary: gateway permission, worker execution gate, and
+  sender selection are all required. Both source production gates default
+  false. Shadow, triage/deeper AI, Synthetic QC, Summary, and explicit analysis
+  are separately metered. This source task does not access or alter production.
+
 ### 2026-08-02 - Deep package facts and AI evaluation do not imply conformance or authority
 
 - Decision: policy v1.4.0 adds bounded MXF fact inventory, safe IMF manifest /

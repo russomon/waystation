@@ -62,6 +62,10 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   const thumb = t.derivatives.find((d) => d.mime === "image/jpeg");
   const qcAsset = t.derivatives.find((d) => d.key.endsWith("qc_report.json"));
   const qc = qcAsset ? await fetch(qcAsset.url).then((r) => r.json()).catch(() => null) : null;
+  const aiAsset = t.derivatives.find((d) => d.key.endsWith("ai_interpretive.json"));
+  const aiRun = aiAsset ? await fetch(aiAsset.url).then((r) => r.json()).catch(() => null) : null;
+  const aiManifestAsset = aiAsset ? gbSteps.flatMap((step) => step.assets ?? [])
+    .find((asset: any) => keyOf(asset.url ?? "") === aiAsset.key) : null;
 
   root.textContent = "";
   const card = el(`<div class="deliv"></div>`);
@@ -238,6 +242,60 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     addSection("AI support checks", support.map((c: any) =>
       `${glyph(c.status)} ${c.tier ? `[${c.tier}] ` : ""}${c.name}${c.detail ? " - " + c.detail : ""}`));
     card.append(badge);
+  }
+
+  // Explicit Genblaze/GMI analysis is a separate advisory artifact. It is
+  // intentionally outside the canonical QC badge and cannot affect delivery.
+  if (aiRun) {
+    const panel = el(`<section class="ai-run"><h3>AI Interpretive Analysis</h3></section>`);
+    const runMeta = el(`<p class="meta"></p>`);
+    runMeta.textContent = `ADVISORY ONLY · Genblaze run ${aiRun.run_id ?? "unknown"} · ${aiRun.state ?? "not_checked"}`;
+    panel.append(runMeta);
+
+    const timeline = el(`<div class="timeline"></div>`);
+    for (const stage of (aiRun.timeline ?? [])) {
+      const name = el(`<span></span>`);
+      name.textContent = String(stage.name ?? "stage").replaceAll("_", " ");
+      const state = el(`<span class="mono"></span>`);
+      const provider = stage.provider ? ` · ${stage.provider}/${stage.model ?? ""}` : "";
+      state.textContent = `${stage.outcome ?? "not_checked"} · ${Number(stage.duration_ms ?? 0)} ms${provider}`;
+      timeline.append(name, state);
+    }
+    panel.append(timeline);
+
+    const observations = aiRun.advisory_observations ?? [];
+    if (!observations.length) {
+      const empty = el(`<p class="meta"></p>`);
+      empty.textContent = "No structured observation was produced. This run remains not checked, not passed.";
+      panel.append(empty);
+    }
+    for (const observation of observations) {
+      const item = el(`<div class="observation"><strong></strong><p></p><p class="meta"></p></div>`);
+      (item.querySelector("strong") as HTMLElement).textContent = observation.issue_description ?? "Review observation";
+      (item.querySelector("p") as HTMLElement).textContent = observation.context || observation.review_question || "Human review requested.";
+      const evidence = (observation.evidence_ids ?? []).join(", ") || "no accepted citation";
+      (item.querySelector("p.meta") as HTMLElement).textContent =
+        `confidence ${Number(observation.confidence ?? 0).toFixed(2)} · evidence ${evidence} · ${observation.uncertainty ?? "uncertainty not supplied"}`;
+      panel.append(item);
+    }
+
+    const urlByKey = new Map(t.derivatives.map((d) => [d.key, d.url] as [string, string]));
+    const frames = (aiRun.evidence ?? []).filter((item: any) => item.type === "frame").slice(0, 4);
+    if (frames.length) {
+      const gallery = el(`<div class="ai-evidence"></div>`);
+      for (const frame of frames) {
+        const image = document.createElement("img");
+        image.src = urlByKey.get(frame.key) ?? "";
+        image.alt = `${frame.evidence_id} at ${Number(frame.time_seconds ?? 0).toFixed(2)} seconds`;
+        image.title = `${frame.evidence_id} · ${String(frame.sha256 ?? "").slice(0, 16)}…`;
+        gallery.append(image);
+      }
+      panel.append(gallery);
+    }
+    const provenance = el(`<p class="mono"></p>`);
+    provenance.textContent = `result sha256 ${String(aiManifestAsset?.sha256 ?? "unavailable")} · packet schema ${aiRun.prompt_packet?.schema_version ?? "unknown"} · schema sha256 ${String(aiRun.prompt_packet?.schema_sha256 ?? "").slice(0, 20)}…`;
+    panel.append(provenance);
+    card.append(panel);
   }
 
   // ── Download original ────────────────────────────────────────────────────
