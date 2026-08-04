@@ -93,14 +93,14 @@ if (tid) {
   // "Transfer only" greys out and overrides the individual services.
   transferOnly.onchange = () => servicesEl.classList.toggle("off", transferOnly.checked);
 
-  // All-cloud deployments pin the compute target and hide the selector: the
-  // gateway and worker share one host, so there is no second machine to route
-  // to and a visible toggle would imply a choice that does not exist. The
-  // gateway enforces this independently — hiding a control is never the
-  // enforcement.
+  // All-cloud deployments pin the compute target but keep the selected route
+  // visible. The backend remains authoritative: the hosted worker is the only
+  // available destination even if a crafted request asks for another route.
   if (FORCED_COMPUTE) {
-    const row = $<HTMLInputElement>("#opt_cloud").closest("label");
-    if (row) (row as HTMLElement).hidden = true;
+    const cloud = $<HTMLInputElement>("#opt_cloud");
+    cloud.checked = FORCED_COMPUTE === "cloud";
+    cloud.disabled = true;
+    cloud.closest("label")?.setAttribute("title", `This deployment requires ${FORCED_COMPUTE} compute`);
   }
 
   const currentOptions = (): ServiceOptions => {
