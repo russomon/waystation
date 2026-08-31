@@ -512,6 +512,69 @@ Honest limits recorded rather than papered over:
 
 ---
 
+## Pre-spin-down inventory — captured 2026-08-31
+
+Recorded while the original host still existed, so a restore does not depend on
+chat scrollback. **These are historical facts about the box that was destroyed,
+not a live description.**
+
+| | |
+|---|---|
+| OS | Ubuntu 24.04.4 LTS |
+| Kernel / arch | 6.8.0-136-generic / x86_64 |
+| Size | 4 vCPU / 7935 MB RAM |
+| Docker / Compose | Docker version 29.6.2 / v5.3.1 |
+| Boot disk | 149.5G (20G used) |
+| Scratch volume | /dev/vdb1 · ext4 · 389.7G · UUID `4cbe5c5b-e295-4d25-b1f7-c511dfa9e769` |
+| Deployed commit | `e7a54cba02a1` on `codex/hosted-waystation-mvp` |
+| Worker image | `753b834fbac5` |
+| Gateway image | `1c3c81e18b4e` |
+
+The scratch UUID is recorded for reference only — a restored host gets a **new**
+volume with a **new** UUID. Do not copy the old one into `/etc/fstab`.
+
+### The control database is WAL-mode — a plain file copy is empty
+
+`/data/waystation.db` was **4 KB** while ~**918 KB** of live data sat in
+`waystation.db-wal`. Copying only the `.db` file yields a database with **no
+tables**, and `pragma integrity_check` still answers `ok` on it — an empty
+SQLite file is a valid one. That backup looks successful and restores nothing.
+
+Back it up with `VACUUM INTO`, which merges the WAL into one consistent file and
+reads the source without mutating it:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T gateway node -e \
+  'const {DatabaseSync}=require("node:sqlite");
+   const db=new DatabaseSync("/data/waystation.db");
+   db.exec("VACUUM INTO \'/tmp/control-backup.db\'");'
+docker compose -f docker-compose.prod.yml cp gateway:/tmp/control-backup.db .
+```
+
+Then verify **the copy**, not the source: open it and count rows. The
+2026-08-31 backup was 53,248 bytes with 10 transfers, 13 uploads and 38 meter
+events.
+
+A Vultr snapshot is unaffected — it captures the whole filesystem including the
+`-wal`. This only bites hand-rolled copies.
+
+### Secrets required on a restored host
+
+`.env` held 13 keys. Transfer-only needs nine: `B2_S3_ENDPOINT`, `B2_REGION`,
+`B2_BUCKET`, `B2_KEY_ID`, `B2_APP_KEY`, `B2_EVENT_SIGNING_SECRET`,
+`WAYSTATION_ACCESS_CODE_HASH`, `WAYSTATION_SESSION_SECRET`, `TUNNEL_TOKEN`.
+Full QC additionally needs `GMI_API_KEY`, `GMI_BASE_URL`,
+`PIPELINE_SHARED_SECRET` and `MANIFEST_LOCK_DAYS`.
+
+### What survives the instance being destroyed
+
+The **Cloudflare Tunnel** (token in `.env` — a restored host reconnects on its
+own), every **B2** object, the event rule, CORS and lifecycle rules, and the
+**Cloudflare Pages** portal.
+
+Because `cloudflared` dials **outbound**, a new instance gets a new IP and
+`api.orbitolive.com` needs **no DNS change**. Only the SSH target moves.
+
 ## Transfer-only mode (parked / low-cost deployment)
 
 When QC is not needed — a paused project that still moves files — the worker can
