@@ -1,0 +1,123 @@
+# Waystation — TRANSFER-ONLY stack.
+#
+#     docker compose -f docker-compose.transfer.yml up -d
+#
+# For a parked / low-cost deployment: verified transfer and delivery, no QC.
+#
+# Deliberately STANDALONE rather than an overlay on docker-compose.prod.yml, for
+# the same reason that file is standalone: Compose merges additively, so an
+# override cannot REMOVE the worker service or its scratch bind mounts.
+#
+# Shape:
+#   cloudflared ──(outbound only)──▶ Cloudflare edge ──▶ api.orbitolive.com
+#        │ private compose network
+#        ▼
+#   gateway:8787          (there is no worker in this stack)
+#
+# NO scratch disk is required. The scratch binds are worker-only — the gateway
+# has never had a /scratch mount — which is what lets this run on a small
+# instance with no attached block volume.
+#
+# Measured on the full stack before downsizing: gateway 118.8 MiB, cloudflared
+# 17.7 MiB, near-zero CPU. 1 vCPU / 1 GB is ample; the 8 GB / 4 vCPU of the full
+# stack is sized for ffmpeg, not for signing URLs.
+#
+# Required in .env on the host (never committed):
+#   B2_S3_ENDPOINT B2_REGION B2_BUCKET B2_KEY_ID B2_APP_KEY
+#   B2_EVENT_SIGNING_SECRET
+#   WAYSTATION_ACCESS_CODE_HASH WAYSTATION_SESSION_SECRET TUNNEL_TOKEN
+#
+# B2_EVENT_SIGNING_SECRET IS still required. B2 keeps firing ObjectCreated on
+# the unchanged event rule, and the gateway verifies the HMAC before answering;
+# without the secret every event returns 401. The gateway then evaluates
+# anyServiceOn() as false and publishes pipeline_skipped — no worker involved.
+#
+# GMI_API_KEY and PIPELINE_SHARED_SECRET are NOT used by this stack.
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    env_file:
+      - path: .env
+        required: true
+    environment:
+      NODE_ENV: production          # makes auth + persistent state FAIL CLOSED
+      PORT: 8787
+      # Explicitly EMPTIED, not merely omitted. `env_file: .env` is read before
+      # this block, and a .env carried over from a full-QC host may well define
+      # PIPELINE_URL — a stray value would point at a worker that does not
+      # exist here. Setting them empty makes the resolved config unambiguous
+      # regardless of what .env contains. MAX_QC_BYTES=0 below is the real
+      # guard; this is defence in depth.
+      PIPELINE_URL: ""
+      PIPELINE_URL_CLOUD: ""
+      GATEWAY_PUBLIC_URL: ""
+      # DEV_TRIGGER_ON_COMPLETE stays unset; the real B2 event drives the path.
+
+      WAYSTATION_AUTH_MODE: access-code
+      WAYSTATION_SESSION_TTL_SECONDS: "3600"
+      WAYSTATION_ALLOWED_ORIGINS: "https://orbitolive.com,https://www.orbitolive.com"
+      WAYSTATION_DB_PATH: /data/waystation.db
+
+      # ── TRANSFER-ONLY ENFORCEMENT ──
+      # applyServicePolicy(requested, bytes) forces every PIPELINE_SERVICE_KEY
+      # false when bytes > MAX_QC_BYTES (gateway/src/limits.ts). At 0 that is
+      # EVERY upload, so anyServiceOn() is false, the gateway publishes
+      # pipeline_skipped, and no job is ever dispatched.
+      #
+      # This reuses the proven policy path instead of adding a new switch. It is
+      # DURABLE (written into options_json, so a restart cannot resurrect QC),
+      # AUTHORITATIVE (server-side, not a hidden checkbox), and DISCLOSED — the
+      # sender is told through the existing services_disabled event rather than
+      # being silently downgraded.
+      MAX_QC_BYTES: "0"
+
+      WAYSTATION_ACCEPT_UPLOADS: "true"
+      MAX_UPLOAD_BYTES: "375809638400"        # 350 GiB
+      VERIFIED_RANGE_MAX_BYTES: "17179869184" # 16 GiB; above this uses root-only mode
+      ALLOW_ROOT_ONLY_UPLOADS: "true"
+      MAX_ACTIVE_UPLOADS_PER_SESSION: "1"
+      MAX_JOBS_PER_SESSION: "10"
+      MAX_DAILY_JOBS: "20"
+      RECIPIENT_LINK_TTL_DAYS: "14"
+
+      # Every paid lane off. Redundant behind MAX_QC_BYTES=0, kept explicit so
+      # the boot banner reads unambiguously and a later edit to one value cannot
+      # quietly re-enable spend.
+      ALLOW_AI_QC: "false"
+      ALLOW_SYNTHETIC_QC: "false"
+      ALLOW_EXPENSIVE_REFERENCE_QC: "false"
+      ALLOW_AI_INTERPRETIVE: "false"
+
+      # Kept so the client's pinned selector still matches an enforced value.
+      WAYSTATION_FORCE_COMPUTE: "cloud"
+    volumes:
+      - control:/data                        # SQLite: transfers, uploads, meters
+    # No `ports:` — reachable only through the tunnel.
+    # No `depends_on:` — there is no worker in this stack.
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e",
+             "fetch('http://localhost:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      # ONLY the tunnel token — the application .env is deliberately not passed
+      # into this container.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?TUNNEL_TOKEN is required}
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  # The SAME named volume as the prod stack, so switching modes in either
+  # direction preserves every transfer, recipient link and meter row.
+  # Never delete it.
+  control:

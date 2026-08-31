@@ -512,6 +512,107 @@ Honest limits recorded rather than papered over:
 
 ---
 
+## Transfer-only mode (parked / low-cost deployment)
+
+When QC is not needed — a paused project that still moves files — the worker can
+be dropped entirely. **Transfer-only never invokes it**: with every service flag
+off, the gateway publishes `pipeline_skipped` and no job is dispatched.
+
+```bash
+docker compose -f docker-compose.transfer.yml up -d
+```
+
+### Sizing
+
+Measured on the full stack: **gateway 118.8 MiB, cloudflared 17.7 MiB** — about
+137 MiB total, near-zero CPU. The full stack's 8 GB / 4 vCPU is sized for ffmpeg,
+not for signing URLs. **1 vCPU / 1 GB / 25 GB, with no block volume, is ample.**
+
+The gateway has **no `/scratch` mount** (`ls /scratch` inside it → no such file).
+The scratch binds are worker-only, which is what lets this mode run with no
+attached volume at all.
+
+### How it is enforced
+
+`MAX_QC_BYTES: "0"`. `applyServicePolicy(requested, bytes)` forces every
+`PIPELINE_SERVICE_KEY` false when `bytes > MAX_QC_BYTES`; at 0 that is every
+upload. This reuses the proven policy path rather than adding a switch, and is:
+
+- **durable** — written into `options_json`, so a restart cannot resurrect QC
+- **authoritative** — server-side, not a hidden checkbox
+- **disclosed** — the sender is told via `services_disabled`, not silently downgraded
+
+`PIPELINE_URL`, `PIPELINE_URL_CLOUD` and `GATEWAY_PUBLIC_URL` are explicitly set
+**empty** rather than omitted: `env_file: .env` is read first, and a `.env`
+carried over from a full-QC host may define them. Emptying them makes the
+resolved config unambiguous whatever `.env` contains.
+
+Confirm the mode is live from the boot banner: **`maxQC=0.0GiB`**.
+
+### What works, and what does not
+
+| Works | Does not |
+|---|---|
+| access-code auth, sliding sessions | all QC lanes |
+| direct-to-B2 multipart, resumable | AI / interpretive analysis |
+| BLAKE3 + bao verified download | thumbnails, summaries |
+| recipient links, expiry, revocation | |
+| meter ledger, transfer provenance | |
+
+**Keep `B2_EVENT_SIGNING_SECRET` in `.env`.** The B2 event rule is unchanged and
+still fires `ObjectCreated`; the gateway verifies the HMAC before answering.
+Without it every event returns 401. `GMI_API_KEY` and `PIPELINE_SHARED_SECRET`
+are unused in this mode.
+
+The `control` volume is shared with the prod stack, so switching either way
+preserves every transfer, recipient link and meter row.
+
+### Returning to full QC
+
+1. Attach a block volume, mount at `/mnt/waystation-scratch`, **one** fstab entry
+   by UUID with `nofail`.
+2. `bash scripts/preflight-scratch.sh --create` — must PASS.
+3. `docker compose -f docker-compose.prod.yml up -d`.
+
+The volume can be any size; it is blank working space. Nothing carries over —
+the deterministic tools live in the **worker image**, not on the scratch disk.
+
+## Image archive (provider-independent restore)
+
+```bash
+bash scripts/export-images.sh              # export + upload to B2
+bash scripts/export-images.sh --local-only # tarballs only
+```
+
+A Vultr snapshot already contains these images, so this is insurance, not
+duplication — for three reasons:
+
+1. **The Dockerfile is a recipe with a shelf life.** It pins
+   `mediaconch=25.04-2`, but Debian rotates old versions out of the main
+   archive. Months from now that build can simply fail.
+2. A snapshot is **provider-locked**; a tarball restores anywhere.
+3. A snapshot contains `.env` — every B2/GMI/session secret. **These tarballs do
+   not**, so they are the safer artifact to retain or move.
+
+Uploaded to `artifacts/images/` — deliberately **not** under `transfers/`, which
+would trip the B2 event rule on a build artifact. The script refuses that prefix.
+
+Current archive (2026-08-31): worker `753b834fbac5` **372 MB**, gateway
+`1c3c81e18b4e` **99 MB**, plus a JSON manifest of ids, build dates, sizes and
+SHA-256 digests. **~470 MB total, about $0.003/month.** Verified by round-trip:
+the gateway artifact re-downloaded and re-digested to `868c6d4c1c9ad221…`,
+matching the export.
+
+Restore:
+
+```bash
+# fetch from s3://<bucket>/artifacts/images/ with any S3 client
+shasum -a 256 <file>          # compare against the manifest
+docker load < <file>
+```
+
+No Debian archive, no rebuild, no provider lock-in.
+
 ## Runbook
 
 **Stop new spend** (recipient links keep working):
