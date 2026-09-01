@@ -575,6 +575,66 @@ own), every **B2** object, the event rule, CORS and lifecycle rules, and the
 Because `cloudflared` dials **outbound**, a new instance gets a new IP and
 `api.orbitolive.com` needs **no DNS change**. Only the SSH target moves.
 
+## Where the control-database backup lives
+
+The `control` volume is the gateway's durable memory — which files belong to
+which transfer, what each sender ordered, which links are revoked, and what was
+billed. Losing it loses no media (B2 holds all of that) but loses the *meaning*:
+recipient links stop resolving, because there is no row to look up.
+
+**Two independent copies, deliberately not co-located:**
+
+| Location | Path / where | Independent of |
+|---|---|---|
+| Backblaze B2 | `artifacts/control/waystation-control-20260901T001119Z.db` | the Mac |
+| Password manager | attached to the Waystation entry, beside `.env` | Backblaze entirely |
+
+```
+sha256  b03dbfe0e60bd2e89a5c67fc372ff5db072bf7b94091056462a1ddfd9aa8ca59
+bytes   53,248
+holds   10 transfers · 13 uploads · 38 meter events   (as of 2026-08-31)
+```
+
+B2 has **versioning enabled**, so an overwrite or delete retains the prior
+version, and the only lifecycle rule is scoped to `transfers/` — it cannot reach
+`artifacts/`. There is deliberately **no Object Lock**: this is an operational
+backup meant to be replaced, not a provenance record that must be provably
+unaltered.
+
+The B2 copy alone is **not** sufficient. It sits in the same bucket as the data
+it describes, so a bucket-level loss would take both. The password-manager copy
+is what makes it a real backup rather than a second pointer to one basket.
+
+### Restoring it
+
+```bash
+# fetch from s3://<bucket>/artifacts/control/ with any S3 client, then:
+docker compose -f docker-compose.transfer.yml cp <file> gateway:/data/waystation.db
+docker compose -f docker-compose.transfer.yml restart gateway
+```
+
+Verify by counting rows in the restored file, not by trusting the copy step.
+
+### Taking a NEW backup — read this first
+
+The database runs in **WAL mode**. `cp waystation.db` produces a **4 KB file
+with no tables**, and `pragma integrity_check` still answers `ok` on it. That
+backup looks successful and restores nothing. Use `VACUUM INTO`, which merges
+the WAL into one consistent file and does not mutate the source:
+
+```bash
+docker compose -f <compose-file> exec -T gateway node -e \
+  'const {DatabaseSync}=require("node:sqlite");
+   const db=new DatabaseSync("/data/waystation.db");
+   db.exec("VACUUM INTO \'/tmp/control-backup.db\'");'
+docker compose -f <compose-file> cp gateway:/tmp/control-backup.db .
+```
+
+**Encrypt any backup taken while transfers are still live.** `transfer_id` is a
+bearer capability and `session_id` is a live session. The 2026-08-31 backup was
+safe to store in the clear only because every capability in it had already
+expired or been revoked — 9 expired, 1 revoked, 0 live.
+
 ## Transfer-only mode (parked / low-cost deployment)
 
 When QC is not needed — a paused project that still moves files — the worker can
