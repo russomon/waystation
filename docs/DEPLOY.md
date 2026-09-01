@@ -587,7 +587,13 @@ recipient links stop resolving, because there is no row to look up.
 | Location | Path / where | Independent of |
 |---|---|---|
 | Backblaze B2 | `artifacts/control/waystation-control-20260901T001119Z.db` | the Mac |
-| Password manager | attached to the Waystation entry, beside `.env` | Backblaze entirely |
+| iCloud Drive | `Waystation-Backups/waystation-control-20260901.db` (+ `README.txt`) | Backblaze entirely |
+
+Deliberately **not** the password manager. Apple Passwords does not take file
+attachments, and this file is not a secret — every capability in it has lapsed.
+The password manager holds `.env`, which is. This document is the index for the
+backup, which is better than a manager note: version-controlled, on GitHub, and
+where anyone looking for a restore will already be.
 
 ```
 sha256  b03dbfe0e60bd2e89a5c67fc372ff5db072bf7b94091056462a1ddfd9aa8ca59
