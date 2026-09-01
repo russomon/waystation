@@ -7,11 +7,12 @@ history.
 
 ## Now
 
-- **Publish the protected-transfer release.** After the source proofs and final
-  diff pass, publish Waystation source, rebuild/restart only the production
-  gateway, export the exact client release into OrbitWebsite, and smoke-test an
-  unprotected transfer plus a password-protected recipient unlock. Do not
-  rebuild the worker: this feature does not change QC execution.
+- ~~**Publish the protected-transfer release.**~~ **DONE 2026-09-01.** Source
+  commit `5bb5952`, the gateway-only production rebuild, schema v3 migration,
+  OrbitWebsite `511f52a`, public health/auth checks, live artifact hashes, and
+  unknown-capability unlock behavior are verified. The QC worker was not
+  started or modified. The next user-facing check is one ordinary protected
+  transfer using the privately held access code; do not record that code.
 
 - ~~**Publish and smoke-test the transfer-first portal.**~~ **DONE 2026-09-01.**
   OrbitWebsite `e1c6d2f` publishes Waystation `0aa0ada`; the live manifest,

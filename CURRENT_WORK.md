@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-09-01 (protected transfer and branded sender implementation)
+Updated: 2026-09-01 (protected transfer release deployed and verified)
 Machine: Mac Studio
 Mode: active — transfer utility simplification
 
@@ -32,8 +32,19 @@ switches and chat history gaps.
   refusal, all three recipient gates, salted persistence, restart persistence,
   unprotected compatibility, and rejection at 129 characters. A real local
   browser upload independently proved both progress tracks and copy feedback.
-- This section describes source/local validation until the source commit,
-  gateway image, and exported hosted client are published and verified below.
+- **Published and verified:** Waystation source commit `5bb5952` is on the
+  release branch and `main`; production rebuilt/recreated only the gateway
+  under `docker-compose.transfer.yml`; OrbitWebsite `511f52a` publishes the
+  checksummed client at `https://orbitolive.com/waystation/`.
+- The live control database migrated from schema v2 to v3 in place with
+  `integrity_check=ok` and its existing 2 transfer / 2 upload rows preserved.
+  The pre-deploy `VACUUM INTO` backup is
+  `/home/waystation/control-pre-protected-5bb5952.db` (36,864 bytes, SHA-256
+  `a2e44b6b0759d8b47ef910392e1fa7af62891f7e9f783aad7ca6e04947d47f3d`).
+- Public health is 200, unauthenticated upload initiation remains 401, all four
+  hosted artifacts match the release manifest, and the live unlock route
+  returns neutral 404 for an unknown capability. `cloudflared` was not
+  recreated; no QC worker exists in the transfer-only stack.
 
 ## Transfer-first multi-file sender — 2026-09-01
 

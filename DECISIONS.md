@@ -5,6 +5,20 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-09-01 - Protected transfers ship as a gateway-only production change
+
+- The low-cost hosted deployment remains `docker-compose.transfer.yml` with
+  only gateway and cloudflared. Password protection changes control-plane
+  authorization and the static client; it does not require or justify starting
+  a QC worker.
+- Before migration, take a consistent `VACUUM INTO` snapshot of the WAL-mode
+  control database. A successful release must preserve row counts, report
+  schema v3 and `integrity_check=ok`, keep cloudflared's container identity,
+  and verify every hosted client artifact against its pinned manifest.
+- Production met these gates at source `5bb5952`; OrbitWebsite `511f52a`
+  publishes the matching client. A complete authenticated recipient exercise
+  uses the private access code and must never place that code in logs or docs.
+
 ### 2026-09-01 - Recipient passwords gate transfer access without encrypting objects
 
 - A sender may leave the download password blank or provide **1–128

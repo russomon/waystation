@@ -590,6 +590,26 @@ The full-QC host was spun down. Production now runs the **transfer-only** stack.
 | Gateway image | `1c3c81e18b4e` — **restored from B2**, not rebuilt |
 | Measured at idle | 523 MB of 955 used · gateway 94 MiB, cloudflared 16 MiB · CPU 0.36% |
 
+### Protected-transfer gateway release — 2026-09-01
+
+- Production checkout/source: `5bb5952` on
+  `codex/hosted-waystation-mvp`; static portal: OrbitWebsite `511f52a`, with a
+  clean manifest pinned to the same Waystation source.
+- Rebuilt and recreated **gateway only** with
+  `docker-compose.transfer.yml up -d --no-deps gateway`. Cloudflared retained
+  container id prefix `7d107bc6d419`; no worker was present, started, rebuilt,
+  or modified.
+- The control database migrated v2→v3 in place. Post-start evidence:
+  `integrity_check=ok`, `password_hash` present, 2 transfer rows and 2 upload
+  rows preserved.
+- Pre-deploy WAL-safe backup:
+  `/home/waystation/control-pre-protected-5bb5952.db`, 36,864 bytes, SHA-256
+  `a2e44b6b0759d8b47ef910392e1fa7af62891f7e9f783aad7ca6e04947d47f3d`.
+- The gateway boot banner still reports transfer-only enforcement
+  (`maxQC=0.0GiB`, AI/synthetic/interpretive/reference all false), public
+  `/healthz` returns 200, unauthenticated upload initiation returns 401, and
+  hosted index/client/worker/wasm hashes match the release manifest.
+
 `api.orbitolive.com` came back **within 5 seconds** of the tunnel reconnecting,
 with **no DNS change**. `cloudflared` dials outbound, so a new instance and a new
 IP are invisible to the public hostname. Only the SSH target moves.
