@@ -72,7 +72,14 @@ services:
       # AUTHORITATIVE (server-side, not a hidden checkbox), and DISCLOSED — the
       # sender is told through the existing services_disabled event rather than
       # being silently downgraded.
-      MAX_QC_BYTES: "0"
+      # ONE byte, not zero. num() in gateway/src/limits.ts requires n > 0, so
+      # "0" is treated as unset and falls back to the 100 GiB default — the
+      # banner then reads maxQC=100.0GiB and nothing is enforced. Verified the
+      # hard way: the resolved Compose config said '0' while the running gateway
+      # reported 100 GiB. At 1, every real upload exceeds the ceiling and every
+      # PIPELINE_SERVICE_KEY is forced false. A 1-byte file would technically
+      # keep QC, which is vacuous — there is no worker on this host anyway.
+      MAX_QC_BYTES: "1"
 
       WAYSTATION_ACCEPT_UPLOADS: "true"
       MAX_UPLOAD_BYTES: "375809638400"        # 350 GiB
