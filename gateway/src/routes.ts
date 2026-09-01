@@ -5,10 +5,13 @@ import {
   authEnabled,
   clearSessionCookie,
   enforceOrigin,
+  hasRecipientUnlock,
+  hashAccessCode,
   issueSession,
   limiter,
   requireSession,
   sessionIdOf,
+  setRecipientUnlockCookie,
   setSessionCookie,
   verifyAccessCode,
 } from "./auth.js";
@@ -20,6 +23,7 @@ import {
   createUpload,
   getUpload,
   getUploadByKey,
+  getUploadByTransferId,
   setUploadState,
   type UploadRow,
 } from "./db.js";
@@ -231,6 +235,13 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   const b = await c.req.json().catch(() => ({}) as Record<string, any>);
   const owned = ownedByPair(c, b.key, b.uploadId);
   if ("fail" in owned) return owned.fail;
+  if (b.recipientPassword !== undefined && typeof b.recipientPassword !== "string")
+    return c.json({ error: "Password must be text.", code: "bad_password" }, 400);
+  if (typeof b.recipientPassword === "string" && b.recipientPassword.length > 128)
+    return c.json({ error: "Password must be 128 characters or fewer.", code: "bad_password" }, 400);
+  const recipientPassword = typeof b.recipientPassword === "string" && b.recipientPassword.length > 0
+    ? b.recipientPassword
+    : undefined;
   // Idempotent: a retried completion must not re-assemble on B2 or re-meter
   // the transfer. The first call wins; later calls acknowledge without work.
   if (owned.row.state === "complete")
@@ -259,6 +270,7 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
     expiresAt: RECIPIENT_LINK_TTL_DAYS > 0
       ? Date.now() + RECIPIENT_LINK_TTL_DAYS * 86_400_000
       : undefined,
+    passwordHash: recipientPassword ? hashAccessCode(recipientPassword) : undefined,
   });
   // Report the skip honestly rather than silently dropping a requested service.
   if (disabled.length)
@@ -293,10 +305,38 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
 const belongsToTransfer = (key: string, id: string): boolean =>
   key.startsWith(`transfers/${id}/`) || key.startsWith(`derivatives/${id}/`);
 
+const recipientGate = (c: Context, id: string): Response | undefined => {
+  const transfer = getTransfer(id);
+  if (!transfer?.passwordHash) return undefined;
+  const upload = getUploadByTransferId(id);
+  const senderOwns = !!upload && upload.sessionId === sessionIdOf(c);
+  if (senderOwns || hasRecipientUnlock(c, id)) return undefined;
+  return c.json(
+    { error: "Password required.", code: "recipient_password_required", passwordRequired: true },
+    401,
+  );
+};
+
+api.post("/transfers/:id/unlock", enforceOrigin, limiter("recipient-unlock", 10, 60_000), async (c) => {
+  const id = c.req.param("id");
+  if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
+  const transfer = getTransfer(id);
+  if (!transfer) return c.json({ error: "not found" }, 404);
+  if (!transfer.passwordHash) return c.json({ ok: true, passwordRequired: false });
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const password = typeof body.password === "string" ? body.password : "";
+  if (password.length < 1 || password.length > 128 || !verifyAccessCode(password, transfer.passwordHash))
+    return c.json({ error: "That password was not accepted.", code: "bad_recipient_password" }, 401);
+  const expiresAt = setRecipientUnlockCookie(c, id);
+  return c.json({ ok: true, passwordRequired: true, expiresAt });
+});
+
 api.get("/transfers/:id/download", async (c) => {
   const id = c.req.param("id");
   const key = c.req.query("key") ?? "";
   if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
+  const locked = recipientGate(c, id);
+  if (locked) return locked;
   // Reject traversal before the prefix test, so "transfers/<id>/../../other"
   // cannot satisfy startsWith and then resolve elsewhere.
   if (!key || key.includes("..") || !belongsToTransfer(key, id))
@@ -332,6 +372,8 @@ api.get("/transfers/:id", async (c) => {
   // Expired or revoked capabilities are indistinguishable from unknown ones:
   // a recipient link must never reveal that it once existed.
   if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
+  const locked = recipientGate(c, id);
+  if (locked) return locked;
   const all = await g.listKeys(`transfers/${id}/`);
   // The master is whatever ISN'T a sidecar — caption transports, the bao
   // outboard, and reference mezzanines ride along under the same prefix and
@@ -391,6 +433,8 @@ api.post("/events/b2", async (c) => {
 // ───────── progress stream (sender + recipient subscribe) ─────────
 api.get("/progress/:transferId", (c) => {
   const id = c.req.param("transferId");
+  const locked = recipientGate(c, id);
+  if (locked) return locked;
   return streamSSE(c, async (stream) => {
     let alive = true;
     const unsub = sse.subscribe(id, (ev) => stream.writeSSE({ data: JSON.stringify(ev) }));

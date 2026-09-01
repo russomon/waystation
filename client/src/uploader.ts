@@ -4,13 +4,22 @@
 // through gwPost/gwGet (credentialed, session cookie); the part/sidecar PUTs go
 // straight to Backblaze with a BARE fetch — no cookie, no gateway header. The
 // master file never passes through the gateway or Cloudflare.
-import { hashFile, hashFileRootOnly } from "./blake3.js";
+import { hashInWorker } from "./hashClient.js";
 import { gwGet, gwPost } from "./config.js";
 import { getResume, saveResume, markPart, clearResume, type ResumeState } from "./resumeStore.js";
 
 const CONCURRENCY = 6;
 
-export interface Progress { bytes: number; total: number; phase: string; }
+export type IntegrityState = "preparing" | "hashing" | "finalizing" | "complete";
+export type UploadState = "preparing" | "connecting" | "uploading" | "finalizing" | "complete";
+export interface Progress {
+  total: number;
+  hashBytes: number;
+  uploadedBytes: number;
+  integrity: IntegrityState;
+  upload: UploadState;
+  message: string;
+}
 export interface ServiceOptions {
   qc_av: boolean; qc_captions: boolean; qc_ai: boolean; qc_synthetic: boolean;
   ai_interpretive: boolean;
@@ -23,10 +32,20 @@ export interface SendExtras {
   captions?: File | null;
   genManifest?: File | null;  // source Genblaze manifest → prompt-adherence QC
   options?: ServiceOptions;
+  recipientPassword?: string;
 }
 
 export async function uploadFile(file: File, extras: SendExtras, onProgress: (p: Progress) => void) {
   const fp = `${file.name}:${file.size}:${file.lastModified}`; // stable local resume key
+  const progress: Progress = {
+    total: file.size, hashBytes: 0, uploadedBytes: 0,
+    integrity: "preparing", upload: "preparing", message: "Preparing secure transfer",
+  };
+  const emit = (patch: Partial<Progress>) => {
+    Object.assign(progress, patch);
+    onProgress({ ...progress });
+  };
+  emit({});
 
   // 1. initiate, or re-attach to an in-flight upload
   let st = await getResume(fp);
@@ -74,13 +93,20 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
   // 3. hash pass (content address) runs concurrently with uploads. Range mode
   // also builds the bao outboard. Root-only mode keeps memory flat for huge
   // files and records only the whole-file BLAKE3 root.
-  const hashing = st.verificationMode === "range"
-    ? hashFile(file, (b) => onProgress({ bytes: b, total: file.size, phase: "hashing" }))
-    : hashFileRootOnly(file, (b) => onProgress({ bytes: b, total: file.size, phase: "hashing root" }));
+  emit({ integrity: "hashing", upload: "connecting", message: "Integrity check and upload are running together" });
+  const hashing = hashInWorker(file, st.verificationMode, (event) => {
+    if (event.type === "progress")
+      emit({ hashBytes: event.bytes, integrity: "hashing" });
+    else if (event.type === "finalizing")
+      emit({ hashBytes: file.size, integrity: "finalizing", message: "Finalizing verification data while upload continues" });
+    else
+      emit({ hashBytes: file.size, integrity: "complete", message: "Integrity check complete; upload continues" });
+  });
 
   // 4. upload only the missing parts, in parallel, capturing ETags
   const missing = range(1, st.partCount).filter((n) => !st!.done[n]);
   let uploaded = Object.keys(st.done).length * st.partSize;
+  emit({ uploadedBytes: Math.min(uploaded, file.size) });
   await pool(missing, CONCURRENCY, async (n) => {
     const { urls } = await post("/uploads/parts", { key: st!.key, uploadId: st!.uploadId, partNumbers: [n] });
     const start = (n - 1) * st!.partSize;
@@ -91,8 +117,14 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
     st!.done[n] = "1";
     await markPart(fp, n, "1");
     uploaded += blob.size;
-    onProgress({ bytes: Math.min(uploaded, file.size), total: file.size, phase: "uploading" });
+    emit({
+      uploadedBytes: Math.min(uploaded, file.size),
+      upload: "uploading",
+      message: "Uploading directly to Backblaze B2",
+    });
   });
+
+  emit({ uploadedBytes: file.size, upload: "finalizing", message: "Upload bytes complete; finalizing integrity and multipart records" });
 
   const hashed = await hashing;
   const root = hashed.root;
@@ -101,7 +133,8 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
   // verification. Large root-only transfers deliberately skip this because the
   // current outboard implementation buffers the whole sidecar in browser memory.
   if (st.verificationMode === "range") {
-    const outboard = (hashed as { root: string; outboard: Uint8Array }).outboard;
+    const outboard = hashed.outboard;
+    if (!outboard) throw new Error("Integrity sidecar was not generated.");
     const ob = await post("/uploads/outboard-url", { key: st.key });
     const obRes = await fetch(ob.url, { method: "PUT", body: outboard });
     if (!obRes.ok) throw new Error(`outboard upload failed: HTTP ${obRes.status}`);
@@ -127,11 +160,15 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
   //    hash + the sender's service selections (all-off = plain transfer)
   await post("/uploads/complete", {
     key: st.key, uploadId: st.uploadId, blake3Root: root, options: extras.options,
+    recipientPassword: extras.recipientPassword || undefined,
   });
   await clearResume(fp);
 
   const transferId = st.key.split("/")[1];
-  onProgress({ bytes: file.size, total: file.size, phase: "complete" });
+  emit({
+    hashBytes: file.size, uploadedBytes: file.size,
+    integrity: "complete", upload: "complete", message: "Transfer complete",
+  });
   return { key: st.key, transferId, blake3Root: root };
 }
 

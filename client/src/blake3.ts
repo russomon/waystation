@@ -14,6 +14,7 @@ export async function hashFile(
   file: File,
   onProgress?: (done: number) => void,
   chunk = 16 << 20,
+  onFinalizing?: () => void,
 ): Promise<{ root: string; outboard: Uint8Array }> {
   await loadWasm();
   const ob = new Blake3Outboard();
@@ -21,6 +22,7 @@ export async function hashFile(
     ob.update(new Uint8Array(await file.slice(off, off + chunk).arrayBuffer()));
     onProgress?.(Math.min(off + chunk, file.size));
   }
+  onFinalizing?.();
   return ob.finalize() as { root: string; outboard: Uint8Array };
 }
 
@@ -30,6 +32,7 @@ export async function hashFileRootOnly(
   file: File,
   onProgress?: (done: number) => void,
   chunk = 16 << 20,
+  onFinalizing?: () => void,
 ): Promise<{ root: string }> {
   await loadWasm();
   const hasher = new Blake3Hasher();
@@ -37,6 +40,7 @@ export async function hashFileRootOnly(
     hasher.update(new Uint8Array(await file.slice(off, off + chunk).arrayBuffer()));
     onProgress?.(Math.min(off + chunk, file.size));
   }
+  onFinalizing?.();
   return { root: hasher.finalize_hex() };
 }
 

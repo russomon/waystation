@@ -27,6 +27,7 @@ const env = process.env as Record<string, string | undefined>;
 export const AUTH_MODE = (env.WAYSTATION_AUTH_MODE || "disabled").trim();
 export const IS_PRODUCTION = env.NODE_ENV === "production";
 const SESSION_TTL_SECONDS = Number(env.WAYSTATION_SESSION_TTL_SECONDS || 3600);
+const RECIPIENT_TTL_SECONDS = Number(env.WAYSTATION_RECIPIENT_UNLOCK_TTL_SECONDS || 3600);
 const COOKIE = "ws_session";
 
 // ── scrypt: Node built-in, no native dependency to build in the container ──
@@ -185,6 +186,48 @@ export const clearSessionCookie = (c: Context): void => {
 
 export const sessionIdOf = (c: Context): string | null =>
   authEnabled ? readSession(getCookie(c, COOKIE)) : "dev-session";
+
+// ── transfer-scoped recipient unlock ──
+
+const recipientCookie = (transferId: string): string =>
+  `ws_r_${transferId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 64)}`;
+
+function recipientSign(payload: string): string {
+  // Production always has the session secret because open auth is refused.
+  // Local proof/dev may intentionally disable sender auth; the pipeline secret
+  // keeps recipient tokens signed there without adding another required knob.
+  const secret = authConfig.sessionSecret || env.PIPELINE_SHARED_SECRET || "waystation-local-recipient-token-secret";
+  return b64url(createHmac("sha256", secret).update(payload).digest());
+}
+
+export function setRecipientUnlockCookie(c: Context, transferId: string): number {
+  const expiresAt = Date.now() + RECIPIENT_TTL_SECONDS * 1000;
+  const payload = b64url(Buffer.from(JSON.stringify({ tid: transferId, exp: expiresAt })));
+  setCookie(c, recipientCookie(transferId), `${payload}.${recipientSign(payload)}`, {
+    httpOnly: true,
+    sameSite: "Strict",
+    secure: IS_PRODUCTION,
+    path: "/api",
+    maxAge: RECIPIENT_TTL_SECONDS,
+  });
+  return expiresAt;
+}
+
+export function hasRecipientUnlock(c: Context, transferId: string): boolean {
+  const token = getCookie(c, recipientCookie(transferId));
+  if (!token) return false;
+  const [payload, mac] = token.split(".");
+  if (!payload || !mac) return false;
+  const expected = Buffer.from(recipientSign(payload));
+  const supplied = Buffer.from(mac);
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return false;
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString());
+    return decoded?.tid === transferId && typeof decoded?.exp === "number" && Date.now() <= decoded.exp;
+  } catch {
+    return false;
+  }
+}
 
 /** Gate for expensive / state-changing sender routes. Registered AFTER the CORS
  *  middleware so an OPTIONS preflight is answered by cors() and never reaches

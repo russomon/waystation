@@ -1,6 +1,8 @@
+import { Check, Copy, Eye, EyeOff, createElement as createIcon } from "lucide";
 import { createSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink } from "./config.js";
+import { copyText } from "./clipboard.js";
 import { appendUniqueFiles, fileIdentity } from "./fileQueue.js";
-import { uploadFile, type ServiceOptions } from "./uploader.js";
+import { uploadFile, type Progress, type ServiceOptions } from "./uploader.js";
 import { renderDelivery } from "./delivery.js";
 
 const tid = new URLSearchParams(location.search).get("t");
@@ -84,10 +86,29 @@ if (tid) {
   const interpretive = $<HTMLInputElement>("#opt_ai_interpretive");
   const reviewBrief = $<HTMLTextAreaElement>("#review_brief");
   const reviewBriefRow = $("#reviewBriefRow");
+  const recipientPassword = $<HTMLInputElement>("#recipientPassword");
+  const togglePassword = $<HTMLButtonElement>("#togglePassword");
   type SenderMode = "transfer" | "qc";
   let mode: SenderMode = "transfer";
   let queuedFiles: File[] = [];
   let sending = false;
+
+  const icon = (node: any, label?: string): SVGElement => createIcon(node, {
+    width: "18", height: "18", "stroke-width": "1.8",
+    ...(label ? { role: "img", "aria-label": label } : { "aria-hidden": "true" }),
+  });
+
+  const paintPasswordIcon = (): void => {
+    togglePassword.replaceChildren(icon(recipientPassword.type === "password" ? Eye : EyeOff));
+    togglePassword.title = recipientPassword.type === "password" ? "Show password" : "Hide password";
+    togglePassword.setAttribute("aria-label", togglePassword.title);
+  };
+  togglePassword.onclick = () => {
+    recipientPassword.type = recipientPassword.type === "password" ? "text" : "password";
+    paintPasswordIcon();
+    recipientPassword.focus();
+  };
+  paintPasswordIcon();
 
   const formatBytes = (n: number): string => {
     if (n < 1024) return `${n} B`;
@@ -208,6 +229,8 @@ if (tid) {
     pickMaster.classList.toggle("disabled", sending);
     modeTransfer.disabled = sending;
     modeQc.disabled = sending;
+    recipientPassword.disabled = sending;
+    togglePassword.disabled = sending;
     refreshSidecars();
   };
 
@@ -267,7 +290,11 @@ if (tid) {
     };
   }
 
-  const resultRow = (file: File): { row: HTMLDivElement; status: HTMLSpanElement } => {
+  const resultRow = (file: File): {
+    row: HTMLDivElement;
+    status: HTMLSpanElement;
+    updateProgress: (progress: Progress) => void;
+  } => {
     const row = document.createElement("div");
     row.className = "batch-result";
     const name = document.createElement("strong");
@@ -275,9 +302,83 @@ if (tid) {
     const status = document.createElement("span");
     status.className = "status";
     status.textContent = "Queued";
-    row.append(name, status);
+    const tracks = document.createElement("div");
+    tracks.className = "progress-tracks";
+    const makeTrack = (label: string) => {
+      const wrap = document.createElement("div");
+      wrap.className = "progress-track";
+      const head = document.createElement("div");
+      head.className = "progress-head";
+      const title = document.createElement("span");
+      title.textContent = label;
+      const value = document.createElement("span");
+      head.append(title, value);
+      const bar = document.createElement("div");
+      bar.className = "progress-bar";
+      const fill = document.createElement("span");
+      bar.append(fill);
+      wrap.append(head, bar);
+      tracks.append(wrap);
+      return { value, fill };
+    };
+    const integrity = makeTrack("Integrity check");
+    const upload = makeTrack("Upload");
+    const updateProgress = (progress: Progress) => {
+      const hashPct = progress.total ? Math.min(100, (progress.hashBytes / progress.total) * 100) : 0;
+      const uploadPct = progress.total ? Math.min(100, (progress.uploadedBytes / progress.total) * 100) : 0;
+      integrity.fill.style.width = `${hashPct.toFixed(1)}%`;
+      upload.fill.style.width = `${uploadPct.toFixed(1)}%`;
+      integrity.value.textContent = progress.integrity === "complete"
+        ? "Complete"
+        : progress.integrity === "finalizing"
+          ? "Finalizing verification data"
+          : `${formatBytes(progress.hashBytes)} / ${formatBytes(progress.total)}`;
+      upload.value.textContent = progress.upload === "complete"
+        ? "Complete"
+        : progress.upload === "connecting"
+          ? "Connecting to Backblaze B2"
+          : progress.upload === "finalizing"
+            ? "Finalizing multipart upload"
+            : `${formatBytes(progress.uploadedBytes)} / ${formatBytes(progress.total)}`;
+      status.textContent = progress.message;
+    };
+    row.append(name, tracks, status);
     logEl.append(row);
-    return { row, status };
+    return { row, status, updateProgress };
+  };
+
+  const appendShareLink = (row: HTMLDivElement, link: string): void => {
+    const wrap = document.createElement("div");
+    wrap.className = "share-link";
+    const anchor = document.createElement("a");
+    anchor.href = link;
+    anchor.textContent = link;
+    anchor.target = "_blank";
+    anchor.rel = "noopener";
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "icon-button";
+    copyButton.title = "Copy share link";
+    copyButton.setAttribute("aria-label", "Copy share link");
+    copyButton.append(icon(Copy));
+    const copied = document.createElement("span");
+    copied.className = "copy-status";
+    copied.setAttribute("aria-live", "polite");
+    copyButton.onclick = async () => {
+      try {
+        await copyText(link);
+        copyButton.replaceChildren(icon(Check));
+        copied.textContent = "Copied to clipboard";
+        window.setTimeout(() => {
+          copyButton.replaceChildren(icon(Copy));
+          copied.textContent = "";
+        }, 2500);
+      } catch {
+        copied.textContent = "Could not copy. Select the link to copy it manually.";
+      }
+    };
+    wrap.append(anchor, copyButton, copied);
+    row.append(wrap);
   };
 
   sendBtn.onclick = async () => {
@@ -289,29 +390,23 @@ if (tid) {
     const singleQcMaster = selectedMode === "qc" && files.length === 1;
     const captions = singleQcMaster ? capIn.files?.[0] ?? null : null;
     const genManifest = singleQcMaster ? genIn.files?.[0] ?? null : null;
+    const password = recipientPassword.value;
     const failed: File[] = [];
     logEl.replaceChildren();
     renderQueue();
 
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
-      const { row, status } = resultRow(file);
+      const { row, status, updateProgress } = resultRow(file);
       try {
         const { transferId } = await uploadFile(
           file,
-          { captions, genManifest, options },
-          (progress) => {
-            status.textContent = `${progress.phase} · ${formatBytes(progress.bytes)} / ${formatBytes(progress.total)}`;
-          },
+          { captions, genManifest, options, recipientPassword: password },
+          updateProgress,
         );
 
         const link = recipientLink(transferId);
-        const share = document.createElement("a");
-        share.href = link;
-        share.textContent = "Open share link";
-        share.target = "_blank";
-        share.rel = "noopener";
-        row.append(document.createElement("br"), share);
+        appendShareLink(row, link);
 
         if (!serviceRequested(options)) {
           status.textContent = "Uploaded · ready to share · no QC requested";
@@ -356,6 +451,11 @@ if (tid) {
       : `${sent} ${sent === 1 ? "file" : "files"} sent`;
     logEl.append(summary);
     queuedFiles = failed;
+    if (failed.length === 0) {
+      recipientPassword.value = "";
+      recipientPassword.type = "password";
+      paintPasswordIcon();
+    }
     sending = false;
     renderQueue();
   };

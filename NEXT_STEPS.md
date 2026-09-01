@@ -7,6 +7,12 @@ history.
 
 ## Now
 
+- **Publish the protected-transfer release.** After the source proofs and final
+  diff pass, publish Waystation source, rebuild/restart only the production
+  gateway, export the exact client release into OrbitWebsite, and smoke-test an
+  unprotected transfer plus a password-protected recipient unlock. Do not
+  rebuild the worker: this feature does not change QC execution.
+
 - ~~**Publish and smoke-test the transfer-first portal.**~~ **DONE 2026-09-01.**
   OrbitWebsite `e1c6d2f` publishes Waystation `0aa0ada`; the live manifest,
   default Transfer mode, multi-file input, and hidden QC boundary were

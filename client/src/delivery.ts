@@ -2,7 +2,8 @@
 // "Verify provenance" button that re-hashes the assets (SHA-256, Web Crypto)
 // and checks them against the manifest. Reached at /?t=<transferId>.
 
-import { gwGet } from "./config.js";
+import { Eye, EyeOff, LockKeyhole, createElement as createIcon } from "lucide";
+import { GatewayError, gwGet, gwPost } from "./config.js";
 import { downloadVerified } from "./downloader.js";
 
 interface Asset { key: string; url: string; mime: string; size: number; }
@@ -42,13 +43,82 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+const icon = (node: any): SVGElement => createIcon(node, {
+  width: "18", height: "18", "stroke-width": "1.8", "aria-hidden": "true",
+});
+
+function renderUnlock(id: string, root: HTMLElement): void {
+  root.textContent = "";
+  const card = el(`<section class="card unlock-card"></section>`);
+  const lock = document.createElement("div");
+  lock.className = "unlock-icon";
+  lock.append(icon(LockKeyhole));
+  const heading = el(`<h1>Protected transfer</h1>`);
+  const copy = el(`<p class="tag">Enter the password supplied by the sender to view and download this transfer.</p>`);
+  const wrap = el(`<div class="password-wrap"></div>`);
+  const input = document.createElement("input");
+  input.type = "password";
+  input.maxLength = 128;
+  input.autocomplete = "current-password";
+  input.placeholder = "Transfer password";
+  input.setAttribute("aria-label", "Transfer password");
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "icon-button";
+  const paint = () => {
+    toggle.replaceChildren(icon(input.type === "password" ? Eye : EyeOff));
+    toggle.title = input.type === "password" ? "Show password" : "Hide password";
+    toggle.setAttribute("aria-label", toggle.title);
+  };
+  toggle.onclick = () => {
+    input.type = input.type === "password" ? "text" : "password";
+    paint();
+    input.focus();
+  };
+  paint();
+  wrap.append(input, toggle);
+  const message = el(`<p class="field-help" aria-live="polite"></p>`);
+  const submit = document.createElement("button");
+  submit.type = "button";
+  submit.className = "btn";
+  submit.textContent = "Unlock transfer";
+  const unlock = async () => {
+    if (input.value.length < 1) {
+      message.textContent = "Enter the transfer password.";
+      return;
+    }
+    submit.disabled = true;
+    message.textContent = "Checking password…";
+    try {
+      await gwPost(`/transfers/${id}/unlock`, { password: input.value });
+      input.value = "";
+      await renderDelivery(id, root);
+    } catch (error) {
+      message.textContent = error instanceof GatewayError
+        ? error.message
+        : "The transfer could not be unlocked.";
+      submit.disabled = false;
+      input.select();
+    }
+  };
+  submit.onclick = unlock;
+  input.onkeydown = (event) => { if (event.key === "Enter") void unlock(); };
+  card.append(lock, heading, copy, wrap, message, submit);
+  root.append(card);
+  input.focus();
+}
+
 export async function renderDelivery(id: string, root: HTMLElement) {
   root.hidden = false;
   root.textContent = "Loading transfer…";
   let t: Transfer;
   try {
     t = await gwGet(`/transfers/${id}`);
-  } catch {
+  } catch (error) {
+    if (error instanceof GatewayError && error.code === "recipient_password_required") {
+      renderUnlock(id, root);
+      return;
+    }
     // Neutral response for missing, expired, or revoked capabilities — the
     // recipient link is a bearer capability and must not distinguish them.
     root.textContent = "Transfer not found or expired.";

@@ -1,12 +1,39 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-09-01 (transfer-first multi-file sender published and verified)
+Updated: 2026-09-01 (protected transfer and branded sender implementation)
 Machine: Mac Studio
 Mode: active — transfer utility simplification
 
 Use this file for the active handoff state that should survive machine
 switches and chat history gaps.
+
+## Protected transfer and sender polish — 2026-09-01
+
+- Both Transfer and Transfer + QC now accept an optional download password of
+  **1–128 characters**, with a show/hide control. A batch applies the password
+  independently to every transfer; leaving it blank preserves unprotected
+  delivery.
+- The gateway stores only a salted scrypt record. Protected metadata,
+  progress, and download-token routes require either the originating sender
+  session or a successful recipient unlock. Unlocks use transfer-specific,
+  signed, HttpOnly, SameSite cookies with a one-hour default lifetime.
+- Presigned object URLs are created only after authorization. Once issued,
+  their existing signed-link lifetime still applies; recipient passwords are
+  an access gate, not encryption of the media object.
+- BLAKE3/Bao hashing now runs in a Web Worker beside the multipart upload. The
+  sender shows separate **Integrity check** and **Upload** tracks, including an
+  explicit verification-finalization state, so 100% hashing no longer looks
+  like a stalled transfer.
+- Completed results show the full share URL, a Lucide copy control, and visible
+  clipboard confirmation. Sender and recipient surfaces now use Orbit Olive's
+  mark, dark/cream/amber palette, and typography.
+- The auth-enabled MinIO proof covers one-character passwords, wrong-password
+  refusal, all three recipient gates, salted persistence, restart persistence,
+  unprotected compatibility, and rejection at 129 characters. A real local
+  browser upload independently proved both progress tracks and copy feedback.
+- This section describes source/local validation until the source commit,
+  gateway image, and exported hosted client are published and verified below.
 
 ## Transfer-first multi-file sender — 2026-09-01
 

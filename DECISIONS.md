@@ -5,6 +5,32 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-09-01 - Recipient passwords gate transfer access without encrypting objects
+
+- A sender may leave the download password blank or provide **1–128
+  characters**. Complexity rules are deliberately absent; rate limiting,
+  salted scrypt storage, and a short-lived unlock provide the security bounds
+  without preventing passphrases or one-character demo credentials.
+- Password protection applies to both Transfer and Transfer + QC and to every
+  file in a client batch. Each file remains an independent protected transfer.
+- Protected transfer metadata, progress, and download-token signing require
+  the originating sender session or a transfer-specific signed HttpOnly unlock
+  cookie. A missing optional analyzer or QC service is unrelated to access.
+- The gateway never stores the plaintext password. Recipient passwords are an
+  authorization gate, not client-side encryption: a presigned B2 URL issued
+  after unlock remains usable until its existing signature expires.
+
+### 2026-09-01 - Integrity and upload progress are separate user-visible work
+
+- BLAKE3/Bao runs in a Web Worker concurrently with the existing multipart B2
+  upload. Finalizing the outboard is reported separately from reading bytes;
+  it is no longer displayed as an unexplained 100% hashing pause.
+- Every result exposes independent Integrity check and Upload progress. The
+  full share URL is the link text and a standard copy icon provides explicit
+  clipboard feedback.
+- Sender and recipient pages use the established Orbit Olive visual language.
+  Branding does not change transfer identity, integrity, or QC behavior.
+
 ### 2026-09-01 - Transfer is the default and batches preserve file identity
 
 - Waystation opens in **Transfer** mode because secure delivery is the primary

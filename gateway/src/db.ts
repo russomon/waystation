@@ -16,7 +16,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 // :memory: is the default so dev and the proof suite stay clean and isolated.
 // Production must set a real path on a persistent volume — and fails closed
@@ -54,7 +54,8 @@ function migrate(): void {
         state        TEXT NOT NULL DEFAULT 'created',
         created_at   TEXT NOT NULL,
         expires_at   TEXT,
-        revoked      INTEGER NOT NULL DEFAULT 0
+        revoked      INTEGER NOT NULL DEFAULT 0,
+        password_hash TEXT
       );
 
       CREATE TABLE IF NOT EXISTS uploads (
@@ -96,6 +97,12 @@ function migrate(): void {
     if (!cols("uploads").includes("verification_mode"))
       db.exec(`ALTER TABLE uploads ADD COLUMN verification_mode TEXT NOT NULL DEFAULT 'range'`);
   }
+  if (current < 3) {
+    const cols = (table: string) =>
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols("transfers").includes("password_hash"))
+      db.exec(`ALTER TABLE transfers ADD COLUMN password_hash TEXT`);
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 migrate();
@@ -112,18 +119,20 @@ export interface TransferRow {
   options?: Record<string, boolean | string>;
   expiresAt?: number;
   revoked?: boolean;
+  passwordHash?: string;
 }
 
 const insertTransfer = db.prepare(`
-  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at, password_hash)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(transfer_id) DO UPDATE SET
     object_key  = excluded.object_key,
     blake3_root = COALESCE(excluded.blake3_root, transfers.blake3_root),
     verification_mode = excluded.verification_mode,
     -- Only overwrite options when the caller actually supplied them, so a
     -- later partial write cannot erase the sender's original selections.
-    options_json = COALESCE(excluded.options_json, transfers.options_json)
+    options_json = COALESCE(excluded.options_json, transfers.options_json),
+    password_hash = COALESCE(excluded.password_hash, transfers.password_hash)
 `);
 const selectTransfer = db.prepare(`SELECT * FROM transfers WHERE transfer_id = ?`);
 
@@ -136,6 +145,7 @@ export function saveTransfer(transferId: string, meta: TransferRow): void {
     meta.options === undefined ? null : JSON.stringify(meta.options),
     new Date(meta.createdAt || Date.now()).toISOString(),
     meta.expiresAt ? new Date(meta.expiresAt).toISOString() : null,
+    meta.passwordHash ?? null,
   );
 }
 
@@ -186,6 +196,7 @@ export function getTransfer(transferId: string): TransferRow | undefined {
     options: row.options_json == null ? undefined : JSON.parse(row.options_json),
     expiresAt: row.expires_at ? Date.parse(row.expires_at) : undefined,
     revoked: !!row.revoked,
+    passwordHash: row.password_hash ?? undefined,
   };
 }
 
@@ -242,12 +253,20 @@ export function createUpload(u: Omit<UploadRow, "state" | "createdAt">): void {
 const selectUploadByKey = db.prepare(
   `SELECT * FROM uploads WHERE object_key = ? ORDER BY created_at DESC LIMIT 1`,
 );
+const selectUploadByTransfer = db.prepare(
+  `SELECT * FROM uploads WHERE transfer_id = ? ORDER BY created_at DESC LIMIT 1`,
+);
 
 /** Object keys embed a fresh transfer UUID per initiate, so a key identifies
  *  one upload. Used by the outboard/sidecar routes, which address the master by
  *  key alone; ownership is still verified against the returned row. */
 export function getUploadByKey(objectKey: string): UploadRow | undefined {
   const r = selectUploadByKey.get(objectKey) as any;
+  return r ? rowToUpload(r) : undefined;
+}
+
+export function getUploadByTransferId(transferId: string): UploadRow | undefined {
+  const r = selectUploadByTransfer.get(transferId) as any;
   return r ? rowToUpload(r) : undefined;
 }
 
