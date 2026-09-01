@@ -5,6 +5,26 @@ Repo: waystation
 Use this file to record durable project decisions so they do not live only in
 chat threads.
 
+### 2026-09-01 - Transfer is the default and batches preserve file identity
+
+- Waystation opens in **Transfer** mode because secure delivery is the primary
+  path. **Transfer + QC** remains a deliberate second mode containing the
+  existing QC and AI controls; no QC capability is removed from the API or
+  recipient report.
+- A sender may select several files at once, add more in later picker actions,
+  or drag-and-drop files. The client queues and uploads them sequentially so a
+  batch does not multiply the uploader's existing per-file multipart
+  concurrency.
+- Every queued file creates its own transfer ID, resumable multipart upload,
+  progress record, retry outcome, and share link. A batch is convenience at
+  the client boundary, not a new archive object or shared delivery identity.
+- Captions and Genblaze manifests attach only when Transfer + QC has exactly
+  one master. Applying one sidecar across a multi-master batch would be
+  ambiguous and is therefore disabled rather than guessed.
+- Transfer mode explicitly sends all service flags off and relies on the
+  gateway's proven transfer-only path. This change does not require a gateway
+  or worker deployment.
+
 ### 2026-08-03 - Caption semantics require temporal alignment, not prompt proximity
 
 - An AI caption match or text-quality clearance is ineligible unless a cited

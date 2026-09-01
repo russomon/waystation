@@ -21,20 +21,42 @@
          `display` rule — .svc sets display:flex, so a hidden service row would
          still render. Make `hidden` actually mean hidden, everywhere. */
       [hidden] { display: none !important; }
-      body { font: 15px/1.6 system-ui, sans-serif; max-width: 680px; margin: 5vh auto; padding: 0 1rem; color: var(--ink); }
-      h1 { margin: 0 0 .1rem; letter-spacing: -0.02em; }
+      body { font: 15px/1.6 system-ui, sans-serif; max-width: 720px; margin: 5vh auto; padding: 0 1rem; color: var(--ink); }
+      h1 { margin: 0 0 .1rem; letter-spacing: 0; }
       .tag { color: var(--mut); margin: 0 0 1.4rem; }
-      .card { border: 1px solid var(--line); border-radius: 16px; padding: 1.4rem 1.5rem; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+      .card { border: 1px solid var(--line); border-radius: 8px; padding: 1.4rem 1.5rem; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
 
-      .pick { display: block; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 1.1rem 1.2rem; cursor: pointer; margin-bottom: .7rem; transition: border-color .15s; }
+      .mode-switch { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; margin: 0 0 1rem;
+                     border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+      .mode-switch button { min-height: 42px; border: 0; border-radius: 6px; background: transparent;
+                            color: var(--mut); font: inherit; font-weight: 600; cursor: pointer; }
+      .mode-switch button[aria-selected="true"] { color: var(--ink); background: #fff;
+                                                   box-shadow: 0 1px 2px rgba(15,23,42,.10); }
+      .mode-switch button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+      .pick { display: block; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 1.1rem 1.2rem; cursor: pointer; margin-bottom: .7rem; transition: border-color .15s, background .15s; }
       .pick:hover { border-color: var(--blue); }
       .pick strong { display: block; }
       .pick .muted { color: var(--mut); font-size: 13px; }
       .pick.has-file { border-style: solid; border-color: var(--blue); background: #eff6ff; }
+      .pick.dragging { border-style: solid; border-color: var(--blue); background: #eff6ff; }
+      .pick.disabled { cursor: not-allowed; opacity: .55; background: var(--bg); }
 
-      .services { border: 1px solid var(--line); border-radius: 12px; margin: 1rem 0; overflow: hidden; }
+      .queue { margin: .3rem 0 1rem; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+      .queue li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .75rem; align-items: center;
+                  min-height: 48px; padding: .55rem .75rem; border-bottom: 1px solid var(--line); }
+      .queue li:last-child { border-bottom: 0; }
+      .queue-file { min-width: 0; }
+      .queue-file strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .queue-file span { color: var(--mut); font-size: 12.5px; }
+      .remove-file { width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent;
+                     color: var(--mut); font: 20px/1 system-ui, sans-serif; cursor: pointer; }
+      .remove-file:hover { color: #b91c1c; background: #fef2f2; }
+      .remove-file:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+      .queue-note { min-height: 1.4rem; margin: -.35rem 0 .7rem; color: var(--mut); font-size: 13px; }
+
+      .services { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0; overflow: hidden; }
       .svc-head { display: flex; justify-content: space-between; align-items: center; padding: .7rem 1rem; background: var(--bg); border-bottom: 1px solid var(--line); font-weight: 500; }
-      .svc-head label { font-weight: 400; font-size: 13px; color: var(--mut); display: flex; gap: .4rem; align-items: center; cursor: pointer; }
       .svc { display: flex; gap: .6rem; align-items: baseline; padding: .55rem 1rem; border-bottom: 1px solid var(--line); cursor: pointer; }
       .svc:last-child { border-bottom: 0; }
       .svc input { transform: translateY(1px); }
@@ -43,7 +65,6 @@
       .brief-row { align-items: stretch; flex-direction: column; cursor: default; background: #f8fffa; }
       .brief-row textarea { width: 100%; min-height: 74px; resize: vertical; font: inherit;
                             padding: .5rem .6rem; border: 1px solid #bbf7d0; border-radius: 6px; }
-      .services.off .svc { opacity: .4; pointer-events: none; }
       .profile-row { font-weight: 500; cursor: default; justify-content: space-between; }
       .profile-row select { font: inherit; padding: .25rem .5rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
       .chip { display: inline-block; padding: .05rem .5rem; border-radius: 999px; font-size: 12px; font-weight: 600; margin-right: .35rem; }
@@ -51,11 +72,26 @@
       .chip.warnc { background: #fef3c7; }
       .chip.mutedc { background: #f1f5f9; color: var(--mut); }
 
-      .btn { display: inline-block; padding: .6rem 1.4rem; border-radius: 10px; background: var(--blue); color: #fff; text-decoration: none; border: 0; font: inherit; font-weight: 500; cursor: pointer; }
+      .btn { display: inline-block; min-height: 42px; padding: .6rem 1.4rem; border-radius: 7px; background: var(--blue); color: #fff; text-decoration: none; border: 0; font: inherit; font-weight: 500; cursor: pointer; }
       .btn:disabled { background: #94a3b8; cursor: not-allowed; }
       .btn.ghost { background: #fff; color: var(--blue); border: 1px solid var(--blue); }
-      #log { white-space: pre-wrap; margin-top: 1rem; font: 13px/1.7 ui-monospace, monospace; color: #333; }
+      #log { margin-top: 1rem; color: #333; }
+      .batch-result { padding: .7rem 0; border-top: 1px solid var(--line); }
+      .batch-result:first-child { border-top: 0; }
+      .batch-result strong { display: block; overflow-wrap: anywhere; }
+      .batch-result .status { color: var(--mut); font: 12.5px/1.6 ui-monospace, monospace; }
+      .batch-result .status.bad { color: #b91c1c; }
+      .batch-summary { margin: .4rem 0 0; font-weight: 600; }
       a { color: var(--blue); }
+
+      @media (max-width: 560px) {
+        body { margin-top: 2.5vh; }
+        .card { padding: 1rem; }
+        .svc { align-items: flex-start; flex-wrap: wrap; }
+        .svc .muted { width: 100%; margin-left: 1.55rem; text-align: left; }
+        .profile-row { display: block; }
+        .profile-row select { width: 100%; margin-top: .35rem; }
+      }
 
       .deliv { border: 1px solid var(--line); border-radius: 16px; padding: 1.25rem 1.5rem; }
       .deliv h2 { margin: .6rem 0 .1rem; }
@@ -120,13 +156,24 @@
 
     <div id="sender" hidden>
       <h1>Waystation</h1>
-      <p class="tag">Send mastered video. It arrives QC&rsquo;d, summarized, and provable.</p>
+      <p class="tag" id="senderTag">Send large files securely and share them.</p>
+      <div class="mode-switch" role="tablist" aria-label="Waystation service">
+        <button type="button" id="modeTransfer" role="tab" aria-selected="true"
+                aria-controls="senderPanel">Transfer</button>
+        <button type="button" id="modeQc" role="tab" aria-selected="false"
+                aria-controls="senderPanel">Transfer + QC</button>
+      </div>
       <div class="card">
-        <label class="pick" id="pickMaster">
-          <input id="file" type="file" hidden />
-          <strong>Master file</strong>
-          <span class="muted" id="fname">video or audio — click to choose</span>
+        <div id="senderPanel" role="tabpanel" aria-labelledby="modeTransfer">
+        <label class="pick" id="pickMaster" for="file">
+          <input id="file" type="file" multiple hidden />
+          <strong id="pickTitle">Choose or drop files</strong>
+          <span class="muted" id="fname">Select multiple files, add them one at a time, or drag them here</span>
         </label>
+        <ul class="queue" id="fileQueue" aria-label="Files ready to send" hidden></ul>
+        <p class="queue-note" id="queueNote" aria-live="polite"></p>
+
+        <div id="qcOptions" hidden>
         <label class="pick" id="pickCaps">
           <input id="capfile" type="file" accept=".srt,.vtt,.scc,.mcc,.rcwt" hidden />
           <strong>Captions sidecar <span class="muted">(optional)</span></strong>
@@ -141,7 +188,6 @@
         <div class="services" id="services">
           <div class="svc-head">
             <span>Services at the waystation</span>
-            <label><input type="checkbox" id="transferOnly" /> Transfer only</label>
           </div>
           <div class="svc profile-row">
             QC profile
@@ -172,9 +218,11 @@
           <label class="svc"><input type="checkbox" id="opt_cloud" checked />
             Cloud compute <span class="muted">process at the Docker worker &middot; off = this machine</span></label>
         </div>
+        </div>
 
         <button id="send" class="btn" disabled>Send</button>
-        <div id="log"></div>
+        <div id="log" aria-live="polite"></div>
+        </div>
       </div>
     </div>
     <div id="delivery" hidden></div>

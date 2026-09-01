@@ -1,12 +1,34 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-08-03 (credentialed consolidated judge run reviewed and hardened; production unchanged)
+Updated: 2026-09-01 (transfer-first multi-file sender implemented; publication pending)
 Machine: Mac Studio
-Mode: active — hackathon submission run (deadline 2026-08-03 17:00 EDT)
+Mode: active — transfer utility simplification
 
 Use this file for the active handoff state that should survive machine
 switches and chat history gaps.
+
+## Transfer-first multi-file sender — 2026-09-01
+
+- The sender now opens in **Transfer** mode. **Transfer + QC** remains an
+  explicit second tab and reveals the existing captions, manifest, profile,
+  deterministic QC, AI, thumbnail, summary, and compute controls.
+- The master-file picker accepts multiple files in one selection, adds files
+  across repeated selections, and accepts drag-and-drop. Duplicate browser
+  file identities are ignored and every queued file can be removed before
+  sending.
+- A batch sends files sequentially through the existing resumable B2 uploader.
+  Every file remains an independent transfer with its own progress, failure
+  state, and share link; failed files remain queued for an explicit retry.
+- Transfer mode sends every service flag off, so the gateway's existing
+  transfer-only route skips the QC pipeline. The existing end-to-end toggle
+  proof confirms that this produces no derivatives.
+- Captions and Genblaze manifests are available only for a single master in
+  Transfer + QC. This prevents one sidecar from being silently applied to
+  multiple unrelated files.
+- Source proofs and client/gateway builds pass. The hosted portal has not yet
+  been republished from these changes, and the production gateway/worker have
+  not been accessed or changed.
 
 ## Judge source release — 2026-08-03
 
