@@ -575,6 +575,85 @@ own), every **B2** object, the event rule, CORS and lifecycle rules, and the
 Because `cloudflared` dials **outbound**, a new instance gets a new IP and
 `api.orbitolive.com` needs **no DNS change**. Only the SSH target moves.
 
+## Current deployment — transfer-only, 2026-08-31
+
+The full-QC host was spun down. Production now runs the **transfer-only** stack.
+
+| | |
+|---|---|
+| Host | Vultr Los Angeles, **1 vCPU / 1 GB / 25 GB**, shared CPU, no block volume |
+| Origin IP | *deliberately not recorded here — see below* |
+| OS | Ubuntu 24.04.4 LTS · kernel 6.8.0-138 · x86_64 |
+| Docker / Compose | 29.7.2 / v5.5.0 |
+| Compose file | `docker-compose.transfer.yml` |
+| Repo commit | `9f08244` on `codex/hosted-waystation-mvp` |
+| Gateway image | `1c3c81e18b4e` — **restored from B2**, not rebuilt |
+| Measured at idle | 523 MB of 955 used · gateway 94 MiB, cloudflared 16 MiB · CPU 0.36% |
+
+`api.orbitolive.com` came back **within 5 seconds** of the tunnel reconnecting,
+with **no DNS change**. `cloudflared` dials outbound, so a new instance and a new
+IP are invisible to the public hostname. Only the SSH target moves.
+
+> **The origin IP is intentionally absent from this file.** The repository is
+> public, and `api.orbitolive.com` resolves to Cloudflare — the origin is not in
+> DNS and is not publicly discoverable. Publishing it here would hand out the one
+> address the tunnel exists to keep unadvertised, on a host whose only inbound
+> port is SSH. Keep it in the password manager beside `.env`, or read it off the
+> Vultr console.
+
+### Host prep applied
+
+- `ufw`: deny incoming, allow outgoing, **22/tcp only** (Vultr's image already
+  shipped this exact posture)
+- Docker log rotation — `/etc/docker/daemon.json` written **before** installing
+  Docker, and confirmed applied on a real container (`max-size=10m max-file=3`),
+  not merely present in config
+- 2.4 GB swap — pre-provisioned by Vultr; none needed adding
+- `waystation` user in `docker` + `sudo`; root login and password auth disabled,
+  verified with `sshd -T` **and** by confirming root is refused
+
+SSH hardening was applied **only after** logging in as `waystation` succeeded.
+Hardening a fresh box unconditionally is how people lock themselves out.
+
+### Secrets deliberately absent
+
+`GMI_API_KEY` and `PIPELINE_SHARED_SECRET` are **not** on this host. With no
+worker they would be credentials at rest for no purpose. `.env` carries nine
+keys, not thirteen.
+
+### The restore path is now proven
+
+The gateway image was pulled from `artifacts/images/`, its SHA-256 matched the
+export byte for byte (`868c6d4c1c9ad221…`), and it loaded as the same image id
+that ran production. **`docker load` peaked comfortably inside 1 GB** — which
+retroactively settles the sizing question: 512 MB would have been marginal for
+exactly that step.
+
+The **worker** image restore remains untested. Verifying it costs seconds and no
+scratch disk, since loading an image does not run it:
+
+```bash
+docker load < waystation-worker-753b834fbac5-2026-08-02.tar.gz
+docker images waystation-worker      # expect id 753b834fbac5
+```
+
+## ⚠ MAX_QC_BYTES: use 1, never 0
+
+`num()` in `gateway/src/limits.ts` requires `n > 0`. **`MAX_QC_BYTES="0"` is
+treated as unset and falls back to the 100 GiB default** — the guard is then
+completely inert.
+
+This shipped and had to be caught in production. `docker compose config`
+resolved `MAX_QC_BYTES='0'`, which looked like proof, but only showed that
+Compose passed the string — not that the gateway interpreted it. The first boot
+banner read `maxQC=100.0GiB` with transfer-only enforcement doing nothing.
+
+**Verify the boot banner, not the compose config.** `maxQC=0.0GiB` is the only
+evidence that matters, and it comes from the running process.
+
+`num()` is deliberately unchanged: rejecting 0 is correct for the other ceilings
+it guards — `MAX_UPLOAD_BYTES=0` should not silently mean "accept nothing".
+
 ## Where the control-database backup lives
 
 The `control` volume is the gateway's durable memory — which files belong to
