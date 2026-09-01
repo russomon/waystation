@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-09-01 (transfer-first multi-file sender implemented; publication pending)
+Updated: 2026-09-01 (transfer-first multi-file sender published and verified)
 Machine: Mac Studio
 Mode: active — transfer utility simplification
 
@@ -26,9 +26,10 @@ switches and chat history gaps.
 - Captions and Genblaze manifests are available only for a single master in
   Transfer + QC. This prevents one sidecar from being silently applied to
   multiple unrelated files.
-- Source proofs and client/gateway builds pass. The hosted portal has not yet
-  been republished from these changes, and the production gateway/worker have
-  not been accessed or changed.
+- Source proofs and client/gateway builds pass. OrbitWebsite commit `e1c6d2f`
+  publishes the clean release from Waystation `0aa0ada`; the live manifest and
+  hosted sender DOM were verified. The production gateway/worker were not
+  rebuilt or changed.
 
 ## Judge source release — 2026-08-03
 

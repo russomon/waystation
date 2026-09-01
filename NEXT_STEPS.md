@@ -7,13 +7,12 @@ history.
 
 ## Now
 
-- **Publish and smoke-test the transfer-first portal.** Export the committed
-  client to OrbitWebsite, publish the static portal, and verify Transfer is the
-  default at `/waystation/`; select multiple files together, add another in a
-  later picker action, and confirm every file receives its own share link.
-  Also verify Transfer + QC still exposes the existing service controls and
-  that sidecars enable only when exactly one master is queued. This is a
-  client-only release; do not rebuild the production gateway or worker.
+- ~~**Publish and smoke-test the transfer-first portal.**~~ **DONE 2026-09-01.**
+  OrbitWebsite `e1c6d2f` publishes Waystation `0aa0ada`; the live manifest,
+  default Transfer mode, multi-file input, and hidden QC boundary were
+  verified. Local browser checks covered combined and additive selections,
+  duplicate suppression, desktop/mobile layout, and single-master sidecar
+  enablement. The production gateway and worker were not rebuilt or changed.
 
 - **Rerun the representative judge asset through the hardened consolidated sender.** Start
   `bash scripts/judge-calibration-up.sh`; leave Cloud compute and AI Interpretive
