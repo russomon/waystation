@@ -1,12 +1,18 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-09-01 (protected transfer release deployed and verified)
+Updated: 2026-09-02 (QC parked; deferred-tooling register added)
 Machine: Mac Studio
 Mode: active — transfer utility simplification
 
 Use this file for the active handoff state that should survive machine
 switches and chat history gaps.
+
+> **QC development is parked.** Production is transfer-only and has no worker.
+> Deterministic tools investigated and deferred are registered in
+> `docs/DEFERRED_TOOLING.md` (currently OpenCV); it is linked from
+> **"Returning to full QC"** in `docs/DEPLOY.md`. Read it before rebuilding or
+> re-archiving the worker image.
 
 ## Protected transfer and sender polish — 2026-09-01
 

@@ -268,6 +268,15 @@ history.
 
 ## Later
 
+- **When QC development resumes, read `docs/DEFERRED_TOOLING.md` first.**
+  Deterministic tools we investigated and deliberately deferred while the
+  project is parked — currently **OpenCV**, with the version pin, the
+  derived-layer build, the `docker commit` hazard, and the
+  `qc/archive_tools.py` integration point all already worked out. The register
+  is also linked from **"Returning to full QC"** in `docs/DEPLOY.md`, because a
+  running full-QC box is the cheapest moment to act on it. Add to it whenever a
+  new deterministic tool looks worth having.
+
 - Jury policy 1.1 candidate, from the LIVE pair-policy data: both models
   caught 5/5 plants standalone, yet the deployed policy scored 3 reproduced /
   2 contested — `match_key` requires identical `evidence_ids`, so a juror that

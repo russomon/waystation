@@ -801,9 +801,17 @@ preserves every transfer, recipient link and meter row.
    by UUID with `nofail`.
 2. `bash scripts/preflight-scratch.sh --create` — must PASS.
 3. `docker compose -f docker-compose.prod.yml up -d`.
+4. **Read `docs/DEFERRED_TOOLING.md` before you re-archive the image.**
 
 The volume can be any size; it is blank working space. Nothing carries over —
 the deterministic tools live in the **worker image**, not on the scratch disk.
+
+Which is exactly why step 4 belongs here. A running full-QC box with the worker
+image already loaded is the **cheapest** moment to add a deterministic tool;
+afterwards it means standing the whole stack up again for what may be a single
+`pip install`. `docs/DEFERRED_TOOLING.md` is the register of tools already
+investigated and deliberately deferred — work through it while the box is up,
+then export once.
 
 ## Image archive (provider-independent restore)
 
@@ -840,6 +848,10 @@ docker load < <file>
 ```
 
 No Debian archive, no rebuild, no provider lock-in.
+
+If you are loading the **worker** image in order to run QC again, check
+`docs/DEFERRED_TOOLING.md` first — it lists deterministic tools already
+investigated and deferred, and this is the cheap moment to add them.
 
 ## Runbook
 
