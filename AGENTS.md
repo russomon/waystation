@@ -5,9 +5,26 @@
 Waystation is a cloud-waystation media delivery system: verified transfer to
 Backblaze B2 with a broadcast-grade QC engine, an AI/prompt-native QC lane on
 GMI Cloud, read-only agentic reporting, and WORM-locked Genblaze provenance. Built for the
-Backblaze Generative Media Hackathon (submission deadline 2026-08-03).
+Backblaze Generative Media Hackathon (submitted 2026-08-03; judging closed).
 
 GitHub: `git@github.com:russomon/waystation.git` (public)
+
+## Current state — read before proposing work
+
+**QC development is parked. Production runs the transfer-only stack and has no
+worker container at all.** The gateway forces every pipeline service off, so no
+QC, AI, thumbnail or summary lane exists on the live deployment; transfers,
+recipient links, verified download and the meter ledger all still work.
+
+The full QC engine described below is **complete in source and proven**, but it
+is not deployed. Do not assume a running worker, a scratch disk, or GMI spend.
+
+- `docs/DEPLOY.md` → *"Current deployment"* and *"Transfer-only mode"* — what is
+  actually live.
+- `docs/DEPLOY.md` → *"Returning to full QC"* — how to bring the worker back.
+- `docs/DEFERRED_TOOLING.md` — deterministic tools investigated and deliberately
+  deferred (currently OpenCV). **Read this before rebuilding or re-archiving the
+  worker image**; a running full-QC box is the cheapest moment to act on it.
 
 ## Start Here
 
@@ -17,6 +34,8 @@ GitHub: `git@github.com:russomon/waystation.git` (public)
 - `DECISIONS.md` — durable project decisions.
 - `SHARED_CODING_WORKFLOW.md` — the cross-computer handoff routine.
 - `SETUP.md` — Backblaze B2 / GMI account setup for a fresh environment.
+- `docs/DEPLOY.md` — provisioning, the live deployment record, restore paths.
+- `docs/DEFERRED_TOOLING.md` — worker-image tooling queued for when QC resumes.
 
 ## Layout
 
@@ -28,7 +47,7 @@ GitHub: `git@github.com:russomon/waystation.git` (public)
 | `crates/blake3-outboard/` | Rust→wasm BLAKE3 + bao outboard. |
 | `cdn-worker/` | Cloudflare Worker for token-gated B2 streaming. |
 | `scripts/` | One-command proof scripts + live/dev drivers. |
-| `docs/` | Devpost copy and the demo shot list. |
+| `docs/` | Deploy/restore runbook, deferred tooling register, QC calibration and broadcast baseline, interpretive-run records, Devpost copy, demo shot list. |
 
 ## Project Rules
 
@@ -54,6 +73,12 @@ GitHub: `git@github.com:russomon/waystation.git` (public)
 - The pipeline worker is **stateless** — everything durable lands in B2. Keep
   it that way so it deploys anywhere and scales horizontally.
 - Python **3.13+** is required (`genblaze-core` floor).
+- **Do not rebuild the worker image to add a dependency.** Its Dockerfile pins
+  `mediaconch=25.04-2` (Debian rotates old versions out) and compiles QCTools
+  from source; a rebuild can fail for reasons unrelated to your change. Layer on
+  the archived image instead. Never use `docker commit` to produce one — it
+  captures the container's environment, so a compose-started worker would bake
+  `.env` secrets into an image that then gets uploaded to B2.
 
 ## Useful Commands
 
@@ -80,4 +105,5 @@ docker compose up --build
 - The relevant proof scripts pass (see `SHARED_CODING_WORKFLOW.md`).
 - `gateway` type-checks, `client` builds, `pipeline` imports.
 - `CURRENT_WORK.md`, `NEXT_STEPS.md`, `DECISIONS.md` updated.
-- Committed and pushed to `origin/main`.
+- Committed on the working branch (`codex/hosted-waystation-mvp`), pushed, and
+  `main` fast-forwarded to match so the default branch reflects reality.
