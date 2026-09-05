@@ -1,31 +1,29 @@
 # Claude Guidance
 
-This repository is shared between Claude Code, Codex, and multiple local
-computers through GitHub. GitHub is the source of truth. Do not use iCloud,
-Dropbox, or Google Drive for live source-code sync.
+**Everything universal lives in `AGENTS.md`.** Read that first; this file holds
+only what is specific to Claude Code.
 
-Read these files first when resuming work:
+## The repository outranks your memory
 
-- `README.md`
-- `AGENTS.md`
-- `CURRENT_WORK.md`
-- `NEXT_STEPS.md`
-- `DECISIONS.md`
-- `SHARED_CODING_WORKFLOW.md`
-- `SETUP.md` when the task touches Backblaze B2 or GMI credentials
+Claude Code carries memory files across sessions. They are point-in-time notes
+and they go stale — this project's own checkout was renamed while a memory still
+pointed at the old path. When a memory and the repository disagree, **the
+repository wins**. Verify a remembered file, flag or command still exists before
+acting on it.
 
-Follow the rules in `AGENTS.md`. In particular:
+The same applies to anything you recall about deployment state: `CURRENT_WORK.md`
+and `docs/DEPLOY.md` are authoritative, not recollection.
 
-- Every capability claim needs a passing proof script; keep the existing ones
-  green rather than adding unverified features.
-- Never print, echo, or commit secret values. `.env` is gitignored — lint it
-  by length/prefix only. The full git history has been scanned clean.
-- Deterministic and AI QC are separate gates. AI never overwrites or clears an
-  instrument reading. Only the explicit versioned AI authority reducer may
-  turn corroborated, evidence-cited interpretive findings into HOLD/REJECT.
-- This repo is public: competitive analyses and personal reference files
-  belong in the user's Claude project directory, not here.
+## Internal documents
 
-Before switching to another computer or agent, update the handoff files with
-what changed, what was validated, and the exact next step, then commit and
-push.
+This repository is **public**. Competitive analyses and the user's personal
+reference files belong in the Claude project directory
+(`~/Documents/Claude/Projects/OrbitXfer-Clade/`), never here. Before writing a
+document, ask whether it is repository-facing or internal.
+
+## Secrets
+
+Never print, echo, or commit a secret value — not even to show that a fix
+worked. `.env` is gitignored; lint it by length and prefix only. This includes
+access codes and recipient capability IDs, which are bearer tokens: record the
+first 8 characters, never the whole thing.

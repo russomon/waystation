@@ -2,8 +2,19 @@
 
 Repo: waystation
 
-Use this file to record durable project decisions so they do not live only in
-chat threads.
+Durable decisions a future agent should not have to rediscover — architectural
+choices, technology selections, compatibility requirements, data-format and API
+conventions, security calls, and approaches deliberately **rejected** and why.
+
+This is **not** a changelog, a session log, or a list of implementation details.
+Current state belongs in `CURRENT_WORK.md`, the queue in `NEXT_STEPS.md`, and
+finished narrative in `docs/PROJECT_HISTORY.md`.
+
+Entries are newest-first, headed `### YYYY-MM-DD - short claim`, and record:
+**Context** (what forced the choice), **Decision / result**, **Why it matters**,
+and where useful the rejected alternative and how the decision was verified.
+Superseded entries are kept and marked, not deleted — the history of a reversal
+is itself the useful part.
 
 ### 2026-09-01 - Protected transfers ship as a gateway-only production change
 

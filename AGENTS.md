@@ -28,14 +28,32 @@ is not deployed. Do not assume a running worker, a scratch disk, or GMI spend.
 
 ## Start Here
 
-- `README.md` — architecture, the judge-facing proof scripts, deploy guide.
-- `CURRENT_WORK.md` — the current handoff state.
-- `NEXT_STEPS.md` — the short forward queue.
-- `DECISIONS.md` — durable project decisions.
-- `SHARED_CODING_WORKFLOW.md` — the cross-computer handoff routine.
-- `SETUP.md` — Backblaze B2 / GMI account setup for a fresh environment.
-- `docs/DEPLOY.md` — provisioning, the live deployment record, restore paths.
-- `docs/DEFERRED_TOOLING.md` — worker-image tooling queued for when QC resumes.
+This repository is shared between Codex, Claude Code, Cursor and several
+machines, so **the repository is the shared memory** — not any one
+conversation. Each kind of knowledge has exactly one home. Put information in
+its home, and link rather than duplicate.
+
+| File | Holds | Read it when |
+|---|---|---|
+| `AGENTS.md` | durable rules for every agent | always, first |
+| `CURRENT_WORK.md` | current state, the exact next step | always, second |
+| `NEXT_STEPS.md` | the work queue | picking up work |
+| `DECISIONS.md` | 47 dated decisions + rationale | before contradicting a choice |
+| `SHARED_CODING_WORKFLOW.md` | startup, validation commands, handoff | every session |
+| `docs/ARCHITECTURE.md` | how the system works | the task is unfamiliar |
+| `docs/REPO_MAP.md` | where things live | looking for code |
+| `docs/DEPLOY.md` | what is deployed, restore paths | touching production |
+| `docs/DEFERRED_TOOLING.md` | tooling queued for the worker image | rebuilding that image |
+| `README.md` | front door, proof scripts, capability status | orienting or writing claims |
+| `SETUP.md` | B2 / GMI account setup | a fresh environment |
+| `docs/PROJECT_HISTORY.md` | archived session journal | tracing how something came to be |
+
+`docs/PROJECT_HISTORY.md` is **history, not state**. Parts of it were true only
+on the day they were written. Never resume work from it.
+
+Keep the split honest: durable decisions belong in `DECISIONS.md`, not in
+`CURRENT_WORK.md`; temporary task state belongs in `CURRENT_WORK.md`, never
+here.
 
 ## Layout
 
@@ -73,6 +91,17 @@ is not deployed. Do not assume a running worker, a scratch disk, or GMI spend.
 - The pipeline worker is **stateless** — everything durable lands in B2. Keep
   it that way so it deploys anywhere and scales horizontally.
 - Python **3.13+** is required (`genblaze-core` floor).
+- **Read the existing implementation before inventing a pattern.** This codebase
+  has settled conventions — bounded ffmpeg windows (`qc/util.py`), the
+  check/tier model (`qc/report.py`), the service-policy reducer
+  (`gateway/src/limits.ts`), the optional-instrument shape (`qc/avsync.py`,
+  `qc/archive_tools.py`). Extend them instead of adding a parallel mechanism,
+  and prefer reusing a helper to writing a second one.
+- **Preserve working behaviour.** Keep the existing proofs green; if a change
+  makes one fail, that is the finding, not an obstacle to route around.
+- **Validate before claiming.** Run the relevant checks in
+  `SHARED_CODING_WORKFLOW.md` and report what you actually ran. "Should work" is
+  not a result.
 - **Do not rebuild the worker image to add a dependency.** Its Dockerfile pins
   `mediaconch=25.04-2` (Debian rotates old versions out) and compiles QCTools
   from source; a rebuild can fail for reasons unrelated to your change. Layer on

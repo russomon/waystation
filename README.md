@@ -68,10 +68,14 @@ bash scripts/ai-interpretive-loop-proof.sh # gateway upload -> mock GMI -> B2 ar
 |---|---|
 | `gateway/` | Control plane (Hono/Node): presigned URLs, `ListParts` resume, **B2 event webhook → pipeline**, SSE progress. Never touches bytes. |
 | `client/` | Browser app (Vite/TS): chunk + BLAKE3 + parallel multipart upload, resumable; verified download. |
-| `crates/blake3-outboard/` | Rust→wasm BLAKE3 (root now; bao outboard for verified range download next). |
+| `crates/blake3-outboard/` | Rust→wasm BLAKE3 + bao outboard for verified range download. |
 | `cdn-worker/` | Cloudflare Worker: token-gated streaming from the private B2 bucket (free B2→CF egress). |
 | `pipeline/` | Python Genblaze worker: fan-out AI steps on GMI Cloud, writes manifest to B2. |
 | `config/` | B2 CORS + Event Notification rule. |
+| `docs/` | Deploy runbook, architecture, repo map, calibration, deferred tooling. |
+
+For more than this table: **`docs/ARCHITECTURE.md`** explains how the pieces
+interact and **`docs/REPO_MAP.md`** says where to look for a given task.
 
 ## Run (local)
 
