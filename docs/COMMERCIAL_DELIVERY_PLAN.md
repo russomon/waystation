@@ -203,7 +203,18 @@ gateway → raw B2 for a billed download.
 
 ## Build order
 
-Each step depends on the one above it.
+Mostly sequential, with one important exception: **step 2 does not depend on
+step 1.** The mediated download endpoint needs only the authorization gate that
+already exists plus presigned minting, and the meter ledger is keyed by
+`transferId`, not by owner — so egress metering works before any identity does.
+
+Step 2 is therefore the right place to start. It is unblocked, it is the piece
+everything else leans on, and it improves the product immediately even with no
+billing attached: links that stop expiring, revocation that takes effect at
+once, and the prerequisite for parallel downloads.
+
+Step 1, by contrast, is blocked on a decision nobody has made yet — the pricing
+model. You cannot build a checkout without knowing what it charges for.
 
 1. **Payment + identity.** Take the card, capture the email, mint an
    `owner_id`, write it where `sessionId` is written today, and email the sender
