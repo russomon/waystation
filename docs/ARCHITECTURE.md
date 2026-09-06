@@ -78,7 +78,10 @@ credentialed cross-origin request would fail at preflight.
 Vite + TypeScript. `main.ts` is the sender, `delivery.ts` the recipient page.
 
 Uploads run through `uploader.ts` (resumable multipart, concurrency 6) with
-`resumeStore.ts` persisting resume state. Hashing runs in a Web Worker
+`resumeStore.ts` persisting resume state. Downloads now match: `delivery.ts`
+fetches `planRanges()` chunks over six connections and writes each at its own
+offset into one file handle, because B2 throttles per connection rather than per
+client. Nothing is buffered in either direction. Hashing runs in a Web Worker
 (`hashWorker.ts` / `hashClient.ts`) so BLAKE3 finalization cannot block the main
 thread — a lesson learned the hard way on a 27 GiB master. `downloader.ts`
 handles verified download; `delivery.ts` owns the save-picker streaming path.

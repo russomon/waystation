@@ -232,8 +232,10 @@ model. You cannot build a checkout without knowing what it charges for.
    began and what it was entitled to.
 3. **Download credits** — grants, byte budgets, top-up.
 4. **Per-transfer expiry selection** — small; the column already exists.
-5. **Parallel ranged downloads** — built against the endpoint from 2. Building
-   it earlier, against raw presigned URLs, would mean rewriting it.
+5. ~~**Parallel ranged downloads**~~ — **DONE 2026-09-05**, against the endpoint
+   from 2 exactly as intended. One authorization resolves the redirect once and
+   the workers range against storage, which is the same shape download grants
+   formalise in step 3: one authorization per download, many range requests.
 6. **Magic-link recovery** — for a sender who loses the capability URL. Needed
    before support volume makes it urgent, not before launch.
 

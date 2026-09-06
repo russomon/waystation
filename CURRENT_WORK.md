@@ -79,11 +79,14 @@ None.
 The engine is parked, but the **direction is now set**: turn Waystation into a
 client-facing paid transfer service. `docs/COMMERCIAL_DELIVERY_PLAN.md` holds
 the design and the decisions already taken; `NEXT_STEPS.md` holds the ordered
-track. **Step 2 is done** (2026-09-05): downloads are gateway-mediated, so the
-master's storage URL is never disclosed and revocation is immediate. That
-unblocks parallel ranged downloads, which is the fix for single-stream download
-speed. Step 1, payment + identity, remains blocked on an undecided pricing
-model.
+track. **Steps 2 and 5 are done** (2026-09-05): downloads are gateway-mediated,
+so the master's storage URL is never disclosed and revocation is immediate, and
+they now run over six parallel ranges instead of one stream. Step 1, payment +
+identity, remains blocked on an undecided pricing model.
+
+**Open measurement:** parallel download speed has not been measured on an idle
+link, and the FSA save path has not been exercised in a real browser — the save
+dialog cannot be automated. One manual download of a large file settles both.
 
 When work resumes, read `NEXT_STEPS.md` for the queue. If the next task touches
 the worker image or brings QC back, read `docs/DEFERRED_TOOLING.md` **first** —

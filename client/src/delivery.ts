@@ -5,6 +5,8 @@
 import { Eye, EyeOff, LockKeyhole, createElement as createIcon } from "lucide";
 import { GatewayError, gwGet, gwPost } from "./config.js";
 import { downloadVerified } from "./downloader.js";
+import { planRanges } from "./ranges.js";
+import { pool } from "./uploader.js";
 
 interface Asset { key: string; url: string; mime: string; size: number; }
 interface Transfer {
@@ -37,6 +39,100 @@ const hms = (secs: number): string => {
     ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`
     : `${m}:${String(r).padStart(2, "0")}`;
 };
+
+// ───────── parallel ranged download ─────────
+//
+// Measured 2026-08-01: B2 throttles per CONNECTION, not per client. One stream
+// reached 232 Mb/s on an 800 Mb/s line; six reached 3.3x that. The uploader has
+// run six connections since it was written — downloads never got the same
+// treatment, so a transfer that uploaded in minutes took a quarter of an hour
+// to come back.
+//
+// Six matches the uploader. It is not a measured optimum: the 3.3x figure was
+// taken while another download competed for the same pipe, so re-measure on an
+// idle link before treating this number as tuned.
+const DOWNLOAD_CONCURRENCY = 6;
+
+// Below this, one connection is faster: setup latency dominates and the
+// progress bar finishes before the extra sockets are useful.
+const PARALLEL_MIN_BYTES = 32 << 20;
+
+/** Stream one response body to disk at an advancing position.
+ *  `write` is serialized by the caller — see the mutex in saveToDisk. */
+async function drain(
+  body: ReadableStream<Uint8Array>,
+  at: number,
+  write: (position: number, data: Uint8Array) => Promise<void>,
+  onBytes: (n: number) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  let position = at;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    await write(position, value);          // awaited → backpressure
+    position += value.byteLength;
+    onBytes(value.byteLength);
+  }
+}
+
+/** Download `url` into an open FileSystemWritableFileStream, in parallel where
+ *  the server supports it. Nothing is buffered: every byte goes network → disk,
+ *  so a 26 GiB master costs no more memory than a small one. */
+async function saveToDisk(
+  url: string,
+  total: number,
+  writable: any,
+  onBytes: (n: number) => void,
+): Promise<void> {
+  // A FileSystemWritableFileStream is a WritableStream: overlapping write()
+  // calls fight over the same locked writer. Serialize them through a promise
+  // chain. Ordering does not matter because every write carries its own
+  // absolute position, and at most DOWNLOAD_CONCURRENCY writes are ever queued
+  // since each worker awaits its own before reading more.
+  let chain: Promise<void> = Promise.resolve();
+  const write = (position: number, data: Uint8Array): Promise<void> => {
+    chain = chain.then(() => writable.write({ type: "write", position, data }));
+    return chain;
+  };
+
+  // One tiny ranged request answers both questions at once: does the server
+  // honour Range (206 rather than 200), and what URL did the mediated link
+  // actually resolve to? res.url is the post-redirect URL, so the workers below
+  // range against storage directly instead of paying a gateway round-trip per
+  // chunk. That is one authorization for one download — the same exposure as
+  // the single-stream path, which also follows the redirect exactly once, and
+  // the shape download grants formalise in step 3 of the commercial plan.
+  const probe = await fetch(url, { headers: { Range: "bytes=0-0" } });
+  if (!probe.ok) throw new Error(`HTTP ${probe.status}`);
+  const resolved = probe.url || url;
+  const ranged = probe.status === 206;
+  await probe.body?.cancel();
+
+  if (!ranged || total < PARALLEL_MIN_BYTES) {
+    // Fall back to one stream: either the server ignored Range, or the file is
+    // small enough that extra connections would only add latency.
+    const res = await fetch(url);
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    return drain(res.body, 0, write, onBytes);
+  }
+
+  await pool(planRanges(total), DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
+    const fetchRange = (from: string) =>
+      fetch(from, { headers: { Range: `bytes=${start}-${end}` } });
+    let res = await fetchRange(resolved);
+    // The resolved URL is a short-lived presigned link. A download longer than
+    // its life starts failing mid-flight, so re-resolve through the mediated
+    // URL and retry once. That also re-runs the gateway's revocation and expiry
+    // checks, which is why a long download cannot outlive a revoked transfer.
+    if (res.status === 401 || res.status === 403) {
+      const again = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
+      res = again;
+    }
+    if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
+    await drain(res.body, start, write, onBytes);
+  });
+}
 
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   const h = await crypto.subtle.digest("SHA-256", buf);
@@ -499,19 +595,13 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       };
 
       try {
-        const res = await fetch(t.original.url);
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
         writable = await handle.createWritable();
-        const reader = res.body.getReader();
         paint(true);
-        for (;;) {
-          const { value, done: end } = await reader.read();
-          if (end) break;
-          await writable.write(value);            // awaited → backpressure
-          done += value.byteLength;
+        await saveToDisk(t.original.url, total, writable, (n) => {
+          done += n;
           window_.push({ t: performance.now(), b: done });
           paint();
-        }
+        });
         await writable.close();
         paint(true);
         dl.textContent = "saved ✓";

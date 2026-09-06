@@ -173,7 +173,10 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
 }
 
 function range(a: number, b: number) { return Array.from({ length: b - a + 1 }, (_, i) => a + i); }
-async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
+/** Bounded-concurrency worker pool. Exported because the download path needs
+ *  exactly the same primitive — n workers pulling from one queue, which
+ *  self-balances when some chunks are slower than others. */
+export async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
   const it = items[Symbol.iterator]();
   await Promise.all(Array.from({ length: n }, async () => {
     for (let x = it.next(); !x.done; x = it.next()) await fn(x.value);

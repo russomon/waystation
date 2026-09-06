@@ -60,11 +60,15 @@ Real engineering, deliberately deferred. Any of these can start whenever.
   `docs/DEFERRED_TOOLING.md` — currently OpenCV, with the pin, the derived-layer
   build and the integration point already worked out. Do this while a full-QC
   box is already up; that is the cheap moment.
-- **Parallel ranged downloads.** ✅ **Now unblocked** — the mediated endpoint
-  from commercial-track step 2 exists, and `mediated-download-proof.sh` shows
-  Range surviving the redirect. Build against `original.url`, which is now that
-  endpoint. Measured 2026-08-01: B2 throttles per
-  connection, not per client. One stream reached 232 Mb/s; six streams measured
+- ~~**Parallel ranged downloads.**~~ **DONE 2026-09-05.** `delivery.ts` fetches
+  `planRanges()` chunks over six connections and writes each at its own offset;
+  proven by `scripts/parallel-download-proof.sh`. **Still to do: measure it on an
+  idle link.** The 3.3× figure was taken while another download competed for the
+  same pipe, so six may not be the right concurrency — `DOWNLOAD_CONCURRENCY` in
+  `client/src/delivery.ts` is the knob. The FileSystemWritableFileStream path
+  itself is unverified in a real browser, because the save dialog needs user
+  activation and cannot be driven headlessly; one manual download would close
+  that. One stream reached 232 Mb/s; six streams measured
   **3.3× aggregate**. The uploader already runs `CONCURRENCY = 6`; downloads
   never got the same treatment. Ranges may complete out of order because the
   File System Access writable supports positional writes. Projection puts a
