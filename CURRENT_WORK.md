@@ -76,8 +76,11 @@ None.
 
 ## Next step
 
-No engineering work is queued or required. Waystation is parked and usable as a
-transfer tool.
+The engine is parked, but the **direction is now set**: turn Waystation into a
+client-facing paid transfer service. `docs/COMMERCIAL_DELIVERY_PLAN.md` holds
+the design and the decisions already taken; `NEXT_STEPS.md` holds the ordered
+track. Step 1 is **accounts** — there is no notion of tenancy today, and
+everything else depends on it.
 
 When work resumes, read `NEXT_STEPS.md` for the queue. If the next task touches
 the worker image or brings QC back, read `docs/DEFERRED_TOOLING.md` **first** —

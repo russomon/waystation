@@ -7,8 +7,32 @@ decisions in `DECISIONS.md`. Keep this file short — an item that is finished
 gets deleted, an item that stops making sense moves to **Obsolete** with a
 reason.
 
-Waystation is currently **parked**: production is transfer-only with no worker,
-and nothing here is urgent.
+Waystation is currently **parked** as an engine: production is transfer-only
+with no worker. The active *direction*, decided 2026-09-05, is to turn it into a
+client-facing paid transfer service — see **`docs/COMMERCIAL_DELIVERY_PLAN.md`**,
+which holds the design and the decisions already taken.
+
+## Commercial track — the main line of work
+
+Each step depends on the one above it. Full rationale in
+`docs/COMMERCIAL_DELIVERY_PLAN.md`; do not start one of these without reading
+it, because several obvious-looking shortcuts are already ruled out there.
+
+1. **Accounts.** There is no notion of tenancy anywhere in `gateway/src/` — no
+   `accountId`, and authentication is a single shared access code. Everything
+   below needs identity: expiry choice needs "whose transfer", billing needs
+   "whose gigabytes", credits need "who pays". Largest piece.
+2. **Gateway-mediated download + egress metering.** A stable link the gateway
+   authorizes per request and redirects to a fresh short-lived presigned URL.
+   The gate already exists at `GET /transfers/:id/download`; it currently
+   returns a CDN URL and 501s because no CDN is deployed. This endpoint ends up
+   carrying revocation, egress metering, credit checks and grant issuance.
+3. **Download credits.** Grants with a 1.7× byte budget, 7-day resume, default
+   2 per link, top-up any time. Counting *requests* is wrong — see the plan.
+4. **Per-transfer expiry selection** (7 / 14 / 21 / 30 days). Small: the
+   `expires_at` column is already per-transfer, only the input is global.
+5. **Paywall** — Stripe or Lago meters. The ledger in
+   `gateway/src/metering.ts` is already shaped 1:1 onto a meter event.
 
 ## Now
 
@@ -30,7 +54,9 @@ Real engineering, deliberately deferred. Any of these can start whenever.
   `docs/DEFERRED_TOOLING.md` — currently OpenCV, with the pin, the derived-layer
   build and the integration point already worked out. Do this while a full-QC
   box is already up; that is the cheap moment.
-- **Parallel ranged downloads.** Measured 2026-08-01: B2 throttles per
+- **Parallel ranged downloads.** ⚠ **Build this against the mediated endpoint
+  (commercial track step 2), not against raw presigned URLs** — otherwise it has
+  to be rewritten. Measured 2026-08-01: B2 throttles per
   connection, not per client. One stream reached 232 Mb/s; six streams measured
   **3.3× aggregate**. The uploader already runs `CONCURRENCY = 6`; downloads
   never got the same treatment. Ranges may complete out of order because the
