@@ -44,7 +44,7 @@ its home, and link rather than duplicate.
 | `docs/REPO_MAP.md` | where things live | looking for code |
 | `docs/DEPLOY.md` | what is deployed, restore paths | touching production |
 | `docs/DEFERRED_TOOLING.md` | tooling queued for the worker image | rebuilding that image |
-| `docs/COMMERCIAL_DELIVERY_PLAN.md` | accounts, metered egress, download credits — designed, not built | touching auth, downloads, expiry or billing |
+| `docs/COMMERCIAL_DELIVERY_PLAN.md` | identity, metered egress, download credits — designed, not built | touching auth, downloads, expiry or billing |
 | `README.md` | front door, proof scripts, capability status | orienting or writing claims |
 | `SETUP.md` | B2 / GMI account setup | a fresh environment |
 | `docs/PROJECT_HISTORY.md` | archived session journal | tracing how something came to be |

@@ -78,7 +78,7 @@ docs/ARCHITECTURE.md       how the system works
 docs/REPO_MAP.md           this file
 docs/DEPLOY.md             provisioning, live deployment record, restore paths
 docs/DEFERRED_TOOLING.md   worker-image tooling queued for when QC resumes
-docs/COMMERCIAL_DELIVERY_PLAN.md  accounts, metered egress, download credits (not built)
+docs/COMMERCIAL_DELIVERY_PLAN.md  identity, metered egress, download credits (not built)
 docs/US_BROADCAST_BASELINE.md  the versioned house broadcast baseline
 docs/QC_CALIBRATION.md     corpus intake gate
 docs/AI_INTERPRETIVE_RUN.md    explicit interpretive run records

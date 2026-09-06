@@ -1,4 +1,4 @@
-# Commercial delivery plan — accounts, metered egress, download credits
+# Commercial delivery plan — identity, metered egress, download credits
 
 **Status: designed, deliberately NOT implemented.** Nothing here is built.
 This records product decisions taken 2026-09-05 so they do not have to be
@@ -23,13 +23,66 @@ More than expected. Three of the foundations are in place.
 
 ## What is missing
 
-**There is no notion of an account.** No `accountId`, `tenantId` or
-`customerId` anywhere in `gateway/src/`. Authentication is a *single shared
-access code*; ownership is scoped to a browser session, which is not an
-identity and does not persist. Every feature below needs this first.
+**Durable ownership.** `gateway/src/routes.ts` already stores a per-transfer
+owner — `sessionId: sessionIdOf(c)` — and every ownership check reads it. But
+that value is a random UUID in a signed cookie with a TTL: an *ephemeral*
+pseudo-identity. The slot exists; the value does not persist.
+
+So this is not "add tenancy to a system that has none". It is **put a durable
+value where an ephemeral one already lives.**
 
 **Only ingest is metered.** Uploads produce meter events; downloads produce
 none. For a delivery product that is the wrong half.
+
+## Identity — without signup
+
+**Do not build an account system.** No signup form, no passwords. The
+requirement is *identity*, not registration.
+
+Identity is the **email**, because humans remember their email and nobody
+remembers `cus_QxR7…`. It arrives either from the Stripe transaction or from
+the sender at upload time.
+
+### The rule that must hold
+
+**Email identifies. Email must never authorize.**
+
+An address entered at checkout is unverified — anyone can type someone else's.
+If an unverified email granted access, a stranger could type a customer's
+address and have that customer's transfers disclosed to them.
+
+| Purpose | Mechanism |
+|---|---|
+| identify and group transfers | the email, unverified — that is all it is for |
+| access a transfer now | the **sender capability URL** — a secret, emailed at creation |
+| recover a lost capability URL | a **magic link sent to that email** |
+
+The magic link closes the loop: delivering it to the address proves control of
+the address at the moment that control matters. This is a passwordless account
+system, which is the right amount of account.
+
+The sender capability URL is symmetric with the recipient capability already
+built, so the pattern exists. Emailing it at creation also solves the ordinary
+case of a sender closing the tab before copying their link.
+
+### Key it on `owner_id`, not on the email
+
+Store an opaque `owner_id` on the transfer, with the email as a **verified
+attribute** of that owner. It costs nothing now and prevents two certainties:
+
+- a client changes email — with the email as primary key, their history orphans;
+- one human uses two addresses (personal card, then company card) — their
+  history splits with no way to merge.
+
+With `owner_id`, both are a row update. A "my transfers" view, whenever it is
+wanted, is then just a query on that key.
+
+**This is the one thing that must not be deferred.** Adding richer accounts
+later *on top of* a stable `owner_id` is grouping rows that already carry the
+key. Retrofitting a key onto transfers that never had one is a migration with
+no source of truth — ownership would have to be guessed from timestamps.
+
+Skip signup; keep tenancy.
 
 ## The decisive constraint
 
@@ -101,7 +154,12 @@ zero — a support ticket on day one. The sender UI must say so plainly:
 
 ### Schema sketch
 
-`transfers` gains `downloads_allowed INTEGER NOT NULL DEFAULT 2`.
+`transfers` gains `downloads_allowed INTEGER NOT NULL DEFAULT 2` and
+`owner_id TEXT` (see *Identity* above — durable, replacing the ephemeral
+`sessionId` in that role).
+
+A new `owners` table: `owner_id`, email, email-verified flag, Stripe customer
+id, created at. Email is an attribute here, never the key.
 
 A new `download_grants` table: grant id, transfer id, issued at, expires at,
 bytes served, completed flag.
@@ -147,19 +205,30 @@ gateway → raw B2 for a billed download.
 
 Each step depends on the one above it.
 
-1. **Accounts** — identity, per-account ownership of transfers and meters.
-   The largest piece, and everything else needs it.
+1. **Payment + identity.** Take the card, capture the email, mint an
+   `owner_id`, write it where `sessionId` is written today, and email the sender
+   capability URL. Payment comes **first, not last** — it is what produces the
+   identity everything else is keyed to, and for a pay-per-use product it *is*
+   the authorization, which lets the shared access code retire.
 2. **Gateway-mediated download + egress metering** — the load-bearing endpoint.
 3. **Download credits** — grants, byte budgets, top-up.
-4. **Per-transfer expiry selection** — small once 1 exists.
+4. **Per-transfer expiry selection** — small; the column already exists.
 5. **Parallel ranged downloads** — built against the endpoint from 2. Building
    it earlier, against raw presigned URLs, would mean rewriting it.
-6. **Paywall / Stripe or Lago meters** — the ledger is already the right shape.
+6. **Magic-link recovery** — for a sender who loses the capability URL. Needed
+   before support volume makes it urgent, not before launch.
+
+Deliberately **not** on this list: signup, passwords, an account dashboard, a
+"my transfers" view. Each is additive later against `owner_id`, and none is
+required to charge money.
 
 ## Open questions
 
 - Are credits refunded when delivery demonstrably failed, or never?
-- Do unused credits expire with the link, or persist against the account?
-- Does the account model need organisations and seats, or is one login per
-  client sufficient at first?
+- Do unused credits expire with the link, or persist against the `owner_id`?
+- Which email wins when the Stripe billing address differs from the address the
+  sender wants their link sent to — for example a company card paying for an
+  individual's transfer?
 - Pricing: per GB stored, per GB egressed, per download, or a combination.
+- Storing customer emails makes this a personal-data processor. Worth a look at
+  retention and deletion obligations before taking real clients.

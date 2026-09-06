@@ -18,10 +18,12 @@ Each step depends on the one above it. Full rationale in
 `docs/COMMERCIAL_DELIVERY_PLAN.md`; do not start one of these without reading
 it, because several obvious-looking shortcuts are already ruled out there.
 
-1. **Accounts.** There is no notion of tenancy anywhere in `gateway/src/` — no
-   `accountId`, and authentication is a single shared access code. Everything
-   below needs identity: expiry choice needs "whose transfer", billing needs
-   "whose gigabytes", credits need "who pays". Largest piece.
+1. **Payment + identity.** Take the card, capture the email, mint a durable
+   `owner_id`, and write it where the ephemeral `sessionId` goes today. Email
+   the sender their capability URL at creation. Payment comes **first, not
+   last** — it produces the identity everything else is keyed to, and for
+   pay-per-use it *is* the authorization. **No signup, no passwords, no
+   dashboard**: email identifies, the capability URL authorizes.
 2. **Gateway-mediated download + egress metering.** A stable link the gateway
    authorizes per request and redirects to a fresh short-lived presigned URL.
    The gate already exists at `GET /transfers/:id/download`; it currently
@@ -31,7 +33,10 @@ it, because several obvious-looking shortcuts are already ruled out there.
    2 per link, top-up any time. Counting *requests* is wrong — see the plan.
 4. **Per-transfer expiry selection** (7 / 14 / 21 / 30 days). Small: the
    `expires_at` column is already per-transfer, only the input is global.
-5. **Paywall** — Stripe or Lago meters. The ledger in
+5. **Magic-link recovery** for a sender who loses their capability URL —
+   the only path that may act on an email, because delivering to the address
+   proves control of it.
+6. **Usage billing** — Stripe or Lago meters. The ledger in
    `gateway/src/metering.ts` is already shaped 1:1 onto a meter event.
 
 ## Now
