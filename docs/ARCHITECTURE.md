@@ -63,7 +63,8 @@ Hono on `@hono/node-server`. Entry point `server.ts`. The only stateful service.
 **Routes.** Sender: `POST /session`, `/session/logout`, `/uploads`,
 `/uploads/parts`, `/uploads/complete`, `/uploads/outboard-url`,
 `/uploads/sidecar-url`. Recipient: `GET /transfers/:id`,
-`/transfers/:id/download`, `POST /transfers/:id/unlock`,
+`/transfers/:id/original` (the mediated download), `/transfers/:id/download`,
+`POST /transfers/:id/unlock`,
 `GET /transfers/:id/usage`. Machine: `POST /events/b2`,
 `POST /internal/progress`, `GET /progress/:transferId` (SSE).
 
@@ -130,7 +131,13 @@ With every service flag off — the current production posture — the gateway
 publishes `pipeline_skipped` and **no job is dispatched at all**.
 
 **Delivery.** The recipient opens `/transfers/:id`, unlocks with a password if
-one was set, and downloads either through a presigned B2 GET or the CDN worker.
+one was set, and downloads through `GET /transfers/:id/original` — a **mediated**
+link that never expires on its own. The gateway re-checks revocation and expiry
+on every request, records the egress, then 302s to a freshly minted, short-lived
+presigned URL. The master's storage URL is never disclosed to the recipient, so
+revocation takes effect on the next request rather than whenever a signature
+happens to lapse. The gateway still never touches file bytes: it redirects,
+storage serves.
 
 ## Persistence and state
 

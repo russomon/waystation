@@ -213,8 +213,10 @@ export function setRecipientUnlockCookie(c: Context, transferId: string): number
   return expiresAt;
 }
 
-export function hasRecipientUnlock(c: Context, transferId: string): boolean {
-  const token = getCookie(c, recipientCookie(transferId));
+/** Shared verification for every transfer-scoped bearer token this module mints
+ *  — the unlock cookie and the download ticket below. Both carry the same
+ *  `{tid, exp}` payload under the same HMAC, so they must not drift apart. */
+function verifyRecipientToken(token: string | undefined, transferId: string): boolean {
   if (!token) return false;
   const [payload, mac] = token.split(".");
   if (!payload || !mac) return false;
@@ -228,6 +230,36 @@ export function hasRecipientUnlock(c: Context, transferId: string): boolean {
     return false;
   }
 }
+
+export const hasRecipientUnlock = (c: Context, transferId: string): boolean =>
+  verifyRecipientToken(getCookie(c, recipientCookie(transferId)), transferId);
+
+// ── download tickets ──
+//
+// A ticket authorizes one transfer's original for whoever holds it — but unlike
+// a presigned storage URL it is NOT self-sufficient. It names the transfer and
+// nothing else; the gateway re-checks revocation and expiry (and, later,
+// download credits) on every single use. That is the entire point. A presigned
+// URL cannot be recalled once minted, so a short life is the only bound
+// available to it. A ticket can be long-lived precisely because the gateway
+// stays in the loop and can refuse at any moment.
+//
+// It rides in the query string rather than a cookie for two reasons:
+//
+//   1. The request carrying it is redirected cross-origin to object storage. A
+//      *credentialed* fetch that follows a redirect requires the FINAL response
+//      to send Access-Control-Allow-Credentials, which B2 does not — so a
+//      cookie-authenticated download would fail CORS the moment it redirected.
+//   2. Non-browser clients (curl, aria2c) can then use the same link, which is
+//      what makes multi-connection downloading possible without handing anyone
+//      a raw storage URL.
+export const issueDownloadTicket = (transferId: string, expiresAt: number): string => {
+  const payload = b64url(Buffer.from(JSON.stringify({ tid: transferId, exp: expiresAt })));
+  return `${payload}.${recipientSign(payload)}`;
+};
+
+export const verifyDownloadTicket = (ticket: string | undefined, transferId: string): boolean =>
+  verifyRecipientToken(ticket, transferId);
 
 /** Gate for expensive / state-changing sender routes. Registered AFTER the CORS
  *  middleware so an OPTIONS preflight is answered by cors() and never reaches

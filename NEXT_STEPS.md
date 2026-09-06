@@ -24,11 +24,12 @@ it, because several obvious-looking shortcuts are already ruled out there.
    last** — it produces the identity everything else is keyed to, and for
    pay-per-use it *is* the authorization. **No signup, no passwords, no
    dashboard**: email identifies, the capability URL authorizes.
-2. **Gateway-mediated download + egress metering.** A stable link the gateway
-   authorizes per request and redirects to a fresh short-lived presigned URL.
-   The gate already exists at `GET /transfers/:id/download`; it currently
-   returns a CDN URL and 501s because no CDN is deployed. This endpoint ends up
-   carrying revocation, egress metering, credit checks and grant issuance.
+2. ~~**Gateway-mediated download + egress metering.**~~ **DONE 2026-09-05.**
+   `GET /transfers/:id/original` redirects to a freshly minted presigned URL
+   after re-checking revocation and expiry, and meters egress once per transfer
+   per hour rather than once per range. Proven by
+   `scripts/mediated-download-proof.sh`. Credits and grant issuance hang off
+   this endpoint next.
 3. **Download credits.** Grants with a 1.7× byte budget, 7-day resume, default
    2 per link, top-up any time. Counting *requests* is wrong — see the plan.
 4. **Per-transfer expiry selection** (7 / 14 / 21 / 30 days). Small: the
@@ -59,9 +60,10 @@ Real engineering, deliberately deferred. Any of these can start whenever.
   `docs/DEFERRED_TOOLING.md` — currently OpenCV, with the pin, the derived-layer
   build and the integration point already worked out. Do this while a full-QC
   box is already up; that is the cheap moment.
-- **Parallel ranged downloads.** ⚠ **Build this against the mediated endpoint
-  (commercial track step 2), not against raw presigned URLs** — otherwise it has
-  to be rewritten. Measured 2026-08-01: B2 throttles per
+- **Parallel ranged downloads.** ✅ **Now unblocked** — the mediated endpoint
+  from commercial-track step 2 exists, and `mediated-download-proof.sh` shows
+  Range surviving the redirect. Build against `original.url`, which is now that
+  endpoint. Measured 2026-08-01: B2 throttles per
   connection, not per client. One stream reached 232 Mb/s; six streams measured
   **3.3× aggregate**. The uploader already runs `CONCURRENCY = 6`; downloads
   never got the same treatment. Ranges may complete out of order because the

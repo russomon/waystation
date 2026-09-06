@@ -79,9 +79,11 @@ None.
 The engine is parked, but the **direction is now set**: turn Waystation into a
 client-facing paid transfer service. `docs/COMMERCIAL_DELIVERY_PLAN.md` holds
 the design and the decisions already taken; `NEXT_STEPS.md` holds the ordered
-track. Step 1 is **payment + identity**: no signup and no passwords, but a
-durable `owner_id` on every transfer, because retrofitting one later is a
-migration with no source of truth.
+track. **Step 2 is done** (2026-09-05): downloads are gateway-mediated, so the
+master's storage URL is never disclosed and revocation is immediate. That
+unblocks parallel ranged downloads, which is the fix for single-stream download
+speed. Step 1, payment + identity, remains blocked on an undecided pricing
+model.
 
 When work resumes, read `NEXT_STEPS.md` for the queue. If the next task touches
 the worker image or brings QC back, read `docs/DEFERRED_TOOLING.md` **first** —

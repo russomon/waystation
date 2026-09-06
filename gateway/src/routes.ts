@@ -7,6 +7,7 @@ import {
   enforceOrigin,
   hasRecipientUnlock,
   hashAccessCode,
+  issueDownloadTicket,
   issueSession,
   limiter,
   requireSession,
@@ -14,6 +15,7 @@ import {
   setRecipientUnlockCookie,
   setSessionCookie,
   verifyAccessCode,
+  verifyDownloadTicket,
 } from "./auth.js";
 import {
   activeUploadCount,
@@ -353,11 +355,108 @@ api.get("/transfers/:id/download", async (c) => {
   return c.json(g.downloadUrl(key));
 });
 
+// ───────── mediated download ─────────
+//
+// The stable link. Everything above hands the recipient a presigned storage URL
+// directly, which is a bearer token: invisible and unrecallable. Once minted it
+// cannot be revoked, cannot be counted, and cannot be metered — the only bound
+// available is its one-hour life, which is why that life must stay short.
+//
+// This route inverts that. The link the recipient holds points HERE, never at
+// storage, and it does not expire on its own. On every request the gateway
+// re-checks revocation and expiry, records the egress, and only then mints a
+// short-lived presigned URL and redirects to it. Authorization is live rather
+// than frozen at signing time, so a revoked transfer stops downloading on the
+// next request instead of within the hour.
+//
+// It is also the seam the rest of the commercial plan hangs on: download
+// credits and per-account attribution both need a request the gateway actually
+// sees. See docs/COMMERCIAL_DELIVERY_PLAN.md.
+//
+// A 302 is used rather than proxying the bytes on purpose — the gateway must
+// never touch file data. It stays a control plane; storage still serves.
+api.get("/transfers/:id/original", async (c) => {
+  const id = c.req.param("id");
+  // Revoked AND expired both land here: capabilityRevoked() covers each, and an
+  // unknown id is answered identically so a link never reveals it once existed.
+  if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
+
+  // Either proof of authorization is accepted: a ticket in the query string, or
+  // the recipient unlock cookie for a page that already unlocked in this
+  // browser. recipientGate() returns a Response only when the transfer is
+  // password-protected AND neither the sender nor an unlocked recipient is
+  // asking, so an unprotected transfer needs no ticket at all.
+  if (!verifyDownloadTicket(c.req.query("ticket"), id)) {
+    const locked = recipientGate(c, id);
+    if (locked) return locked;
+  }
+
+  // Resolved exactly as the delivery page resolves it — see
+  // classifyTransferObjects. Reading the uploads table here instead would 404
+  // on any transfer whose object outlived its upload row.
+  const { original } = classifyTransferObjects(await g.listKeys(`transfers/${id}/`));
+  if (!original || !belongsToTransfer(original.key, id)) return c.json({ error: "not found" }, 404);
+  const key = original.key;
+
+  // Egress metering. Honest about what it can and cannot see: because this is a
+  // redirect, the gateway learns that a download STARTED but never how many
+  // bytes actually moved — the transfer happens between the recipient and B2.
+  //
+  // So one event is recorded per transfer per hour, using an explicit
+  // idempotency key. That collapses the many range requests of a single
+  // resumed or parallel download into one line item instead of billing sixteen
+  // times for one file, while still counting a genuine second download the next
+  // day. It is an approximation, and it is replaced by the grant ledger in step
+  // 3 of the commercial plan, which knows exactly when a download began and how
+  // many bytes it was entitled to.
+  if (original.size > 0) {
+    const hourBucket = Math.floor(Date.now() / 3_600_000);
+    meter(
+      { transferId: id, event: "egress", units: Number((original.size / 1e9).toFixed(6)), unit: "gb", ref: key },
+      `egress:${id}:${hourBucket}`,
+    );
+  }
+
+  return c.redirect(await g.presignGet(key, 3600, key.split("/").pop()), 302);
+});
+
 // ───────── delivery page data ─────────
 // Assembles a transfer from storage: the original + the pipeline's
 // derivatives + manifest, each as a presigned URL the recipient can fetch.
 // (Store-free: discovered by prefix. Production would add a record for
 // recipients/expiry/access — see store.ts TODO.)
+// What counts as "the master" for a transfer, in ONE place. Caption transports,
+// the bao outboard, reference mezzanines and the generation manifest all ride
+// along under the same prefix and can sort ahead of it alphabetically.
+//
+// Deliberately store-free: discovered by listing the prefix, never by reading
+// the uploads table. The delivery path has always worked this way, and it must
+// keep working for a transfer whose object exists in storage but whose upload
+// row does not — which is exactly what scripts/delivery-proof.sh exercises.
+const SIDECAR_RE = /\.(obao|srt|vtt|scc|mcc|rcwt)$|\.ref\.[^./]+$|\.genblaze\.json$/i;
+const classifyTransferObjects = (all: { key: string; size: number }[]) => ({
+  original: all.filter((o) => !SIDECAR_RE.test(o.key))[0],
+  outboard: all.find((o) => o.key.endsWith(".obao")),
+});
+
+/** Absolute URL of the mediated download for this transfer, derived from the
+ *  request that asked for it. Deriving beats configuring: there is no public
+ *  base URL to set (GATEWAY_PUBLIC_URL is the worker-callback address and is
+ *  deliberately empty in transfer-only mode), and appending to the incoming
+ *  path preserves whatever prefix the deployment uses.
+ *
+ *  The ticket outlives the hour a presigned URL gets, because it does not carry
+ *  its own authority — the route re-checks revocation and expiry on every use.
+ *  It is still bounded as defence in depth: to the transfer's own expiry when
+ *  one is set, else 30 days. */
+const mediatedDownloadUrl = (c: Context, id: string, expiresAt?: number): string => {
+  const u = new URL(c.req.url);
+  u.search = "";
+  u.pathname = `${u.pathname.replace(/\/$/, "")}/original`;
+  u.searchParams.set("ticket", issueDownloadTicket(id, expiresAt ?? Date.now() + 30 * 86_400_000));
+  return u.toString();
+};
+
 const mimeOf = (k: string) =>
   k.endsWith(".jpg") || k.endsWith(".jpeg") ? "image/jpeg"
   : k.endsWith(".vtt") ? "text/vtt"
@@ -374,15 +473,12 @@ api.get("/transfers/:id", async (c) => {
   if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
   const locked = recipientGate(c, id);
   if (locked) return locked;
-  const all = await g.listKeys(`transfers/${id}/`);
-  // The master is whatever ISN'T a sidecar — caption transports, the bao
-  // outboard, and reference mezzanines ride along under the same prefix and
-  // can sort ahead of the master alphabetically.
-  const SIDECAR_RE = /\.(obao|srt|vtt|scc|mcc|rcwt)$|\.ref\.[^./]+$|\.genblaze\.json$/i;
-  const originals = all.filter((o) => !SIDECAR_RE.test(o.key));
-  if (originals.length === 0) return c.json({ error: "not found" }, 404);
-  const orig = originals[0];
-  const outboard = all.find((o) => o.key.endsWith(".obao"));
+  // Same classification the mediated download route uses — one definition of
+  // what "the master" is, so the two can never disagree about which object a
+  // download serves.
+  const { original: orig, outboard } = classifyTransferObjects(
+    await g.listKeys(`transfers/${id}/`));
+  if (!orig) return c.json({ error: "not found" }, 404);
   const derivs = await g.listKeys(`derivatives/${id}/`);
   const sign = async (k: string, size: number) => ({ key: k, url: await g.presignGet(k), mime: mimeOf(k), size });
 
@@ -395,8 +491,14 @@ api.get("/transfers/:id", async (c) => {
     // inline disposition — the page renders the thumbnail and fetches the QC
     // JSON, neither of which should download.
     original: {
-      ...(await sign(orig.key, orig.size)),
-      url: await g.presignGet(orig.key, 3600, orig.key.split("/").pop()),
+      key: orig.key,
+      // MEDIATED, not presigned. The recipient never receives a storage URL for
+      // the master — see GET /transfers/:id/original above. Built from the
+      // incoming request so it needs no configured public base and stays
+      // correct behind the tunnel, a vite proxy, or plain localhost.
+      url: mediatedDownloadUrl(c, id, transfer?.expiresAt),
+      mime: mimeOf(orig.key),
+      size: orig.size,
       filename: orig.key.split("/").pop(),
     },
     // verified-range download material (present once an upload went through

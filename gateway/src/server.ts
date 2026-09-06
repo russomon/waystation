@@ -24,7 +24,12 @@ app.use(
     origin: allowedOrigins,
     credentials: true,
     allowMethods: ["GET", "POST", "OPTIONS"],
-    allowHeaders: ["content-type"],
+    // `range` is required by the mediated download: verified and resumed
+    // downloads send Range, which is NOT a CORS-safelisted request header, so
+    // omitting it here makes the browser fail the preflight and the download
+    // never starts. It was safe to omit only while every ranged fetch went
+    // straight to storage and never touched this origin.
+    allowHeaders: ["content-type", "range"],
     maxAge: 600,
   }),
 );

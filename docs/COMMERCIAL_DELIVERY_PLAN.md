@@ -208,8 +208,8 @@ step 1.** The mediated download endpoint needs only the authorization gate that
 already exists plus presigned minting, and the meter ledger is keyed by
 `transferId`, not by owner — so egress metering works before any identity does.
 
-Step 2 is therefore the right place to start. It is unblocked, it is the piece
-everything else leans on, and it improves the product immediately even with no
+Step 2 was therefore built first, and is now done. It was unblocked, it is the
+piece everything else leans on, and it improved the product immediately with no
 billing attached: links that stop expiring, revocation that takes effect at
 once, and the prerequisite for parallel downloads.
 
@@ -221,7 +221,15 @@ model. You cannot build a checkout without knowing what it charges for.
    capability URL. Payment comes **first, not last** — it is what produces the
    identity everything else is keyed to, and for a pay-per-use product it *is*
    the authorization, which lets the shared access code retire.
-2. **Gateway-mediated download + egress metering** — the load-bearing endpoint.
+2. ~~**Gateway-mediated download + egress metering**~~ — **DONE 2026-09-05.**
+   `GET /transfers/:id/original`, proven by `scripts/mediated-download-proof.sh`.
+   The recipient no longer receives a storage URL for the master; revocation
+   takes effect on the next request. **Egress metering is an approximation** —
+   because the route redirects, the gateway sees that a download started but
+   never how many bytes moved, so it records one event per transfer per hour.
+   That stops a sixteen-connection download billing sixteen times, and is
+   replaced by the grant ledger in step 3, which knows exactly when a download
+   began and what it was entitled to.
 3. **Download credits** — grants, byte budgets, top-up.
 4. **Per-transfer expiry selection** — small; the column already exists.
 5. **Parallel ranged downloads** — built against the endpoint from 2. Building
