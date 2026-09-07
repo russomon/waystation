@@ -427,45 +427,88 @@ Sequence:
 5. **Only then** merge `codex/waystation-mvp` — OrbitWebsite `main` deploys
    automatically, so merging is publication.
 
-## 9 · Rehearsal before recording
+## 9 · Release rehearsal
 
-All fourteen checks, from a clean private browser (roadmap §7.11):
+Run before publishing a client release to the Cloudflare Pages production
+branch, from a clean private browser. **The scope is the deployment, not a fixed
+list** (OrbitWebsite `DECISIONS.md`, 2026-09-07).
+
+Three rules govern it:
+
+- **Transfer-path checks are always required.** They apply to every deployment.
+- **QC-path checks are required only when a worker is deployed.**
+- **A check that cannot run is recorded `N/A` with its reason** — never silently
+  skipped, and never counted as a pass. This is the standard the QC engine
+  already holds itself to: an absent instrument emits an honest FYI, not a
+  clean result. A rehearsal record should not be more forgiving of itself.
+
+State the deployment mode in the record, and add checks when capabilities ship
+rather than letting the list fall behind what is running.
+
+### Transfer path — always required
 
 1. open `https://orbitolive.com/waystation/`
 2. a **wrong** code is refused
-3. the **judge code** starts a sender session
+3. the **access code** starts a sender session
 4. upload the designated small demo asset
 5. media goes **directly to B2** — devtools shows PUTs to Backblaze, not to the API
-6. the **B2 webhook** reaches the gateway through the tunnel
-7. **only the selected services** run
+6. the **B2 webhook** reaches the gateway through the tunnel — in transfer-only
+   the rule still fires and the gateway must verify the HMAC before answering
+7. **the service policy is honoured** — in full QC, only the selected services
+   run; in transfer-only, *none* run and `pipeline_skipped` is published. This
+   is the check that proves the ceiling is holding, so it matters more in
+   transfer-only mode, not less
 8. **progress SSE** updates the hosted page
 9. the **recipient link** opens in a second private browser with **no** sender session
-10. QC, generated-media evidence, passport and provenance **render**
 11. **download and verify** the result
-12. `docker compose -f docker-compose.prod.yml restart gateway` → the transfer
+12. restart the gateway with the compose file this deployment actually uses
+    (`docker-compose.transfer.yml` in transfer-only) → the transfer
     is **still usable** (options, BLAKE3 root and recipient link survive)
 13. **budget and meter records remain correct** — a distinct check from 12:
     ```bash
     # the ledger survived the restart AND did not double-count
     curl -s -b judge.cookies https://api.orbitolive.com/api/transfers/<id>/usage
     ```
-    Confirm the units match what actually ran (one `transfer` entry, one `qc`
-    entry per run, no duplicates), and that the session/daily job counters still
-    reflect the true number of completed jobs.
+    Confirm the units match what actually ran and there are no duplicates:
+    one `transfer` entry per upload always, plus one `qc` entry per run **only
+    when a worker is deployed** — in transfer-only there must be none, and its
+    presence would mean the ceiling leaked. Check the session/daily counters
+    still reflect the true number of completed jobs.
 14. **no public service ports** — from another machine:
     ```bash
     nc -zv <vps-ip> 8787 ; nc -zv <vps-ip> 8000 ; nc -zv <vps-ip> 443
     ```
     all must fail; only the tunnel reaches the gateway.
+15. **the mediated download link behaves** — `GET /transfers/:id/original`
+    redirects to storage and delivers the file; then revoke the transfer and
+    confirm the *same* link 404s on the next request. A presigned URL could not
+    be recalled this way, which is the whole reason the endpoint exists.
+16. **parallel ranged download integrity** — the saved file is byte-identical
+    to what was uploaded. Six connections writing at their own offsets means a
+    range error corrupts the file *without* reporting an error, so compare
+    checksums rather than trusting that the download finished.
+
+### QC path — only when a worker is deployed
+
+10. QC, generated-media evidence, passport and provenance **render**
+
+Record `N/A — no worker deployed (transfer-only stack)` when the deployment has
+no worker. Do not mark it passed, and do not renumber around it: the number is
+how past rehearsal records stay comparable.
 
 Capture timestamps, commit ids, model ids, the transfer id and proof results —
 never secrets.
 
 **Deployment is not "done" until a VPS exists, `/healthz` answers publicly, and
-all fourteen checks above pass.** Until then this is a prepared, locally-proven
+every check applicable to that deployment passes** — with any inapplicable check
+recorded and reasoned. Until then this is a prepared, locally-proven
 configuration and should be described as exactly that.
 
-### Rehearsal record — 2026-07-28 · **14/14 PASSED**
+### Rehearsal record — 2026-07-28 · **14/14 PASSED** (full-QC stack)
+
+> Run against the **full QC deployment**, before the checklist was scoped by
+> mode on 2026-09-07 and before checks 15 and 16 existed. Its 14/14 therefore
+> includes check 10, which a transfer-only deployment records as N/A.
 
 Deployed commit `578d37cd7e8ab4403e3fcd8e377f4a43fd8c8a01` (clean worktree on the
 VPS). Portal release pinned to the same commit, published as OrbitWebsite
