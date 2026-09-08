@@ -35,7 +35,12 @@ export interface SendExtras {
   recipientPassword?: string;
 }
 
-export async function uploadFile(file: File, extras: SendExtras, onProgress: (p: Progress) => void) {
+export async function uploadFile(
+  file: File,
+  extras: SendExtras,
+  onProgress: (p: Progress) => void,
+  signal?: AbortSignal,
+) {
   const fp = `${file.name}:${file.size}:${file.lastModified}`; // stable local resume key
   const progress: Progress = {
     total: file.size, hashBytes: 0, uploadedBytes: 0,
@@ -101,7 +106,7 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
       emit({ hashBytes: file.size, integrity: "finalizing", message: "Finalizing verification data while upload continues" });
     else
       emit({ hashBytes: file.size, integrity: "complete", message: "Integrity check complete; upload continues" });
-  });
+  }, signal);
 
   // 4. upload only the missing parts, in parallel, capturing ETags
   const missing = range(1, st.partCount).filter((n) => !st!.done[n]);
@@ -111,7 +116,7 @@ export async function uploadFile(file: File, extras: SendExtras, onProgress: (p:
     const { urls } = await post("/uploads/parts", { key: st!.key, uploadId: st!.uploadId, partNumbers: [n] });
     const start = (n - 1) * st!.partSize;
     const blob = file.slice(start, Math.min(start + st!.partSize, file.size));
-    const res = await fetch(urls[n], { method: "PUT", body: blob });
+    const res = await fetch(urls[n], { method: "PUT", body: blob, signal });
     if (!res.ok) throw new Error(`part ${n}: HTTP ${res.status}`);
     // No need to read the ETag — the gateway assembles from ListParts.
     st!.done[n] = "1";

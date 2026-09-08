@@ -223,8 +223,9 @@ if (tid) {
       queueNote.textContent = `${count} ${count === 1 ? "file" : "files"} ready · ${formatBytes(queuedFiles.reduce((sum, file) => sum + file.size, 0))} total`;
     else
       queueNote.textContent = "";
-    sendBtn.textContent = count > 1 ? `Send ${count} files` : "Send file";
-    sendBtn.disabled = sending || count === 0;
+    // While sending, the button is the pause control and must stay enabled.
+    sendBtn.textContent = sending ? "Pause" : count > 1 ? `Send ${count} files` : "Send file";
+    sendBtn.disabled = !sending && count === 0;
     fileIn.disabled = sending;
     pickMaster.classList.toggle("disabled", sending);
     modeTransfer.disabled = sending;
@@ -381,9 +382,22 @@ if (tid) {
     row.append(wrap);
   };
 
+  // The send button becomes Pause while a batch runs, mirroring the delivery
+  // page. Uploads were ALREADY resumable — resumeStore remembers the uploadId
+  // and B2's ListParts is the source of truth for which parts landed — so the
+  // only thing missing was a way to stop cleanly and come back.
+  let sendAbort: AbortController | null = null;
+
   sendBtn.onclick = async () => {
+    if (sendAbort) {                     // running → this click means "pause"
+      sendBtn.disabled = true;
+      sendBtn.textContent = "Pausing…";
+      sendAbort.abort();
+      return;
+    }
     if (!queuedFiles.length || sending) return;
     sending = true;
+    sendAbort = new AbortController();
     const files = [...queuedFiles];
     const selectedMode = mode;
     const options = currentOptions(selectedMode); // snapshot — ignore toggles mid-batch
@@ -392,6 +406,7 @@ if (tid) {
     const genManifest = singleQcMaster ? genIn.files?.[0] ?? null : null;
     const password = recipientPassword.value;
     const failed: File[] = [];
+    const paused: File[] = [];
     logEl.replaceChildren();
     renderQueue();
 
@@ -403,6 +418,7 @@ if (tid) {
           file,
           { captions, genManifest, options, recipientPassword: password },
           updateProgress,
+          sendAbort.signal,
         );
 
         const link = recipientLink(transferId);
@@ -437,6 +453,14 @@ if (tid) {
           }
         };
       } catch (err) {
+        if (sendAbort?.signal.aborted) {
+          // Paused, not failed. Parts already accepted by B2 stay accepted and
+          // the next attempt re-attaches through ListParts, so this file and
+          // every file after it go back on the queue untouched.
+          paused.push(file, ...files.slice(index + 1));
+          status.textContent = "Paused · click Send to resume from here";
+          break;
+        }
         failed.push(file);
         status.classList.add("bad");
         status.textContent = "Error · " + (err as Error).message;
@@ -445,18 +469,22 @@ if (tid) {
 
     const summary = document.createElement("p");
     summary.className = "batch-summary";
-    const sent = files.length - failed.length;
-    summary.textContent = failed.length
-      ? `${sent} sent · ${failed.length} ready to retry`
-      : `${sent} ${sent === 1 ? "file" : "files"} sent`;
+    const sent = files.length - failed.length - paused.length;
+    summary.textContent = paused.length
+      ? `${sent} sent · ${paused.length} paused — click Send to resume`
+      : failed.length
+        ? `${sent} sent · ${failed.length} ready to retry`
+        : `${sent} ${sent === 1 ? "file" : "files"} sent`;
     logEl.append(summary);
-    queuedFiles = failed;
-    if (failed.length === 0) {
+    queuedFiles = [...paused, ...failed];
+    if (failed.length === 0 && paused.length === 0) {
       recipientPassword.value = "";
       recipientPassword.type = "password";
       paintPasswordIcon();
     }
     sending = false;
+    sendAbort = null;
+    sendBtn.disabled = false;
     renderQueue();
   };
 

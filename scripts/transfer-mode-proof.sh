@@ -43,4 +43,31 @@ npx tsx -e '
     throw new Error("file queue did not preserve order and remove duplicates");
 '
 
+# ── pause: an upload must stop cleanly and come back ─────────────────────────
+# Uploads were already resumable — resumeStore remembers the uploadId and B2's
+# ListParts is the source of truth for which parts landed — so pause only had to
+# stop cleanly and put the file back on the queue. Three things must hold, and
+# each has a failure that is silent rather than loud.
+U="$WEB/client/src/uploader.ts"; M="$WEB/client/src/main.ts"; H="$WEB/client/src/hashClient.ts"
+
+grep -q "body: blob, signal }" "$U" \
+  || { echo "FAIL - part uploads do not receive the abort signal; pause would not stop them"; exit 1; }
+
+# A paused file must go back on the QUEUE, not into the failed list: failed files
+# are offered for retry, but the queue is what a resumed Send actually reads.
+grep -q "queuedFiles = \[...paused, ...failed\]" "$M" \
+  || { echo "FAIL - paused files are not returned to the queue, so Send cannot resume them"; exit 1; }
+grep -q "if (sendAbort?.signal.aborted)" "$M" \
+  || { echo "FAIL - an aborted upload is recorded as an error rather than a pause"; exit 1; }
+
+# The hash worker reads the whole file. Left running after a pause it holds a
+# core, and resuming starts a SECOND worker over the same file.
+grep -q "worker.terminate();" "$H" && grep -q "signal?.addEventListener(\"abort\", stop" "$H" \
+  || { echo "FAIL - the hash worker is not terminated when the upload is paused"; exit 1; }
+
+# The button must stay clickable while sending, or there is nothing to press.
+grep -q "sendBtn.disabled = !sending && count === 0" "$M" \
+  || { echo "FAIL - the send button is disabled while sending, so it cannot pause"; exit 1; }
+echo "  pause stops the parts and the hash worker, and requeues the file for a resumed Send"
+
 echo "PASS - transfer-first multi-file sender, password, progress, and share-link contract"
