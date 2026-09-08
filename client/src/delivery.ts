@@ -117,6 +117,7 @@ async function saveToDisk(
   writable: any,
   onProgress: (bytesSoFar: number) => void,
   resume?: { skip: Set<number>; completed: number[] },
+  signal?: AbortSignal,
 ): Promise<void> {
   // A FileSystemWritableFileStream is a WritableStream: overlapping write()
   // calls fight over the same locked writer. Serialize them through a promise
@@ -141,7 +142,7 @@ async function saveToDisk(
   // partial file — any resume progress is void once it runs.
   const single = async (): Promise<void> => {
     done = 0; onProgress(0);
-    const res = await fetch(src);
+    const res = await fetch(src, { signal });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     await drain(res.body, 0, write, count);
   };
@@ -155,13 +156,13 @@ async function saveToDisk(
   if (total < PARALLEL_MIN_BYTES) return single();
 
   try {
-    const probe = await fetch(src, { headers: { Range: "bytes=0-0" } });
+    const probe = await fetch(src, { headers: { Range: "bytes=0-0" }, signal });
     await probe.body?.cancel();
     if (probe.status !== 206) return single();
 
     const todo = all.filter((r) => !skip.has(r.start));
     await pool(todo, DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
-      const res = await fetch(src, { headers: { Range: `bytes=${start}-${end}` } });
+      const res = await fetch(src, { headers: { Range: `bytes=${start}-${end}` }, signal });
       if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
       await drain(res.body, start, write, count);
       // Collected in MEMORY only. A range that has drained is in the writable's
@@ -173,10 +174,27 @@ async function saveToDisk(
       resume?.completed.push(start);
     });
   } catch (e) {
+    // A deliberate pause is not a fault. Falling back here would restart the
+    // whole download from byte zero and silently undo exactly what the user
+    // just chose to keep — the opposite of what they asked for.
+    if (signal?.aborted) throw e;
     console.warn("parallel download failed, falling back to a single stream:", e);
     await single();
   }
 }
+
+/** True when a write failed because the destination volume is full.
+ *
+ *  Free space cannot be checked beforehand: `navigator.storage.estimate()`
+ *  reports the ORIGIN's quota, not the volume behind a File System Access
+ *  handle, so it says nothing useful about an external drive or another
+ *  partition. A confident wrong prediction is worse than none — so this reports
+ *  the fact at the moment it becomes one. */
+const isOutOfSpace = (e: unknown): boolean => {
+  const err = e as { name?: string; message?: string };
+  return String(err?.name ?? "") === "QuotaExceededError"
+    || /no space|not enough space|disk full|insufficient|quota/.test(String(err?.message ?? "").toLowerCase());
+};
 
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   const h = await crypto.subtle.digest("SHA-256", buf);
@@ -616,7 +634,18 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       })
       .catch(() => { /* no resume record is the normal case */ });
 
+    // While a download runs, this same button pauses it. A separate control
+    // would be tidier DOM but worse UX: the thing you want to stop is the thing
+    // you just clicked.
+    let controller: AbortController | null = null;
+
     dl.onclick = async () => {
+      if (controller) {            // running → this click means "pause"
+        dl.disabled = true;
+        dl.textContent = "Pausing…";
+        controller.abort();
+        return;                    // the catch below finishes the bookkeeping
+      }
       let handle: any;
       let resuming = false;
       if (prior && (await usable(prior.handle))) {
@@ -637,8 +666,8 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           filename: t.original.filename, handle, done: [], updatedAt: Date.now(),
         }).catch(() => {});
       }
-      dl.disabled = true;
-      dl.textContent = "Downloading…";
+      controller = new AbortController();
+      dl.textContent = "Pause";    // stays enabled: it is now the pause control
       prog.hidden = false;
       let writable: any;
       // Ranges believed to be on disk. Seeded from the prior record, appended
@@ -682,7 +711,7 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           done = n;
           window_.push({ t: performance.now(), b: done });
           paint();
-        }, { skip: new Set(committed), completed: committed });
+        }, { skip: new Set(committed), completed: committed }, controller.signal);
         await writable.close();
         await clearDownloadResume(t.transferId).catch(() => {});
         paint(true);
@@ -705,6 +734,8 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           else await writable?.abort();
         } catch { durable = false; }   // nothing committed; the record must not claim otherwise
         const salvageable = durable && committed.length > 0;
+        const paused = controller?.signal.aborted === true;
+        const noSpace = isOutOfSpace(e);
         if (salvageable) {
           await saveDownloadResume({
             transferId: t.transferId, size: total, filename: t.original.filename,
@@ -713,17 +744,26 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           const got = planRanges(total)
             .filter((x) => committed.includes(x.start))
             .reduce((n, x) => n + (x.end - x.start + 1), 0);
+          const pct = ((got / total) * 100).toFixed(1);
           dl.textContent = `Resume download — ${fmt(got)} of ${fmt(total)} already saved`;
-          elTime.textContent =
-            `stopped at ${((got / total) * 100).toFixed(1)}% — the file is INCOMPLETE; ` +
-            "click to carry on from here";
+          elTime.textContent = noSpace
+            ? `ran out of space on the destination disk at ${pct}% — free some up, ` +
+              "then click Resume; what downloaded is kept"
+            : paused
+              ? `paused at ${pct}% — the file is INCOMPLETE until you resume`
+              : `stopped at ${pct}% — the file is INCOMPLETE; click to carry on from here`;
         } else {
           await clearDownloadResume(t.transferId).catch(() => {});
-          dl.textContent = "✗ " + (e as Error).message;
-          elTime.textContent = "download failed — the partial file was discarded";
+          dl.textContent = paused ? "Download original…" : "✗ " + (e as Error).message;
+          elTime.textContent = noSpace
+            ? "the destination disk is full — free space and start again"
+            : paused
+              ? "paused before anything was saved — nothing to resume"
+              : "download failed — the partial file was discarded";
         }
         prior = salvageable ? await getDownloadResume(t.transferId).catch(() => null) : null;
       }
+      controller = null;
       dl.disabled = false;
     };
     card.append(dl, prog);

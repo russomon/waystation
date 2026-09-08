@@ -40,6 +40,33 @@ grep -q "await writable?.close(); durable = true" "$WEB/client/src/delivery.ts" 
   || { echo "FAIL - the interrupted path does not close before recording"; exit 1; }
 echo "  ranges are collected in memory; the record is written only after close() commits"
 
+# A deliberate pause must NOT fall back to a single stream. The fallback exists
+# so a broken optimisation cannot break downloads, but an abort is not a fault:
+# falling back would restart from byte zero and silently undo exactly what the
+# user chose to keep. The short-circuit must come BEFORE the fallback call.
+# `|| true` on each: with `set -e` and pipefail a non-matching grep would kill
+# the script at the assignment, so the guard would abort silently instead of
+# reporting — a check that cannot say why it failed is not a check.
+CATCH=$(printf '%s' "$BODY" | awk '/catch \(e\)/,0')
+ABORT_AT=$(printf '%s' "$CATCH" | grep -n "signal?.aborted" | head -1 | cut -d: -f1 || true)
+FALLBACK_AT=$(printf '%s' "$CATCH" | grep -n "await single()" | head -1 | cut -d: -f1 || true)
+if [ -z "$ABORT_AT" ]; then
+  echo "FAIL - a paused download would fall back to a single stream and restart from zero"; exit 1
+fi
+if [ -n "$FALLBACK_AT" ] && [ "$ABORT_AT" -gt "$FALLBACK_AT" ]; then
+  echo "FAIL - the abort short-circuit comes after the fallback; pausing would restart"; exit 1
+fi
+printf '%s' "$BODY" | grep -q "signal }" \
+  || { echo "FAIL - the ranged fetch does not receive the abort signal"; exit 1; }
+echo "  a paused download stops; it does not fall back and restart from zero"
+
+# Running out of space is reported as itself, not as an opaque browser error.
+grep -q "const isOutOfSpace" "$WEB/client/src/delivery.ts" \
+  || { echo "FAIL - no out-of-space detection"; exit 1; }
+grep -q "ran out of space on the destination disk" "$WEB/client/src/delivery.ts" \
+  || { echo "FAIL - out-of-space is not surfaced to the recipient"; exit 1; }
+echo "  a full destination disk is named as the cause, with the partial file kept"
+
 # ── 2. skipped + remaining tile the file exactly, at every interruption point ──
 ( cd "$WEB/client" && npx tsx - <<'TS'
 import { planRanges } from "./src/ranges.js";
