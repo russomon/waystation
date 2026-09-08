@@ -469,6 +469,29 @@ const classifyTransferObjects = (all: { key: string; size: number }[]) => ({
  *  one is set, else 30 days. */
 const mediatedDownloadUrl = (c: Context, id: string, expiresAt?: number): string => {
   const u = new URL(c.req.url);
+  // ⚠ The scheme and host of c.req.url describe the connection this process
+  // received, NOT the one the browser made. Behind the tunnel that connection
+  // is plain HTTP to `gateway:8787`, so @hono/node-server derives
+  // `scheme = socket.encrypted ? "https" : "http"` and hands back **http://**.
+  //
+  // A page served over https that fetches an http:// url is ACTIVE MIXED
+  // CONTENT: the browser blocks it before sending anything, and fetch() throws
+  // "Failed to fetch" with no request in the network log and no CORS error to
+  // chase. That symptom is indistinguishable from a CORS failure and cost three
+  // wrong fixes to find.
+  //
+  // The proxy tells us what the browser actually used. Trust those headers here
+  // and only here — they are set by Cloudflare in front of this origin, which is
+  // the only way in.
+  u.protocol = `${(c.req.header("x-forwarded-proto") || u.protocol.replace(":", "")).split(",")[0].trim()}:`;
+  const fwdHost = (c.req.header("x-forwarded-host") || "").split(",")[0].trim();
+  if (fwdHost) {
+    u.host = fwdHost;
+    // The WHATWG host setter KEEPS the existing port when the new value has
+    // none, so `api.orbitolive.com` would inherit the internal :8787 and
+    // produce a link nothing can reach. Clear it explicitly.
+    if (!fwdHost.includes(":")) u.port = "";
+  }
   u.search = "";
   u.pathname = `${u.pathname.replace(/\/$/, "")}/original`;
   u.searchParams.set("ticket", issueDownloadTicket(id, expiresAt ?? Date.now() + 30 * 86_400_000));

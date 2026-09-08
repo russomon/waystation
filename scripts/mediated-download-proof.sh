@@ -92,6 +92,18 @@ if printf '%s' "$META" | grep -q "X-Amz-Signature"; then
 fi
 echo "  the master is delivered as a mediated gateway link, with no presigned URL in the payload"
 
+# 1b -- the link must carry the scheme and host the BROWSER used, not the ones
+#       this process was reached on. Behind a TLS-terminating proxy those differ,
+#       and an http:// link on an https page is blocked as mixed content before
+#       any request is sent — a "Failed to fetch" with nothing in the network log.
+FWD=$(curl -fsS -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: api.example.test" \
+  "http://127.0.0.1:$GW/api/transfers/$TID" | jqv original.url)
+case "$FWD" in
+  https://api.example.test/api/transfers/$TID/original?ticket=*) ;;
+  *) echo "FAIL - forwarded scheme/host ignored; got: $FWD"; exit 1;;
+esac
+echo "  the link honours X-Forwarded-Proto/Host, so it is https behind a TLS proxy"
+
 # 2 ── it redirects to storage, and the bytes that arrive are the bytes sent.
 [ "$(code "$URL")" = 302 ] || { echo "FAIL - expected a 302"; exit 1; }
 LOC=$(curl -s -o /dev/null -w '%{redirect_url}' "$URL")
