@@ -71,39 +71,10 @@ it, because several obvious-looking shortcuts are already ruled out there.
 
 ## Now
 
-- **Unify byte formatting on decimal units — queued for the next client build.**
-  The sender and the recipient page disagree today. `client/src/main.ts`
-  (`formatBytes`) divides by 1024 and labels **GiB**; `client/src/delivery.ts`
-  (`fmt`) divides by 1e9 and labels **GB**. The same 26 GiB master reads as
-  **26.00 GiB** to the sender and **27.92 GB** to the recipient — 7% apart, on
-  two screens of one product. Two separate formatters is why they drifted.
-
-  **Convention to apply:**
-  - **User-facing surfaces use decimal** (GB = 10⁹). macOS Finder has been
-    decimal since 10.6, so the recipient's number should match what they see in
-    Finder; Backblaze also bills in decimal GB, which matters once per-gigabyte
-    charging exists — the UI, the invoice and the storage bill should all mean
-    the same gigabyte. "GiB" also reads as jargon to a media client.
-  - **Operator-facing surfaces stay binary and must NOT be touched**: the boot
-    banner (`max=350.0GiB verifiedRangeMax=16.0GiB`), `gateway/src/limits.ts`,
-    `docs/DEPLOY.md`, the 16 MiB uploader part floor, the 5 GiB S3 single-PUT
-    cap, the 16 GiB verification threshold. Those are genuine powers of two;
-    relabelling them would make the docs lie.
-
-  > ⚠ **Never relabel without recomputing.** Changing `"GiB"` to `"GB"` while
-  > still dividing by 1024 produces a number that is 7% wrong wearing a
-  > correct-looking label. That is worse than the current state, where both
-  > formatters are at least honest about their own arithmetic.
-
-  **Implementation:** one shared `formatBytes` in its own module — the same move
-  as `client/src/ranges.ts` — imported by both pages, so the two cannot drift
-  again. While there, fix two smaller flaws in the delivery version: anything
-  under 1000 bytes renders as "0 KB", and there is no TB tier.
-
-  Needs a fresh client release to reach production, so batch it with whatever
-  else is going in the next publish rather than deploying for this alone. Record
-  the decimal/binary convention in `DECISIONS.md` when it ships — not before,
-  since it would be describing code that does not exist yet.
+- ~~**Unify byte formatting on decimal units.**~~ **DONE 2026-09-08.** One
+  shared `client/src/format.ts`, decimal, used by both pages; the sender no
+  longer says GiB while the recipient says GB. Operator-facing surfaces stay
+  binary as specified. Guarded in `transfer-mode-proof.sh` and mutation-tested.
 
 - **Decide the fate of `codex/hosted-cloud-control`.** It has carried one
   unmerged commit — "Show hosted cloud compute selection" — since 2026-08-04.

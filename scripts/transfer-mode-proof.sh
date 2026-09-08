@@ -70,4 +70,38 @@ grep -q "sendBtn.disabled = !sending && count === 0" "$M" \
   || { echo "FAIL - the send button is disabled while sending, so it cannot pause"; exit 1; }
 echo "  pause stops the parts and the hash worker, and requeues the file for a resumed Send"
 
+# ── one formatter, decimal, shared by both pages ─────────────────────────────
+# The sender and the recipient had SEPARATE formatters and drifted: the sender
+# divided by 1024 and labelled GiB, the recipient divided by 1e9 and labelled
+# GB, so one 26 GiB master read as 26.00 GiB to the sender and 27.92 GB to the
+# recipient — 7% apart, on two screens of one product.
+if grep -rn "GiB\|MiB\|KiB" "$WEB/client/src/main.ts" "$WEB/client/src/delivery.ts" \
+     | grep -vE ":\s*(//|\*)" | grep -q .; then
+  echo "FAIL - binary units in user-facing sender or recipient code:"
+  grep -rn "GiB\|MiB\|KiB" "$WEB/client/src/main.ts" "$WEB/client/src/delivery.ts" | grep -vE ":\s*(//|\*)" | sed 's/^/    /'
+  exit 1
+fi
+# Inspect the CODE, not the prose: this file's own comments explain the 1024
+# mistake, so a whole-file grep would flag the explanation as the defect.
+FMT_CODE=$(grep -vE "^\s*(//|\*|/\*)" "$WEB/client/src/format.ts")
+if printf '%s' "$FMT_CODE" | grep -q "1024"; then
+  echo "FAIL - the shared formatter divides by 1024; relabelling without recomputing is 7% wrong"; exit 1
+fi
+printf '%s' "$FMT_CODE" | grep -q "/ 1000" \
+  || { echo "FAIL - the shared formatter is not decimal"; exit 1; }
+for f in main delivery; do
+  grep -q 'from "./format.js"' "$WEB/client/src/$f.ts" \
+    || { echo "FAIL - $f.ts does not use the shared formatter"; exit 1; }
+done
+echo "  both pages share one decimal formatter, so their numbers cannot disagree"
+
+# ── a paused batch says what the button will do ──────────────────────────────
+# "Send file" after pausing reads as "start over", which is exactly the doubt
+# the pause button exists to remove.
+grep -q '"Resume send"' "$WEB/client/src/main.ts" \
+  || { echo "FAIL - a paused batch still offers Send rather than Resume"; exit 1; }
+grep -q "pausedFiles = new Set(paused)" "$WEB/client/src/main.ts" \
+  || { echo "FAIL - paused files are not tracked, so the label cannot know"; exit 1; }
+echo "  a paused batch offers Resume send, and reverts to Send once the queue changes"
+
 echo "PASS - transfer-first multi-file sender, password, progress, and share-link contract"

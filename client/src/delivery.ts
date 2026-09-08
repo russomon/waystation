@@ -5,6 +5,7 @@
 import { Eye, EyeOff, LockKeyhole, createElement as createIcon } from "lucide";
 import { GatewayError, gwGet, gwPost } from "./config.js";
 import { downloadVerified } from "./downloader.js";
+import { formatBytes } from "./format.js";
 import { planRanges } from "./ranges.js";
 import {
   clearDownloadResume, getDownloadResume, saveDownloadResume, usable,
@@ -28,8 +29,8 @@ const el = (html: string): HTMLElement => {
   t.innerHTML = html.trim();
   return t.content.firstElementChild as HTMLElement;
 };
-const fmt = (n: number) =>
-  n >= 1e9 ? (n / 1e9).toFixed(2) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : (n / 1e3).toFixed(0) + " KB";
+// One formatter for the whole product — see format.ts.
+const fmt = formatBytes;
 
 /** Duration as m:ss, or h:mm:ss past an hour. A 26 GB download runs for tens of
  *  minutes, so "1847s" is not a useful thing to show a person. */

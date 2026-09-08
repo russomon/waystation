@@ -2,6 +2,7 @@ import { Check, Copy, Eye, EyeOff, createElement as createIcon } from "lucide";
 import { createSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink } from "./config.js";
 import { copyText } from "./clipboard.js";
 import { appendUniqueFiles, fileIdentity } from "./fileQueue.js";
+import { formatBytes } from "./format.js";
 import { uploadFile, type Progress, type ServiceOptions } from "./uploader.js";
 import { renderDelivery } from "./delivery.js";
 
@@ -110,17 +111,6 @@ if (tid) {
   };
   paintPasswordIcon();
 
-  const formatBytes = (n: number): string => {
-    if (n < 1024) return `${n} B`;
-    const units = ["KiB", "MiB", "GiB", "TiB"];
-    let value = n / 1024;
-    let unit = units[0];
-    for (let i = 1; i < units.length && value >= 1024; i += 1) {
-      value /= 1024;
-      unit = units[i];
-    }
-    return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${unit}`;
-  };
   capIn.onchange = () => {
     const f = capIn.files?.[0];
     capname.textContent = f ? f.name : "SRT, VTT, SCC, MCC, or RCWT";
@@ -224,7 +214,14 @@ if (tid) {
     else
       queueNote.textContent = "";
     // While sending, the button is the pause control and must stay enabled.
-    sendBtn.textContent = sending ? "Pause" : count > 1 ? `Send ${count} files` : "Send file";
+    // A paused batch is not a fresh one. "Send file" after pausing reads as
+    // "start over", which is exactly the doubt the pause button exists to remove.
+    const resuming = queuedFiles.some((f) => pausedFiles.has(f));
+    sendBtn.textContent = sending
+      ? "Pause"
+      : resuming
+        ? "Resume send"
+        : count > 1 ? `Send ${count} files` : "Send file";
     sendBtn.disabled = !sending && count === 0;
     fileIn.disabled = sending;
     pickMaster.classList.toggle("disabled", sending);
@@ -387,6 +384,9 @@ if (tid) {
   // and B2's ListParts is the source of truth for which parts landed — so the
   // only thing missing was a way to stop cleanly and come back.
   let sendAbort: AbortController | null = null;
+  // Files a paused batch left behind, held by identity so that removing them
+  // or queueing different ones returns the button to "Send file".
+  let pausedFiles = new Set<File>();
 
   sendBtn.onclick = async () => {
     if (sendAbort) {                     // running → this click means "pause"
@@ -477,6 +477,7 @@ if (tid) {
         : `${sent} ${sent === 1 ? "file" : "files"} sent`;
     logEl.append(summary);
     queuedFiles = [...paused, ...failed];
+    pausedFiles = new Set(paused);
     if (failed.length === 0 && paused.length === 0) {
       recipientPassword.value = "";
       recipientPassword.type = "password";
