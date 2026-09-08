@@ -76,62 +76,80 @@ async function drain(
   }
 }
 
+/** Follow the mediated link to wherever storage actually is, and hand back that
+ *  URL so ranged requests can go straight there.
+ *
+ *  This MUST be a plain GET with no extra headers. A cross-origin request that
+ *  carries a non-safelisted header — `Range` is one — triggers a CORS preflight,
+ *  and **a preflighted request may not follow a cross-origin redirect**. The
+ *  browser fails it outright with "Failed to fetch". Both ends are configured
+ *  correctly and it still cannot work: the restriction is in the protocol, not
+ *  the configuration. So resolve first with a simple request, then range against
+ *  the resolved origin directly, where a preflight is permitted. */
+async function resolveStorageUrl(url: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const resolved = res.url || url;
+  await res.body?.cancel();   // abort the transfer; we only wanted the address
+  return resolved;
+}
+
 /** Download `url` into an open FileSystemWritableFileStream, in parallel where
  *  the server supports it. Nothing is buffered: every byte goes network → disk,
- *  so a 26 GiB master costs no more memory than a small one. */
+ *  so a 26 GiB master costs no more memory than a small one.
+ *
+ *  `onProgress` receives the TOTAL bytes written so far, not a delta, because a
+ *  fallback restarts the download from zero and the caller must be able to
+ *  follow it back down. */
 async function saveToDisk(
   url: string,
   total: number,
   writable: any,
-  onBytes: (n: number) => void,
+  onProgress: (bytesSoFar: number) => void,
 ): Promise<void> {
   // A FileSystemWritableFileStream is a WritableStream: overlapping write()
   // calls fight over the same locked writer. Serialize them through a promise
-  // chain. Ordering does not matter because every write carries its own
-  // absolute position, and at most DOWNLOAD_CONCURRENCY writes are ever queued
-  // since each worker awaits its own before reading more.
+  // chain. Ordering does not matter because each write carries its own absolute
+  // position, and at most DOWNLOAD_CONCURRENCY writes are ever queued since
+  // every worker awaits its own before reading more.
   let chain: Promise<void> = Promise.resolve();
   const write = (position: number, data: Uint8Array): Promise<void> => {
     chain = chain.then(() => writable.write({ type: "write", position, data }));
     return chain;
   };
+  let done = 0;
+  const count = (n: number) => { done += n; onProgress(done); };
 
-  // One tiny ranged request answers both questions at once: does the server
-  // honour Range (206 rather than 200), and what URL did the mediated link
-  // actually resolve to? res.url is the post-redirect URL, so the workers below
-  // range against storage directly instead of paying a gateway round-trip per
-  // chunk. That is one authorization for one download — the same exposure as
-  // the single-stream path, which also follows the redirect exactly once, and
-  // the shape download grants formalise in step 3 of the commercial plan.
-  const probe = await fetch(url, { headers: { Range: "bytes=0-0" } });
-  if (!probe.ok) throw new Error(`HTTP ${probe.status}`);
-  const resolved = probe.url || url;
-  const ranged = probe.status === 206;
-  await probe.body?.cancel();
-
-  if (!ranged || total < PARALLEL_MIN_BYTES) {
-    // Fall back to one stream: either the server ignored Range, or the file is
-    // small enough that extra connections would only add latency.
+  const single = async (): Promise<void> => {
+    done = 0; onProgress(0);
     const res = await fetch(url);
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-    return drain(res.body, 0, write, onBytes);
-  }
+    await drain(res.body, 0, write, count);
+  };
 
-  await pool(planRanges(total), DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
-    const fetchRange = (from: string) =>
-      fetch(from, { headers: { Range: `bytes=${start}-${end}` } });
-    let res = await fetchRange(resolved);
-    // The resolved URL is a short-lived presigned link. A download longer than
-    // its life starts failing mid-flight, so re-resolve through the mediated
-    // URL and retry once. That also re-runs the gateway's revocation and expiry
-    // checks, which is why a long download cannot outlive a revoked transfer.
-    if (res.status === 401 || res.status === 403) {
-      const again = await fetch(url, { headers: { Range: `bytes=${start}-${end}` } });
-      res = again;
-    }
-    if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
-    await drain(res.body, start, write, onBytes);
-  });
+  if (total < PARALLEL_MIN_BYTES) return single();
+
+  try {
+    const resolved = await resolveStorageUrl(url);
+    // Confirm ranges work by asking STORAGE, not the gateway — this request
+    // does not get redirected, so its preflight is allowed.
+    const probe = await fetch(resolved, { headers: { Range: "bytes=0-0" } });
+    await probe.body?.cancel();
+    if (probe.status !== 206) return single();
+
+    await pool(planRanges(total), DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
+      const res = await fetch(resolved, { headers: { Range: `bytes=${start}-${end}` } });
+      if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
+      await drain(res.body, start, write, count);
+    });
+  } catch (e) {
+    // Parallel download is an OPTIMISATION. If anything about it fails —
+    // expired signature, a storage host that dislikes ranges, a CORS rule that
+    // changes — fall back to the one plain request that has always worked
+    // rather than failing the download. Slow beats broken.
+    console.warn("parallel download failed, falling back to a single stream:", e);
+    await single();
+  }
 }
 
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
@@ -598,7 +616,7 @@ export async function renderDelivery(id: string, root: HTMLElement) {
         writable = await handle.createWritable();
         paint(true);
         await saveToDisk(t.original.url, total, writable, (n) => {
-          done += n;
+          done = n;
           window_.push({ t: performance.now(), b: done });
           paint();
         });

@@ -48,6 +48,25 @@ TS
 ) || { echo "FAIL - range plan"; exit 1; }
 echo "  the range plan covers every byte once, with inclusive ends"
 
+# -- 1b. no ranged request may target the MEDIATED url -----------------------
+# A cross-origin request carrying a non-safelisted header (Range is one)
+# triggers a CORS preflight, and a preflighted request may NOT follow a
+# cross-origin redirect. The mediated link redirects to storage, so sending
+# Range to it fails with "Failed to fetch" however both ends are configured --
+# the restriction is in the protocol, not the configuration. Ranges must go to
+# the RESOLVED storage url. This shipped broken once; the check exists so it
+# cannot ship broken twice.
+BODY=$(awk '/async function saveToDisk/,/^async function sha256Hex/' "$WEB/client/src/delivery.ts")
+if printf '%s' "$BODY" | grep -n 'fetch(' | grep 'Range' | grep -qv 'resolved'; then
+  echo "FAIL - a ranged fetch targets something other than the resolved storage url:"
+  printf '%s' "$BODY" | grep -n 'fetch(' | grep 'Range' | grep -v 'resolved' | sed 's/^/    /'
+  exit 1
+fi
+printf '%s' "$BODY" | grep -q 'fetch(resolved' || { echo "FAIL - no ranged fetch against the resolved url"; exit 1; }
+grep -q 'async function resolveStorageUrl' "$WEB/client/src/delivery.ts" \
+  || { echo "FAIL - no plain-GET resolver; the mediated url must be resolved without custom headers"; exit 1; }
+echo "  every ranged fetch targets resolved storage, never the redirecting mediated url"
+
 # ── 2. the real thing, over the gateway's mediated redirect ───────────────────
 command -v minio >/dev/null || { echo "SKIP (transport half) - minio not installed"; exit 0; }
 [ -x "$PY" ] || { echo "SKIP (transport half) - pipeline venv not built"; exit 0; }

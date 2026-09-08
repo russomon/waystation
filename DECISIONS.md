@@ -16,6 +16,41 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-07 - Never send Range to a redirecting endpoint from a browser
+
+- Context: The mediated download shipped, and the client probed
+  `GET /transfers/:id/original` with `Range: bytes=0-0` to learn both whether
+  ranges were supported and where the redirect landed. Every download then
+  failed instantly with `Failed to fetch` at 0 bytes — worse than the slow
+  single-stream download it replaced, because it broke downloads outright.
+- Root cause: a cross-origin request carrying a non-safelisted header — `Range`
+  is one — triggers a CORS preflight, and **a preflighted request may not follow
+  a cross-origin redirect**. The mediated endpoint's whole job is to redirect to
+  storage. The two are mutually exclusive, and no amount of configuration fixes
+  it: the restriction lives in the Fetch protocol.
+- Both ends were verified correct while the download was still broken, which is
+  what makes this worth recording:
+  - gateway preflight → `access-control-allow-headers: content-type,range`
+  - B2 preflight → `access-control-allow-headers: range`, origin allowed
+  Correct CORS on both sides and it still cannot work. Do not debug this by
+  adding headers to an allow-list.
+- Decision: resolve first, then range. `resolveStorageUrl()` fetches the
+  mediated url with a **plain GET and no custom headers** — a simple request,
+  which browsers are permitted to redirect — reads `res.url` for the resolved
+  storage address, and cancels the body. Every ranged request then goes directly
+  to storage, where a preflight is allowed because nothing redirects.
+- Also decided: **parallel download is an optimisation and must fail soft.** Any
+  error in resolving, probing, or ranging falls back to the single plain request
+  that has always worked. Slow beats broken. The original bug turned a working
+  download into no download at all, and that must not be possible again.
+- Consequence: one authorization per download rather than per range — the same
+  shape download grants formalise in `docs/COMMERCIAL_DELIVERY_PLAN.md` step 3,
+  and the same exposure as the single-stream path, which also follows the
+  redirect exactly once.
+- Guard: `scripts/parallel-download-proof.sh` asserts that no ranged fetch in
+  `saveToDisk` targets anything but the resolved url, and that the plain-GET
+  resolver exists. Mutation-tested: restoring `fetch(url, {Range})` makes it fail.
+
 ### 2026-09-01 - Protected transfers ship as a gateway-only production change
 
 - The low-cost hosted deployment remains `docker-compose.transfer.yml` with
