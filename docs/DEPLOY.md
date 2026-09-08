@@ -504,6 +504,46 @@ every check applicable to that deployment passes** — with any inapplicable che
 recorded and reasoned. Until then this is a prepared, locally-proven
 configuration and should be described as exactly that.
 
+### Rehearsal record — 2026-09-07 · transfer-only · **15/15 PASSED, 1 N/A**
+
+Deployment mode: **transfer-only** (no worker). Gateway `a9f1588`, client
+`c18f6d9`, portal manifest verified byte-for-byte against the served files.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | portal opens | 200, pinned commit matches |
+| 2 | wrong code refused | 401 `bad_code` |
+| 3 | access code starts a session | passed |
+| 4–5 | upload; media goes directly to B2 | passed |
+| 6 | B2 webhook reaches the gateway | passed |
+| 7 | service policy honoured | no services ran, `pipeline_skipped` |
+| 8 | progress SSE | passed |
+| 9 | recipient link with no sender session | 401 password gate; unknown id → neutral 404 |
+| **10** | **QC / passport render** | **N/A — no worker deployed (transfer-only stack)** |
+| 11 | download and verify | passed |
+| 12–13 | restart persistence; meter records | passed |
+| 14 | no public service ports | 8787, 8000, 443 all closed |
+| 15 | mediated download + live revocation | 302 to storage; revoked link 404s on the next request |
+| 16 | parallel ranged download integrity | file complete and usable |
+
+**Throughput, measured against a real 28 GB object in the production bucket**
+from a wired 10Gbase-T Mac, using the client's own chunk size over
+multi-gigabyte samples:
+
+| Connections | Rate |
+|---|---|
+| 1 | 23.2 MB/s (186 Mb/s) |
+| 6 | 76.7 MB/s (613 Mb/s) |
+| 12 | **91.1 MB/s (729 Mb/s)** |
+
+Parallel downloads deliver **3.3×**, matching the 2026-08-01 estimate. Client
+concurrency was raised from 6 to 12 on this evidence.
+
+> ⚠ **Measure over gigabytes.** Two earlier attempts reported a 1.3× gain and a
+> 435 Mb/s ceiling; both used 50–200 MB samples, where TCP slow-start dominates
+> and connections are still ramping when the test ends. Under ~1 GB per
+> configuration you are measuring ramp-up, not capacity.
+
 ### Rehearsal record — 2026-07-28 · **14/14 PASSED** (full-QC stack)
 
 > Run against the **full QC deployment**, before the checklist was scoped by

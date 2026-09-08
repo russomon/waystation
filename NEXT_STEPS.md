@@ -94,46 +94,12 @@ Real engineering, deliberately deferred. Any of these can start whenever.
   `docs/DEFERRED_TOOLING.md` — currently OpenCV, with the pin, the derived-layer
   build and the integration point already worked out. Do this while a full-QC
   box is already up; that is the cheap moment.
-- ~~**Parallel ranged downloads.**~~ **DONE 2026-09-05.** `delivery.ts` fetches
-  `planRanges()` chunks over six connections and writes each at its own offset;
-  proven by `scripts/parallel-download-proof.sh`. **Still to do: measure it on an
-  idle link.** The 3.3× figure was taken while another download competed for the
-  same pipe, so six may not be the right concurrency — `DOWNLOAD_CONCURRENCY` in
-  `client/src/delivery.ts` is the knob. The FileSystemWritableFileStream path
-  itself is unverified in a real browser, because the save dialog needs user
-  activation and cannot be driven headlessly; one manual download would close
-  that. One stream reached 232 Mb/s; six streams measured
-  **3.3× aggregate**. The uploader already runs `CONCURRENCY = 6`; downloads
-  never got the same treatment. Ranges may complete out of order because the
-  File System Access writable supports positional writes. Projection puts a
-  28 GB download near the line limit — ~5 minutes instead of 16.
-  **Re-measure on an idle link first**: the 3.3× was taken while a real
-  download competed for the same pipe, so 6 may not be the right concurrency.
-- **Stream verified downloads to disk.** `downloadVerified` still accumulates
-  every verified range into an in-memory `Blob` (`client/src/downloader.ts`).
-  Harmless today only because it is hidden for root-only transfers — but it is
-  reachable and ungated for range-mode transfers up to 16 GiB, where a tab dies
-  around 1–2 GiB. Reuse the `DownloadSink` shape already proven in the
-  "Download original…" path. The same fix is needed for "Verify provenance",
-  which does one `arrayBuffer()` over the whole original; note that WebCrypto
-  has **no incremental digest**, so this needs a streaming SHA-256 added to
-  `crates/blake3-outboard` (mirror the existing `Blake3Hasher`).
-- **Export SyncNet's full measurement as drift, not just offset.**
-  `qc/avsync.py` scrapes three summary lines and reports ONE offset for the best
-  face track, discarding almost everything SyncNet computes: `activesd.pckl`
-  holds a per-track distance matrix (frames × lags — 314×31 on the bundled
-  `example.avi`), plus `tracks.pckl` and a per-frame confidence curve.
-  The unlock is **deterministic, not AI**: an argmin per window over that matrix
-  turns one number into an offset *trajectory*, and a regression over it
-  separates defects that are currently indistinguishable — flat means a constant
-  offset (mux/container error), sloped means progressive drift (clock mismatch),
-  stepped at a scene boundary means a reel-assembly error, and a confidence dip
-  means the measurement is untrustworthy *in that interval only*.
-  Emit per-track `{start, end, offset_ms, confidence}` plus a `drift`
-  characterization and low-confidence intervals into the deterministic dossier.
-  The model's role stays strictly downstream: correlate, explain a probable
-  cause, aim the bounded evidence request. It must never produce, estimate or
-  adjudicate the offset.
+- ~~**Parallel ranged downloads.**~~ **DONE 2026-09-07, measured and tuned.**
+  1 connection 23.2 MB/s, 6 → 76.7, 12 → 91.1 (729 Mb/s, near the 800 Mb/s
+  line). `DOWNLOAD_CONCURRENCY` raised to 12; past 12 is untested. Full record
+  in `docs/DEPLOY.md`. **Measure over gigabytes** — sub-1 GB samples measure TCP
+  slow-start, not capacity, and produced two badly wrong readings before this.
+
 - **Decide on synthetic-origin QC.** Full design preserved in
   `docs/SYNTHETIC_ORIGIN_PLAN.md` — deliberately not implemented. The deciding
   factor is whether a corpus can be assembled; the code is the cheaper half.

@@ -42,19 +42,23 @@ const hms = (secs: number): string => {
 
 // ───────── parallel ranged download ─────────
 //
-// Measured 2026-08-01: B2 throttles per CONNECTION, not per client. One stream
-// reached 232 Mb/s on an 800 Mb/s line; six reached 3.3x that. The uploader has
-// run six connections since it was written — downloads never got the same
-// treatment, so a transfer that uploaded in minutes took a quarter of an hour
-// to come back.
+// B2 throttles per CONNECTION, not per client. Measured 2026-09-07 from a
+// wired 10Gbase-T Mac against a real 28 GB object in the production bucket,
+// using this module's own chunk size over multi-gigabyte samples:
 //
-// Six matches the uploader. It is not a measured optimum: the 3.3x figure was
-// taken while another download competed for the same pipe, so re-measure on an
-// idle link before treating this number as tuned.
-const DOWNLOAD_CONCURRENCY = 6;
+//     1 worker    23.2 MB/s   (186 Mb/s)
+//     6 workers   76.7 MB/s   (613 Mb/s)
+//    12 workers   91.1 MB/s   (729 Mb/s)   ← chosen
+//
+// Twelve beat six in both interleaved passes and lands near the 800 Mb/s line
+// rate, so six was leaving real headroom unused. Past twelve is untested.
+//
+// ⚠ Measure over GIGABYTES, not megabytes. Two earlier attempts here reported
+// a 1.3x gain and a 435 Mb/s ceiling; both used ~50-200 MB samples, where TCP
+// slow-start dominates and every connection is still ramping when the test
+// ends. Anything under ~1 GB per configuration measures ramp-up, not capacity.
+const DOWNLOAD_CONCURRENCY = 12;
 
-// Below this, one connection is faster: setup latency dominates and the
-// progress bar finishes before the extra sockets are useful.
 const PARALLEL_MIN_BYTES = 32 << 20;
 
 /** Stream one response body to disk at an advancing position.

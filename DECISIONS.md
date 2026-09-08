@@ -16,6 +16,39 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-07 - Measure throughput over gigabytes; concurrency 12
+
+- Context: Parallel downloads shipped and needed a real number. Two attempts to
+  measure produced badly wrong answers that were acted on: a "1.3x gain, barely
+  worth it" reading, and a "your link tops out near 435 Mb/s" conclusion that
+  was used to talk down what the feature could deliver.
+- Root cause of both: samples of 50–200 MB. TCP slow-start dominates at that
+  size — every connection is still ramping when the test ends — so what was
+  measured was ramp-up, not capacity. The error compounds with concurrency,
+  because *each* connection pays it, which is exactly what made parallel look
+  useless.
+- Measured properly, from a wired 10Gbase-T Mac against a real 28 GB object in
+  the production bucket, using the client's own chunk size over multi-gigabyte
+  samples:
+
+  | Connections | Rate |
+  |---|---|
+  | 1 | 23.2 MB/s (186 Mb/s) |
+  | 6 | 76.7 MB/s (613 Mb/s) |
+  | 12 | 91.1 MB/s (729 Mb/s) |
+
+- Decision: `DOWNLOAD_CONCURRENCY` = **12**. Twelve beat six in both interleaved
+  passes and reaches 729 Mb/s against an 800 Mb/s line, so six was leaving real
+  headroom unused. Past twelve is untested and should be measured before being
+  assumed better.
+- The 3.3x figure recorded on 2026-08-01 was right all along. It was doubted on
+  the strength of a bad measurement, which is the more useful lesson here.
+- **Standing rule for any throughput claim in this project: measure over
+  gigabytes, at least ~1 GB per configuration, and interleave configurations to
+  cancel drift.** Run-to-run variance was large — six workers measured anywhere
+  from 52 to 77 MB/s — so a single pass decides nothing. Take the best of
+  several as the capacity estimate; noise only ever makes a transfer slower.
+
 ### 2026-09-07 - A browser cannot fetch a cross-origin redirect at all; return JSON
 
 - Context: After fixing the preflight problem above, downloads still failed at 0
