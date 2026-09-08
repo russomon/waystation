@@ -417,7 +417,25 @@ api.get("/transfers/:id/original", async (c) => {
     );
   }
 
-  return c.redirect(await g.presignGet(key, 3600, key.split("/").pop()), 302);
+  const storage = await g.presignGet(key, 3600, key.split("/").pop());
+
+  // Two shapes, one gate. Everything above — revocation, expiry, the password,
+  // scope, metering — has already run either way.
+  //
+  // `?format=json` exists because **a browser cannot fetch() this route**. When
+  // a CORS request is redirected to a different origin the spec requires the
+  // browser to send `Origin: null` on the redirected request, and B2 answers a
+  // null origin with 403. Correct CORS on both hosts does not help; the null
+  // origin is not any host's configured origin, and adding `null` to the
+  // bucket's allow-list would let *any* sandboxed context read the object,
+  // which is far worse than the problem it solves.
+  //
+  // So script asks for JSON and fetches storage itself. The redirect stays for
+  // the contexts where it genuinely works — a top-level `<a href>` navigation
+  // is not a CORS request at all, and curl/aria2c have no CORS to satisfy —
+  // which is what makes this a stable link for multi-connection tools.
+  if (c.req.query("format") === "json") return c.json({ url: storage });
+  return c.redirect(storage, 302);
 });
 
 // ───────── delivery page data ─────────

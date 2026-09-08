@@ -76,31 +76,33 @@ async function drain(
   }
 }
 
-/** Follow the mediated link to wherever storage actually is, and hand back that
- *  URL so ranged requests can go straight there.
+/** Ask the gateway where storage actually is, and fetch the bytes from there.
  *
- *  This MUST be a plain GET with no extra headers. A cross-origin request that
- *  carries a non-safelisted header — `Range` is one — triggers a CORS preflight,
- *  and **a preflighted request may not follow a cross-origin redirect**. The
- *  browser fails it outright with "Failed to fetch". Both ends are configured
- *  correctly and it still cannot work: the restriction is in the protocol, not
- *  the configuration. So resolve first with a simple request, then range against
- *  the resolved origin directly, where a preflight is permitted. */
+ *  Script MUST NOT fetch the mediated url itself. It answers with a redirect to
+ *  another origin, and the Fetch spec requires the browser to send
+ *  `Origin: null` on a cross-origin redirected request — which B2 answers with
+ *  403. Both hosts have correct CORS and it still fails, because `null` is not
+ *  any host's configured origin. Allowing `null` at the bucket would let any
+ *  sandboxed context read the object, so the fix is on this side: request JSON,
+ *  then go to storage directly, where the origin is intact and a preflight is
+ *  permitted.
+ *
+ *  The redirect is still the right shape for a top-level `<a href>` navigation
+ *  (not a CORS request) and for curl or aria2c (no CORS at all). */
 async function resolveStorageUrl(url: string): Promise<string> {
-  const res = await fetch(url);
+  const res = await fetch(url + (url.includes("?") ? "&" : "?") + "format=json");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const resolved = res.url || url;
-  await res.body?.cancel();   // abort the transfer; we only wanted the address
-  return resolved;
+  const body = await res.json();
+  if (!body?.url) throw new Error("gateway returned no storage url");
+  return body.url as string;
 }
 
 /** Download `url` into an open FileSystemWritableFileStream, in parallel where
- *  the server supports it. Nothing is buffered: every byte goes network → disk,
- *  so a 26 GiB master costs no more memory than a small one.
+ *  storage supports it. Nothing is buffered: every byte goes network → disk, so
+ *  a 26 GiB master costs no more memory than a small one.
  *
  *  `onProgress` receives the TOTAL bytes written so far, not a delta, because a
- *  fallback restarts the download from zero and the caller must be able to
- *  follow it back down. */
+ *  fallback restarts from zero and the caller must be able to follow it down. */
 async function saveToDisk(
   url: string,
   total: number,
@@ -120,9 +122,16 @@ async function saveToDisk(
   let done = 0;
   const count = (n: number) => { done += n; onProgress(done); };
 
+  // Resolve once. Every byte below comes from `src`, never from the mediated
+  // url — see resolveStorageUrl. If resolution fails we still try the url as
+  // given: a deployment that serves storage directly, or a same-origin one,
+  // needs no resolution at all.
+  let src = url;
+  try { src = await resolveStorageUrl(url); } catch { /* fall through to url */ }
+
   const single = async (): Promise<void> => {
     done = 0; onProgress(0);
-    const res = await fetch(url);
+    const res = await fetch(src);
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     await drain(res.body, 0, write, count);
   };
@@ -130,23 +139,19 @@ async function saveToDisk(
   if (total < PARALLEL_MIN_BYTES) return single();
 
   try {
-    const resolved = await resolveStorageUrl(url);
-    // Confirm ranges work by asking STORAGE, not the gateway — this request
-    // does not get redirected, so its preflight is allowed.
-    const probe = await fetch(resolved, { headers: { Range: "bytes=0-0" } });
+    const probe = await fetch(src, { headers: { Range: "bytes=0-0" } });
     await probe.body?.cancel();
     if (probe.status !== 206) return single();
 
     await pool(planRanges(total), DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
-      const res = await fetch(resolved, { headers: { Range: `bytes=${start}-${end}` } });
+      const res = await fetch(src, { headers: { Range: `bytes=${start}-${end}` } });
       if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
       await drain(res.body, start, write, count);
     });
   } catch (e) {
-    // Parallel download is an OPTIMISATION. If anything about it fails —
-    // expired signature, a storage host that dislikes ranges, a CORS rule that
-    // changes — fall back to the one plain request that has always worked
-    // rather than failing the download. Slow beats broken.
+    // Parallel download is an OPTIMISATION. Any failure in it falls back to the
+    // one plain request that has always worked, rather than failing the
+    // download. Slow beats broken.
     console.warn("parallel download failed, falling back to a single stream:", e);
     await single();
   }

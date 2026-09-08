@@ -100,6 +100,21 @@ curl -fsSL "$URL" -o "$WORK/got.bin"
 cmp -s "$WORK/file.bin" "$WORK/got.bin" || { echo "FAIL - downloaded bytes differ"; exit 1; }
 echo "  it redirects to storage and delivers byte-identical content ($SIZE bytes)"
 
+# 2b -- JSON mode: the same gate, a shape a browser can actually use.
+#       A browser cannot fetch() the redirect: a cross-origin redirected CORS
+#       request carries Origin: null, which B2 refuses. So script asks for JSON
+#       and goes to storage itself.
+JSON=$(curl -fsS "$URL&format=json")
+JURL=$(printf '%s' "$JSON" | jqv url)
+case "$JURL" in
+  *"127.0.0.1:$MIN"*) ;;
+  *) echo "FAIL - format=json did not return a storage url: $JURL"; exit 1;;
+esac
+curl -fsS "$JURL" -o "$WORK/viajson.bin"
+cmp -s "$WORK/file.bin" "$WORK/viajson.bin" || { echo "FAIL - json-resolved url served different bytes"; exit 1; }
+echo "  format=json returns a storage url that serves identical bytes"
+
+
 # 3 ── ranged requests survive the redirect: this is what parallel and resumed
 #      downloads depend on, and what makes the CORS allowHeaders change matter.
 curl -fsSL -H 'Range: bytes=0-1023' "$URL" -o "$WORK/part.bin"
@@ -119,7 +134,9 @@ PROT=$(upload protected.bin '"x"')
 TICKET="${URL#*ticket=}"
 [ "$(code "http://127.0.0.1:$GW/api/transfers/$PROT/original?ticket=$TICKET")" = 401 ] \
   || { echo "FAIL - another transfer's ticket authorized a protected transfer"; exit 1; }
-echo "  a protected transfer refuses both an unticketed request and another transfer's ticket"
+[ "$(code "http://127.0.0.1:$GW/api/transfers/$PROT/original?format=json")" = 401 ] \
+  || { echo "FAIL - format=json bypassed the password gate"; exit 1; }
+echo "  a protected transfer refuses both an unticketed request and another transfer's ticket, in either shape"
 
 curl -fsS -c "$RECIPIENT" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
   --data '{"password":"x"}' http://127.0.0.1:$GW/api/transfers/$PROT/unlock >/dev/null
@@ -138,6 +155,7 @@ import sqlite3,sys
 db=sqlite3.connect(sys.argv[1]); db.execute("update transfers set revoked=1 where transfer_id=?",(sys.argv[2],)); db.commit()
 PY
 [ "$(code "$URL")" = 404 ] || { echo "FAIL - a revoked transfer still redirected"; exit 1; }
+[ "$(code "$URL&format=json")" = 404 ] || { echo "FAIL - format=json still served a revoked transfer"; exit 1; }
 echo "  revocation is immediate — the same link 404s on the very next request"
 
 # 6 ── egress is metered, and the many requests of ONE download collapse into a

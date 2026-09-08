@@ -48,24 +48,24 @@ TS
 ) || { echo "FAIL - range plan"; exit 1; }
 echo "  the range plan covers every byte once, with inclusive ends"
 
-# -- 1b. no ranged request may target the MEDIATED url -----------------------
-# A cross-origin request carrying a non-safelisted header (Range is one)
-# triggers a CORS preflight, and a preflighted request may NOT follow a
-# cross-origin redirect. The mediated link redirects to storage, so sending
-# Range to it fails with "Failed to fetch" however both ends are configured --
-# the restriction is in the protocol, not the configuration. Ranges must go to
-# the RESOLVED storage url. This shipped broken once; the check exists so it
-# cannot ship broken twice.
+# -- 1b. script must never fetch the MEDIATED url for bytes -------------------
+# The mediated route answers with a cross-origin redirect, and the Fetch spec
+# requires the browser to send `Origin: null` on a redirected CORS request. B2
+# answers a null origin with 403 — verified against the live bucket. Both hosts
+# have correct CORS and it still fails, so the client must resolve the storage
+# url over JSON and fetch the bytes from there. This shipped broken twice; the
+# check exists so it cannot ship broken a third time.
 BODY=$(awk '/async function saveToDisk/,/^async function sha256Hex/' "$WEB/client/src/delivery.ts")
-if printf '%s' "$BODY" | grep -n 'fetch(' | grep 'Range' | grep -qv 'resolved'; then
-  echo "FAIL - a ranged fetch targets something other than the resolved storage url:"
-  printf '%s' "$BODY" | grep -n 'fetch(' | grep 'Range' | grep -v 'resolved' | sed 's/^/    /'
+if printf '%s' "$BODY" | grep 'fetch(' | grep -qv 'fetch(src'; then
+  echo "FAIL - saveToDisk fetches something other than the resolved storage url:"
+  printf '%s' "$BODY" | grep -n 'fetch(' | grep -v 'fetch(src' | sed 's/^/    /'
   exit 1
 fi
-printf '%s' "$BODY" | grep -q 'fetch(resolved' || { echo "FAIL - no ranged fetch against the resolved url"; exit 1; }
-grep -q 'async function resolveStorageUrl' "$WEB/client/src/delivery.ts" \
-  || { echo "FAIL - no plain-GET resolver; the mediated url must be resolved without custom headers"; exit 1; }
-echo "  every ranged fetch targets resolved storage, never the redirecting mediated url"
+grep -q 'format=json' "$WEB/client/src/delivery.ts" \
+  || { echo "FAIL - resolver does not request the storage url as JSON"; exit 1; }
+grep -q 'if (c.req.query("format") === "json")' "$WEB/gateway/src/routes.ts" \
+  || { echo "FAIL - gateway has no JSON mode for the mediated route"; exit 1; }
+echo "  every byte fetch targets resolved storage; the redirect is never fetched by script"
 
 # ── 2. the real thing, over the gateway's mediated redirect ───────────────────
 command -v minio >/dev/null || { echo "SKIP (transport half) - minio not installed"; exit 0; }

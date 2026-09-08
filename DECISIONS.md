@@ -16,7 +16,50 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
-### 2026-09-07 - Never send Range to a redirecting endpoint from a browser
+### 2026-09-07 - A browser cannot fetch a cross-origin redirect at all; return JSON
+
+- Context: After fixing the preflight problem above, downloads still failed at 0
+  bytes — including the single-stream fallback, which was supposed to make a
+  broken optimisation impossible. So the plain GET was failing too, and the
+  preflight was never the whole story.
+- Root cause: when a CORS request is redirected to a **different origin**, the
+  Fetch spec requires the browser to send `Origin: null` on the redirected
+  request. Verified against the live bucket:
+  - `Origin: https://orbitolive.com` → allowed
+  - `Origin: https://www.orbitolive.com` → allowed
+  - `Origin: http://localhost:5173` → allowed
+  - **`Origin: null` → 403**
+  Both hosts have correct, verified CORS and it still cannot work, because
+  `null` is not any host's configured origin. This is not a preflight issue —
+  it defeats simple requests too, which is why the fallback failed with it.
+- Rejected: adding `null` to the bucket's allowed origins. A null origin is what
+  *every* sandboxed iframe, `data:` document and opaque context presents, so
+  allowing it would let any of them read the object. That is far worse than the
+  problem it solves.
+- Decision: `GET /transfers/:id/original?format=json` returns
+  `{ url }` — the same freshly minted presigned url the redirect would have gone
+  to, behind the identical gate. Script asks for JSON and fetches storage
+  itself, where the origin is intact and a preflight is permitted. The redirect
+  remains the default response, because it is correct for the contexts where it
+  genuinely works: a top-level `<a href>` navigation is not a CORS request, and
+  curl or aria2c have no CORS to satisfy. That is what makes the mediated link
+  usable by multi-connection download tools.
+- Nothing is given away by the JSON shape that the redirect did not already
+  expose — a 302 puts the same url in its `Location` header. Both run after
+  revocation, expiry, password, scope and metering. The proof asserts that
+  `format=json` is refused for a protected transfer without authorization and
+  for a revoked one, so it cannot become a way around the gate.
+- Lesson worth keeping: **a redirect is not a transparent implementation
+  detail to script.** It is fine for navigation and for CLI tools, and unusable
+  from `fetch()` across origins. Design the machine-facing shape accordingly
+  rather than assuming the browser will follow.
+- Guard: `scripts/parallel-download-proof.sh` asserts every byte fetch in
+  `saveToDisk` targets the resolved storage url, that the client requests
+  `format=json`, and that the gateway implements it.
+  `scripts/mediated-download-proof.sh` asserts the JSON shape serves identical
+  bytes and is refused when unauthorized or revoked.
+
+### 2026-09-07 - (superseded same day, kept for history) Never send Range to a redirecting endpoint
 
 - Context: The mediated download shipped, and the client probed
   `GET /transfers/:id/original` with `Range: bytes=0-0` to learn both whether
@@ -50,6 +93,10 @@ is itself the useful part.
 - Guard: `scripts/parallel-download-proof.sh` asserts that no ranged fetch in
   `saveToDisk` targets anything but the resolved url, and that the plain-GET
   resolver exists. Mutation-tested: restoring `fetch(url, {Range})` makes it fail.
+- **Superseded hours later.** The diagnosis above is correct but incomplete, and
+  the fix it prescribes — resolve with a plain GET, then range — does not work
+  either. See the next entry. Kept because the preflight constraint is real and
+  will bite again on any other redirecting endpoint.
 
 ### 2026-09-01 - Protected transfers ship as a gateway-only production change
 
