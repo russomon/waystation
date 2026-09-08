@@ -39,6 +39,35 @@ it, because several obvious-looking shortcuts are already ruled out there.
    proves control of it.
 6. **Usage billing** — Stripe or Lago meters. The ledger in
    `gateway/src/metering.ts` is already shaped 1:1 onto a meter event.
+7. **Re-scope the upload quotas.** Do this WITH billing, not before — the right
+   ceiling is a pricing question, and raising the numbers now would only defer
+   the same problem.
+
+   `MAX_JOBS_PER_SESSION` and `MAX_DAILY_JOBS` are named for jobs but count
+   **completed uploads in a rolling 24 hours**, checked at `POST /uploads`.
+   Production runs 10 and 20; the code defaults are 20 and 200.
+
+   They were **QC cost controls**: every completed upload used to fire the
+   pipeline and spend real money on GMI calls, so capping uploads capped spend.
+   In transfer-only mode no pipeline runs, so they now cap the only thing the
+   product does, for a reason that no longer applies.
+
+   Two problems, in order of severity:
+
+   - **`MAX_DAILY_JOBS` is global, not per user.** Twenty transfers across
+     *everybody* in a rolling day is a hard business ceiling, and the twenty-first
+     client gets an opaque "This deployment has reached its daily job ceiling."
+   - **An upload count is the wrong unit.** Spend is now storage and egress, so
+     a 5 GB transfer and a 5 MB one cost wildly different amounts and consume one
+     slot each. A gigabyte cap expresses the real risk; a count does not.
+
+   `MAX_JOBS_PER_SESSION` also stops meaning much once accounts exist — a fresh
+   login already starts a new session and a new count, so the meaningful unit
+   becomes per-account, which is what `owner_id` provides.
+
+   Precedent for treating this as urgent-when-it-lands rather than theoretical:
+   `MAX_ACTIVE_UPLOADS_PER_SESSION=1`, also a hackathon-era control, wedged a
+   real session on 2026-09-08 when a Wi-Fi drop left an upload unfinished.
 
 ## Now
 
