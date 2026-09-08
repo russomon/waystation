@@ -78,6 +78,7 @@ docs/ARCHITECTURE.md       how the system works
 docs/REPO_MAP.md           this file
 docs/DEPLOY.md             provisioning, live deployment record, restore paths
 docs/DEFERRED_TOOLING.md   worker-image tooling queued for when QC resumes
+docs/NATIVE_SENDER_PLAN.md native sender for large-file verification (idea only)
 docs/COMMERCIAL_DELIVERY_PLAN.md  identity, metered egress, download credits (not built)
 docs/US_BROADCAST_BASELINE.md  the versioned house broadcast baseline
 docs/QC_CALIBRATION.md     corpus intake gate

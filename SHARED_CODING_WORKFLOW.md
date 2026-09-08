@@ -105,6 +105,7 @@ handoff:
 | `scripts/ai-authority-proof.sh` | pure dual-key READY/HOLD/REJECT reducer: immutable deterministic gate, evidence/confidence/corroboration rules, shadow/hold/enforce modes |
 | `scripts/ai-interpretive-run-proof.sh` | explicit AI planner, parallel specialists, synthesis, B2 evidence hashes, sanitizer, fallback, and dual-key isolation (mock, zero spend) |
 | `scripts/ai-interpretive-loop-proof.sh` | full local gateway-worker-MinIO explicit run with four metered mock-GMI stages and SDK-verified manifest |
+| `scripts/resumable-download-proof.sh` | resumable downloads: a resumed writable keeps existing data, skipped + remaining ranges tile the file exactly at every interruption point, and an interrupted download finished on a second attempt is byte-identical |
 | `scripts/parallel-download-proof.sh` | parallel ranged download: the range plan tiles [0,total) exactly with inclusive ends across eight sizes, and six concurrent connections through the mediated redirect reassemble out of order into a byte-identical file |
 | `scripts/mediated-download-proof.sh` | gateway-mediated download: no storage URL in the payload, byte-identical delivery through the redirect, Range survives it, transfer-scoped tickets, immediate revocation, egress metered once per download rather than once per range |
 | `scripts/transfer-mode-proof.sh` | sender contract: transfer-first mode, additive multi-file queue, drag/drop, optional recipient passwords, honest concurrent progress, copyable share URLs |

@@ -45,6 +45,7 @@ its home, and link rather than duplicate.
 | `docs/DEPLOY.md` | what is deployed, restore paths | touching production |
 | `docs/DEFERRED_TOOLING.md` | tooling queued for the worker image | rebuilding that image |
 | `docs/COMMERCIAL_DELIVERY_PLAN.md` | identity, metered egress, download credits — designed, not built | touching auth, downloads, expiry or billing |
+| `docs/NATIVE_SENDER_PLAN.md` | native sender to lift the 16 GiB verification ceiling — idea only | large-file BLAKE3 verification comes up |
 | `README.md` | front door, proof scripts, capability status | orienting or writing claims |
 | `SETUP.md` | B2 / GMI account setup | a fresh environment |
 | `docs/PROJECT_HISTORY.md` | archived session journal | tracing how something came to be |

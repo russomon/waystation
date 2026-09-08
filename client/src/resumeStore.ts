@@ -7,23 +7,12 @@ export interface ResumeState {
   done: Record<number, string>; // partNumber -> etag
 }
 
-const DB = "waystation", STORE = "uploads";
-function db(): Promise<IDBDatabase> {
-  return new Promise((res, rej) => {
-    const r = indexedDB.open(DB, 1);
-    r.onupgradeneeded = () => r.result.createObjectStore(STORE, { keyPath: "fp" });
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
-  });
-}
-async function store(mode: IDBTransactionMode) {
-  return (await db()).transaction(STORE, mode).objectStore(STORE);
-}
+import { UPLOADS, get as idbGet, store as idbStore } from "./idb.js";
 
-export async function getResume(fp: string): Promise<ResumeState | null> {
-  const s = await store("readonly");
-  return new Promise((res) => { const r = s.get(fp); r.onsuccess = () => res(r.result ?? null); r.onerror = () => res(null); });
-}
+const store = (mode: IDBTransactionMode) => idbStore(UPLOADS, mode);
+
+export const getResume = (fp: string): Promise<ResumeState | null> =>
+  idbGet<ResumeState>(UPLOADS, fp);
 export async function saveResume(st: ResumeState): Promise<void> {
   (await store("readwrite")).put(st);
 }

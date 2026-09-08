@@ -6,6 +6,10 @@ import { Eye, EyeOff, LockKeyhole, createElement as createIcon } from "lucide";
 import { GatewayError, gwGet, gwPost } from "./config.js";
 import { downloadVerified } from "./downloader.js";
 import { planRanges } from "./ranges.js";
+import {
+  clearDownloadResume, getDownloadResume, markRangeDone, saveDownloadResume, usable,
+  type DownloadResume,
+} from "./downloadResume.js";
 import { pool } from "./uploader.js";
 
 interface Asset { key: string; url: string; mime: string; size: number; }
@@ -112,6 +116,7 @@ async function saveToDisk(
   total: number,
   writable: any,
   onProgress: (bytesSoFar: number) => void,
+  resume?: { skip: Set<number>; onRangeDone: (start: number) => Promise<void> },
 ): Promise<void> {
   // A FileSystemWritableFileStream is a WritableStream: overlapping write()
   // calls fight over the same locked writer. Serialize them through a promise
@@ -123,22 +128,29 @@ async function saveToDisk(
     chain = chain.then(() => writable.write({ type: "write", position, data }));
     return chain;
   };
-  let done = 0;
+
+  const all = planRanges(total);
+  const skip = resume?.skip ?? new Set<number>();
+  const already = all.filter((r) => skip.has(r.start))
+                     .reduce((n, r) => n + (r.end - r.start + 1), 0);
+  let done = already;
+  onProgress(done);
   const count = (n: number) => { done += n; onProgress(done); };
 
-  // Resolve once. Every byte below comes from `src`, never from the mediated
-  // url — see resolveStorageUrl. If resolution fails we still try the url as
-  // given: a deployment that serves storage directly, or a same-origin one,
-  // needs no resolution at all.
-  let src = url;
-  try { src = await resolveStorageUrl(url); } catch { /* fall through to url */ }
-
+  // The single-stream path rewrites from byte zero, so it cannot honour a
+  // partial file — any resume progress is void once it runs.
   const single = async (): Promise<void> => {
     done = 0; onProgress(0);
     const res = await fetch(src);
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     await drain(res.body, 0, write, count);
   };
+
+  // Resolve once. Every byte below comes from `src`, never from the mediated
+  // url — see resolveStorageUrl. If resolution fails we still try the url as
+  // given: a deployment that serves storage directly needs no resolution.
+  let src = url;
+  try { src = await resolveStorageUrl(url); } catch { /* fall through to url */ }
 
   if (total < PARALLEL_MIN_BYTES) return single();
 
@@ -147,15 +159,16 @@ async function saveToDisk(
     await probe.body?.cancel();
     if (probe.status !== 206) return single();
 
-    await pool(planRanges(total), DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
+    const todo = all.filter((r) => !skip.has(r.start));
+    await pool(todo, DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
       const res = await fetch(src, { headers: { Range: `bytes=${start}-${end}` } });
       if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
       await drain(res.body, start, write, count);
+      // Recorded only after the range is fully on disk, so an interrupted range
+      // is retried rather than skipped as complete.
+      await resume?.onRangeDone(start);
     });
   } catch (e) {
-    // Parallel download is an OPTIMISATION. Any failure in it falls back to the
-    // one plain request that has always worked, rather than failing the
-    // download. Slow beats broken.
     console.warn("parallel download failed, falling back to a single stream:", e);
     await single();
   }
@@ -580,14 +593,45 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     const elTime = prog.querySelector(".dltime") as HTMLElement;
     const elPct = prog.querySelector(".dlpct") as HTMLElement;
 
+    // Loaded HERE, not in the click handler, and deliberately. showSaveFilePicker
+    // must be reached with no preceding await or the browser has lost the user
+    // activation and refuses to open it — so the resume record has to be in hand
+    // before the click, not fetched during it.
+    let prior: DownloadResume | null = null;
+    getDownloadResume(t.transferId)
+      .then((r) => {
+        // A size mismatch means these are not the same bytes; the recorded
+        // ranges would be meaningless.
+        prior = r && r.size === t.original.size ? r : null;
+        if (prior) {
+          const got = planRanges(t.original.size)
+            .filter((x) => prior!.done.includes(x.start))
+            .reduce((n, x) => n + (x.end - x.start + 1), 0);
+          dl.textContent = `Resume download — ${fmt(got)} of ${fmt(t.original.size)} already saved`;
+        }
+      })
+      .catch(() => { /* no resume record is the normal case */ });
+
     dl.onclick = async () => {
       let handle: any;
-      try {
-        // Must be called directly from the click — a picker opened after an
-        // await has lost the user activation and the browser refuses it.
-        handle = await (window as any).showSaveFilePicker({ suggestedName: t.original.filename });
-      } catch {
-        return; // user cancelled the dialog — not an error
+      let resuming = false;
+      if (prior && (await usable(prior.handle))) {
+        handle = prior.handle;
+        resuming = true;
+      } else {
+        try {
+          // Must be called directly from the click — a picker opened after an
+          // await has lost the user activation and the browser refuses it. The
+          // await above only runs when resuming, where no picker is needed.
+          handle = await (window as any).showSaveFilePicker({ suggestedName: t.original.filename });
+        } catch {
+          return; // user cancelled the dialog — not an error
+        }
+        await clearDownloadResume(t.transferId).catch(() => {});
+        await saveDownloadResume({
+          transferId: t.transferId, size: t.original.size,
+          filename: t.original.filename, handle, done: [], updatedAt: Date.now(),
+        }).catch(() => {});
       }
       dl.disabled = true;
       dl.textContent = "Downloading…";
@@ -622,23 +666,51 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       };
 
       try {
-        writable = await handle.createWritable();
+        // keepExistingData is REQUIRED when resuming: createWritable() truncates
+        // the file by default, which would silently discard everything already
+        // downloaded and make "resume" a slower way to start over.
+        writable = await handle.createWritable({ keepExistingData: resuming });
         paint(true);
         await saveToDisk(t.original.url, total, writable, (n) => {
           done = n;
           window_.push({ t: performance.now(), b: done });
           paint();
+        }, {
+          skip: new Set(resuming ? prior!.done : []),
+          onRangeDone: (start) => markRangeDone(t.transferId, start).catch(() => {}),
         });
         await writable.close();
+        await clearDownloadResume(t.transferId).catch(() => {});
         paint(true);
         dl.textContent = "saved ✓";
         elTime.textContent = `done in ${hms((performance.now() - started) / 1000)}`;
         elRate.textContent = "";
       } catch (e) {
-        // Abort so a partial file is not left looking complete.
-        try { await writable?.abort(); } catch { /* nothing useful to do */ }
-        dl.textContent = "✗ " + (e as Error).message;
-        elTime.textContent = "download failed — the partial file was discarded";
+        // Previously this aborted, discarding the partial file so it could not
+        // be mistaken for a complete one. Now that ranges are recorded as they
+        // land, that partial file is worth keeping — throwing away 7 GB because
+        // a laptop slept is the worse failure. Close to flush what arrived, keep
+        // the resume record, and say plainly that it is incomplete.
+        const record = await getDownloadResume(t.transferId).catch(() => null);
+        const salvageable = !!record && record.done.length > 0;
+        try {
+          if (salvageable) await writable?.close();
+          else await writable?.abort();
+        } catch { /* the stream may already be errored; nothing useful to do */ }
+        if (salvageable) {
+          const got = planRanges(total)
+            .filter((x) => record!.done.includes(x.start))
+            .reduce((n, x) => n + (x.end - x.start + 1), 0);
+          dl.textContent = `Resume download — ${fmt(got)} of ${fmt(total)} already saved`;
+          elTime.textContent =
+            `stopped at ${((got / total) * 100).toFixed(1)}% — the file is INCOMPLETE; ` +
+            "click to carry on from here";
+        } else {
+          await clearDownloadResume(t.transferId).catch(() => {});
+          dl.textContent = "✗ " + (e as Error).message;
+          elTime.textContent = "download failed — the partial file was discarded";
+        }
+        prior = record && record.done.length ? record : null;
       }
       dl.disabled = false;
     };

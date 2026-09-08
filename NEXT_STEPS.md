@@ -112,6 +112,13 @@ Real engineering, deliberately deferred. Any of these can start whenever.
 
 ## Later
 
+- **Native sender for large-file verification.** BLAKE3 range verification stops
+  at 16 GiB because the outboard is built in browser wasm, not because of any
+  limit in BLAKE3 or storage. `docs/NATIVE_SENDER_PLAN.md` sketches using
+  OrbitXfer as an alternative *sender* so the recipient keeps verification with
+  no install — and weighs the probably-better alternative of generating the
+  outboard server-side. Idea only; not designed in detail.
+
 - **Jury policy 1.1 candidate.** From live pair-policy data: both models caught
   5/5 plants standalone, yet the deployed policy scored 3 reproduced /
   2 contested, because `match_key` requires identical `evidence_ids` — a juror
