@@ -7,7 +7,7 @@ import { GatewayError, gwGet, gwPost } from "./config.js";
 import { downloadVerified } from "./downloader.js";
 import { planRanges } from "./ranges.js";
 import {
-  clearDownloadResume, getDownloadResume, markRangeDone, saveDownloadResume, usable,
+  clearDownloadResume, getDownloadResume, saveDownloadResume, usable,
   type DownloadResume,
 } from "./downloadResume.js";
 import { pool } from "./uploader.js";
@@ -116,7 +116,7 @@ async function saveToDisk(
   total: number,
   writable: any,
   onProgress: (bytesSoFar: number) => void,
-  resume?: { skip: Set<number>; onRangeDone: (start: number) => Promise<void> },
+  resume?: { skip: Set<number>; completed: number[] },
 ): Promise<void> {
   // A FileSystemWritableFileStream is a WritableStream: overlapping write()
   // calls fight over the same locked writer. Serialize them through a promise
@@ -164,9 +164,13 @@ async function saveToDisk(
       const res = await fetch(src, { headers: { Range: `bytes=${start}-${end}` } });
       if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
       await drain(res.body, start, write, count);
-      // Recorded only after the range is fully on disk, so an interrupted range
-      // is retried rather than skipped as complete.
-      await resume?.onRangeDone(start);
+      // Collected in MEMORY only. A range that has drained is in the writable's
+      // swap file, not on disk — FileSystemWritableFileStream commits nothing
+      // until close(). Persisting here would claim durability that does not
+      // exist, and an unclean exit would leave a resume record describing bytes
+      // the file never received. The caller persists this list, and only after
+      // a close() that succeeded.
+      resume?.completed.push(start);
     });
   } catch (e) {
     console.warn("parallel download failed, falling back to a single stream:", e);
@@ -637,6 +641,9 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       dl.textContent = "Downloading…";
       prog.hidden = false;
       let writable: any;
+      // Ranges believed to be on disk. Seeded from the prior record, appended
+      // as ranges drain, and persisted ONLY after a successful close().
+      const committed: number[] = resuming ? [...prior!.done] : [];
       const total = t.original.size;
       const started = performance.now();
       let done = 0;
@@ -675,10 +682,7 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           done = n;
           window_.push({ t: performance.now(), b: done });
           paint();
-        }, {
-          skip: new Set(resuming ? prior!.done : []),
-          onRangeDone: (start) => markRangeDone(t.transferId, start).catch(() => {}),
-        });
+        }, { skip: new Set(committed), completed: committed });
         await writable.close();
         await clearDownloadResume(t.transferId).catch(() => {});
         paint(true);
@@ -691,15 +695,23 @@ export async function renderDelivery(id: string, root: HTMLElement) {
         // land, that partial file is worth keeping — throwing away 7 GB because
         // a laptop slept is the worse failure. Close to flush what arrived, keep
         // the resume record, and say plainly that it is incomplete.
-        const record = await getDownloadResume(t.transferId).catch(() => null);
-        const salvageable = !!record && record.done.length > 0;
+        // CLOSE FIRST, then record. close() is what commits the swap file to
+        // disk; a record written before it would describe bytes that never
+        // arrived, and resume would skip ranges the file does not contain —
+        // producing a correctly-sized file full of holes that opens as garbage.
+        let durable = false;
         try {
-          if (salvageable) await writable?.close();
+          if (committed.length) { await writable?.close(); durable = true; }
           else await writable?.abort();
-        } catch { /* the stream may already be errored; nothing useful to do */ }
+        } catch { durable = false; }   // nothing committed; the record must not claim otherwise
+        const salvageable = durable && committed.length > 0;
         if (salvageable) {
+          await saveDownloadResume({
+            transferId: t.transferId, size: total, filename: t.original.filename,
+            handle, done: committed, updatedAt: Date.now(),
+          }).catch(() => {});
           const got = planRanges(total)
-            .filter((x) => record!.done.includes(x.start))
+            .filter((x) => committed.includes(x.start))
             .reduce((n, x) => n + (x.end - x.start + 1), 0);
           dl.textContent = `Resume download — ${fmt(got)} of ${fmt(total)} already saved`;
           elTime.textContent =
@@ -710,7 +722,7 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           dl.textContent = "✗ " + (e as Error).message;
           elTime.textContent = "download failed — the partial file was discarded";
         }
-        prior = record && record.done.length ? record : null;
+        prior = salvageable ? await getDownloadResume(t.transferId).catch(() => null) : null;
       }
       dl.disabled = false;
     };

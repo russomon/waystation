@@ -21,9 +21,24 @@ trap cleanup EXIT
 # way to start over — with no error to notice.
 grep -q "keepExistingData: resuming" "$WEB/client/src/delivery.ts" \
   || { echo "FAIL - resumed writable does not set keepExistingData"; exit 1; }
-grep -q "onRangeDone(start)" "$WEB/client/src/delivery.ts" \
-  || { echo "FAIL - completed ranges are not recorded as they land"; exit 1; }
-echo "  a resumed writable keeps existing data, and ranges are recorded as they land"
+
+# The resume record must be written ONLY after a successful close(). A
+# FileSystemWritableFileStream writes to a swap file and commits nothing until
+# close, so a record saved mid-download claims durability that does not exist:
+# close the tab and no bytes land, while the record says ranges are complete.
+# Resume then skips them, truncate sets the right size, and the result is a
+# correctly-sized file full of holes that opens as garbage. This shipped once.
+BODY=$(awk '/async function saveToDisk/,/^async function sha256Hex/' "$WEB/client/src/delivery.ts")
+if printf '%s' "$BODY" | grep -qE "saveDownloadResume|markRangeDone|clearDownloadResume"; then
+  echo "FAIL - saveToDisk writes the resume record; it cannot know what committed:"
+  printf '%s' "$BODY" | grep -nE "saveDownloadResume|markRangeDone|clearDownloadResume" | sed 's/^/    /'
+  exit 1
+fi
+printf '%s' "$BODY" | grep -q "resume?.completed.push" \
+  || { echo "FAIL - completed ranges are not collected in memory"; exit 1; }
+grep -q "await writable?.close(); durable = true" "$WEB/client/src/delivery.ts" \
+  || { echo "FAIL - the interrupted path does not close before recording"; exit 1; }
+echo "  ranges are collected in memory; the record is written only after close() commits"
 
 # ── 2. skipped + remaining tile the file exactly, at every interruption point ──
 ( cd "$WEB/client" && npx tsx - <<'TS'

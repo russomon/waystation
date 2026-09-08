@@ -11,6 +11,9 @@
 // run from a user gesture.
 import { DOWNLOADS, get as idbGet, store } from "./idb.js";
 
+/** ⚠ Only ever written AFTER a successful writable.close(). A
+ *  FileSystemWritableFileStream commits nothing until close, so a record saved
+ *  mid-download would describe bytes the file never received. */
 export interface DownloadResume {
   transferId: string;
   /** Identity guard. If the object's size changed it is not the same bytes, so
@@ -29,13 +32,6 @@ export const getDownloadResume = (transferId: string): Promise<DownloadResume | 
 
 export async function saveDownloadResume(r: DownloadResume): Promise<void> {
   (await store(DOWNLOADS, "readwrite")).put({ ...r, updatedAt: Date.now() });
-}
-
-export async function markRangeDone(transferId: string, start: number): Promise<void> {
-  const r = await getDownloadResume(transferId);
-  if (!r || r.done.includes(start)) return;
-  r.done.push(start);
-  await saveDownloadResume(r);
 }
 
 export async function clearDownloadResume(transferId: string): Promise<void> {
