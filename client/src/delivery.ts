@@ -4,7 +4,7 @@
 
 import { Eye, EyeOff, LockKeyhole, createElement as createIcon } from "lucide";
 import { GatewayError, gwGet, gwPost } from "./config.js";
-import { downloadVerified } from "./downloader.js";
+import { verifyRange } from "./blake3.js";
 import { formatBytes } from "./format.js";
 import { planRanges } from "./ranges.js";
 import {
@@ -66,6 +66,38 @@ const DOWNLOAD_CONCURRENCY = 12;
 
 const PARALLEL_MIN_BYTES = 32 << 20;
 
+// Verified ranges must be held whole before they can be checked — bao verifies a
+// complete slice, not a stream — so a verified download buffers one range per
+// worker. Capping the range keeps that bounded: 8 MiB x 12 workers is ~96 MB,
+// where the unbounded plan would hold ~43 MB x 12 on a 16 GiB transfer.
+const VERIFIED_MAX_CHUNK = 8 << 20;
+
+// verify_range needs the WHOLE outboard, so it is held in memory for the run.
+// The outboard is ~6% of the object, so a 4 GB transfer costs ~250 MB and a
+// 16 GiB one would cost ~1 GB — past what is reasonable to hold just to check
+// a download. Above this the file still downloads and the whole-file BLAKE3
+// root is still recorded; only per-range verification is skipped, and the page
+// says so rather than implying the bytes were checked.
+const VERIFY_OUTBOARD_MAX = 256 << 20;
+
+/** Fetch the bao outboard if it is small enough to hold, else null with a
+ *  reason. Never throws: verification is a bonus, and failing to get the
+ *  sidecar must not stop a download that would otherwise work. */
+async function loadOutboard(url: string): Promise<{ outboard: Uint8Array } | { skip: string }> {
+  try {
+    const head = await fetch(url, { headers: { Range: "bytes=0-0" } });
+    const len = Number(head.headers.get("content-range")?.split("/")[1] ?? 0);
+    await head.body?.cancel();
+    if (len > VERIFY_OUTBOARD_MAX)
+      return { skip: `sidecar is ${fmt(len)} — too large to hold in memory` };
+    const res = await fetch(url);
+    if (!res.ok) return { skip: `sidecar unavailable (HTTP ${res.status})` };
+    return { outboard: new Uint8Array(await res.arrayBuffer()) };
+  } catch (e) {
+    return { skip: `sidecar could not be read: ${(e as Error).message}` };
+  }
+}
+
 /** Stream one response body to disk at an advancing position.
  *  `write` is serialized by the caller — see the mutex in saveToDisk. */
 async function drain(
@@ -119,6 +151,7 @@ async function saveToDisk(
   onProgress: (bytesSoFar: number) => void,
   resume?: { skip: Set<number>; completed: number[] },
   signal?: AbortSignal,
+  verify?: { outboard: Uint8Array; root: string },
 ): Promise<void> {
   // A FileSystemWritableFileStream is a WritableStream: overlapping write()
   // calls fight over the same locked writer. Serialize them through a promise
@@ -131,7 +164,7 @@ async function saveToDisk(
     return chain;
   };
 
-  const all = planRanges(total);
+  const all = planRanges(total, verify ? VERIFIED_MAX_CHUNK : undefined);
   const skip = resume?.skip ?? new Set<number>();
   const already = all.filter((r) => skip.has(r.start))
                      .reduce((n, r) => n + (r.end - r.start + 1), 0);
@@ -165,7 +198,18 @@ async function saveToDisk(
     await pool(todo, DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
       const res = await fetch(src, { headers: { Range: `bytes=${start}-${end}` }, signal });
       if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
-      await drain(res.body, start, write, count);
+      if (verify) {
+        // Check BEFORE writing. Verifying after would put unverified bytes on
+        // disk and only then discover they are wrong — which is worse than not
+        // verifying at all, because the file would look checked.
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (!(await verifyRange(verify.outboard, verify.root, start, buf)))
+          throw new Error(`range ${start}-${end} failed BLAKE3 verification`);
+        await write(start, buf);
+        count(buf.byteLength);
+      } else {
+        await drain(res.body, start, write, count);
+      }
       // Collected in MEMORY only. A range that has drained is in the writable's
       // swap file, not on disk — FileSystemWritableFileStream commits nothing
       // until close(). Persisting here would claim durability that does not
@@ -706,18 +750,30 @@ export async function renderDelivery(id: string, root: HTMLElement) {
         // keepExistingData is REQUIRED when resuming: createWritable() truncates
         // the file by default, which would silently discard everything already
         // downloaded and make "resume" a slower way to start over.
+        // Per-range verification when the sidecar exists and is small enough.
+        let verify: { outboard: Uint8Array; root: string } | undefined;
+        let verifyNote = "";
+        if (t.outboardUrl && t.blake3Root) {
+          elTime.textContent = "fetching verification data…";
+          const ob = await loadOutboard(t.outboardUrl);
+          if ("outboard" in ob) verify = { outboard: ob.outboard, root: t.blake3Root };
+          else verifyNote = ob.skip;
+        }
         writable = await handle.createWritable({ keepExistingData: resuming });
         paint(true);
         await saveToDisk(t.original.url, total, writable, (n) => {
           done = n;
           window_.push({ t: performance.now(), b: done });
           paint();
-        }, { skip: new Set(committed), completed: committed }, controller.signal);
+        }, { skip: new Set(committed), completed: committed }, controller.signal, verify);
         await writable.close();
         await clearDownloadResume(t.transferId).catch(() => {});
         paint(true);
         dl.textContent = "saved ✓";
-        elTime.textContent = `done in ${hms((performance.now() - started) / 1000)}`;
+        const how = verify
+          ? " · every range verified against BLAKE3"
+          : verifyNote ? ` · not range-verified (${verifyNote})` : "";
+        elTime.textContent = `done in ${hms((performance.now() - started) / 1000)}${how}`;
         elRate.textContent = "";
       } catch (e) {
         // Previously this aborted, discarding the partial file so it could not
@@ -772,30 +828,17 @@ export async function renderDelivery(id: string, root: HTMLElement) {
     card.append(el(`<a class="btn" href="${t.original.url}" download="${t.original.filename}">Download original</a>`));
   }
 
-  // Verified download — pulls the object in ranges and checks each against the
-  // bao outboard before accepting it. Only offered when the outboard exists.
-  if (t.outboardUrl && t.blake3Root) {
-    const vbtn = el(`<button class="btn ghost">Download (verified)</button>`) as HTMLButtonElement;
-    vbtn.onclick = async () => {
-      vbtn.disabled = true;
-      try {
-        const { blob, verified } = await downloadVerified(t.transferId, (d, tot) => {
-          vbtn.textContent = `verifying ${Math.floor((d / tot) * 100)}%`;
-        });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = t.original.filename;
-        a.click();
-        URL.revokeObjectURL(a.href);
-        vbtn.textContent = verified ? "downloaded ✓ (verified)" : "downloaded (unverified)";
-      } catch (e) {
-        vbtn.textContent = "✗ " + (e as Error).message;
-      }
-      vbtn.disabled = false;
-    };
-    card.append(vbtn);
-  } else if (t.blake3Root) {
-    card.append(el(`<p class="meta">Large-file mode: this transfer has a whole-file BLAKE3 root, but the range-verification sidecar was not generated.</p>`));
+  // The separate "Download (verified)" button is GONE. It buffered the WHOLE
+  // file in memory before saving — fatal past a gigabyte or two, on exactly the
+  // transfers where verification matters most — and it fetched the mediated url
+  // with Range headers, which cannot work through a cross-origin redirect, so it
+  // had been failing with "Failed to fetch" since downloads became mediated.
+  //
+  // Verification now happens inside the one download above: each range is
+  // checked against the bao outboard BEFORE any of it reaches disk. One button,
+  // streamed, resumable, and verified whenever the sidecar exists.
+  if (!t.outboardUrl && t.blake3Root) {
+    card.append(el(`<p class="meta">Large-file mode: this transfer has a whole-file BLAKE3 root, but the range-verification sidecar was not generated, so individual ranges cannot be verified.</p>`));
   }
 
   if (manifest) {

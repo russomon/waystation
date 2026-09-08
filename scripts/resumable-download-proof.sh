@@ -67,6 +67,45 @@ grep -q "ran out of space on the destination disk" "$WEB/client/src/delivery.ts"
   || { echo "FAIL - out-of-space is not surfaced to the recipient"; exit 1; }
 echo "  a full destination disk is named as the cause, with the partial file kept"
 
+# ── one download path, and it verifies in place ──────────────────────────────
+# There used to be a second "Download (verified)" button. It buffered the WHOLE
+# file in memory before saving — fatal past a gigabyte or two, on exactly the
+# transfers where verification matters most — and it fetched the mediated url
+# with Range headers, which cannot work through a cross-origin redirect, so it
+# had been failing with "Failed to fetch" since downloads became mediated.
+[ -f "$WEB/client/src/downloader.ts" ] \
+  && { echo "FAIL - downloader.ts is back; the whole-file Blob path must not return"; exit 1; }
+# Scoped to the MASTER: createObjectURL is fine for a small JSON blob (the QC
+# handoff packets use it) and fatal for a multi-gigabyte file, so check the
+# pattern that blobs the master rather than the function name.
+grep -q "a.download = t.original.filename" "$WEB/client/src/delivery.ts" \
+  && { echo "FAIL - the master is being blobbed and anchored; that buffers the whole file"; exit 1; }
+printf '%s' "$BODY" | grep -q "createObjectURL" \
+  && { echo "FAIL - saveToDisk builds an object URL instead of streaming to disk"; exit 1; }
+printf '%s' "$BODY" | grep -q "verifyRange(verify.outboard" \
+  || { echo "FAIL - the download does not verify ranges against the outboard"; exit 1; }
+
+# Verify BEFORE writing, or unverified bytes reach disk and the file merely
+# looks checked. The verifyRange call must precede the write in the same block.
+V_AT=$(printf '%s' "$BODY" | grep -n "verifyRange(verify.outboard" | head -1 | cut -d: -f1 || true)
+W_AT=$(printf '%s' "$BODY" | grep -n "await write(start, buf)" | head -1 | cut -d: -f1 || true)
+{ [ -n "$V_AT" ] && [ -n "$W_AT" ] && [ "$V_AT" -lt "$W_AT" ]; } \
+  || { echo "FAIL - bytes are written before they are verified"; exit 1; }
+echo "  one download path; ranges are verified before any byte reaches disk"
+
+# bao verifies on 1024-byte chunk boundaries. planRanges divides by 400, which
+# is NOT a multiple of 1024 — a 7.52 GB file gives 18,800,000 — so without
+# rounding, verification fails on exactly the large files it matters most for.
+( cd "$WEB/client" && npx tsx - <<'TS'
+import { planRanges } from "./src/ranges.js";
+const bad = [7_520_000_000, 28_048_912_110, 1_000_000_007].flatMap((t) =>
+  planRanges(t).filter((r) => r.start % 1024 !== 0).slice(0, 1).map((r) => `${t}: start ${r.start}`));
+if (bad.length) { console.log("  FAIL misaligned: " + bad.join(", ")); process.exit(1); }
+console.log("  every range starts on a 1024-byte BLAKE3 chunk boundary");
+TS
+) || { echo "FAIL - range alignment"; exit 1; }
+
+
 # ── 2. skipped + remaining tile the file exactly, at every interruption point ──
 ( cd "$WEB/client" && npx tsx - <<'TS'
 import { planRanges } from "./src/ranges.js";
