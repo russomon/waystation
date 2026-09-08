@@ -31,6 +31,7 @@ import {
 } from "./db.js";
 import {
   ACCEPT_UPLOADS,
+  ACTIVE_UPLOAD_WINDOW_MS,
   applyServicePolicy,
   MAX_ACTIVE_UPLOADS_PER_SESSION,
   MAX_DAILY_JOBS,
@@ -119,7 +120,8 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
       503,
     );
   const sid = sessionIdOf(c) ?? "anonymous";
-  if (activeUploadCount(sid) >= MAX_ACTIVE_UPLOADS_PER_SESSION)
+  const activeSince = new Date(Date.now() - ACTIVE_UPLOAD_WINDOW_MS).toISOString();
+  if (activeUploadCount(sid, activeSince) >= MAX_ACTIVE_UPLOADS_PER_SESSION)
     return c.json(
       { error: `At most ${MAX_ACTIVE_UPLOADS_PER_SESSION} uploads may be in flight at once.`, code: "too_many_active" },
       429,

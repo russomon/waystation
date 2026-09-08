@@ -118,6 +118,10 @@ export type VerificationMode = "range" | "root";
  *  down. Existing recipient links keep working. */
 export const ACCEPT_UPLOADS = flag(env.WAYSTATION_ACCEPT_UPLOADS, true);
 export const MAX_ACTIVE_UPLOADS_PER_SESSION = num(env.MAX_ACTIVE_UPLOADS_PER_SESSION, 3);
+/** How long an unfinished upload keeps occupying a slot. Matched to B2's
+ *  one-day lifecycle sweep of unfinished multipart uploads: past that the parts
+ *  are gone, so the row is unresumable and must stop counting. */
+export const ACTIVE_UPLOAD_WINDOW_MS = num(env.ACTIVE_UPLOAD_WINDOW_HOURS, 24) * 3_600_000;
 export const MAX_JOBS_PER_SESSION = num(env.MAX_JOBS_PER_SESSION, 20);
 export const MAX_DAILY_JOBS = num(env.MAX_DAILY_JOBS, 200);
 

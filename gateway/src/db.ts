@@ -230,8 +230,18 @@ const selectUpload = db.prepare(`SELECT * FROM uploads WHERE object_key = ? AND 
 const updateUploadState = db.prepare(
   `UPDATE uploads SET state = ? WHERE object_key = ? AND upload_id = ?`,
 );
+// Bounded by age on purpose. An upload only leaves 'active' by completing, so
+// one that is interrupted — a dropped connection, a closed laptop — stays
+// 'active' for ever and permanently consumes a slot against the per-session
+// ceiling. With that ceiling at 1, a single dropped upload wedges the session
+// and nothing can be sent again.
+//
+// The cutoff is the caller's, and it is B2's: unfinished multipart uploads are
+// swept by a one-day lifecycle rule, so past that window the parts are gone and
+// the row cannot be resumed by anyone. Counting it would reserve a slot for
+// something that no longer exists.
 const countActive = db.prepare(
-  `SELECT COUNT(*) AS n FROM uploads WHERE session_id = ? AND state = 'active'`,
+  `SELECT COUNT(*) AS n FROM uploads WHERE session_id = ? AND state = 'active' AND created_at >= ?`,
 );
 const countSince = db.prepare(
   `SELECT COUNT(*) AS n FROM uploads WHERE session_id = ? AND state = 'complete' AND created_at >= ?`,
@@ -291,8 +301,8 @@ export const setUploadState = (objectKey: string, uploadId: string, state: strin
   updateUploadState.run(state, objectKey, uploadId);
 };
 
-export const activeUploadCount = (sessionId: string): number =>
-  Number((countActive.get(sessionId) as { n: number }).n);
+export const activeUploadCount = (sessionId: string, sinceIso: string): number =>
+  Number((countActive.get(sessionId, sinceIso) as { n: number }).n);
 
 /** Completed uploads for one session since an ISO timestamp. */
 export const completedSince = (sessionId: string, sinceIso: string): number =>

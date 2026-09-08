@@ -297,5 +297,19 @@ need "$(code_of -X POST -H 'content-type: application/json' \
   --data '{"filename":"a.mp4","contentType":"video/mp4","size":1048576}' http://localhost:$GW/api/uploads)" 200 "disabled mode must allow initiate with no session"
 echo "  J: disabled mode leaves the API open for dev and the existing proofs ✓"
 
-[ "$ok" = 1 ] && echo "PASS ✓  access control: session required, ownership bound, validated, CORS exact, dev mode intact" \
+[ "$ok" = 1 ] && # ── an abandoned upload must stop occupying a slot ───────────────────────────
+# An upload only leaves 'active' by completing, so an interrupted one — a
+# dropped connection, a closed laptop — stayed 'active' for ever and consumed a
+# slot permanently. With the production ceiling at 1, a single dropped upload
+# wedged the session and nothing could be sent again. This happened in the
+# field on 2026-09-08 after a Wi-Fi band change mid-upload.
+grep -q "state = 'active' AND created_at >= ?" "$WEB/gateway/src/db.ts" \
+  || { echo "FAIL - active uploads are counted without an age bound; one drop wedges the session"; exit 1; }
+grep -q "activeUploadCount(sid, activeSince)" "$WEB/gateway/src/routes.ts" \
+  || { echo "FAIL - the initiate route does not pass an age cutoff"; exit 1; }
+grep -q "ACTIVE_UPLOAD_WINDOW_MS" "$WEB/gateway/src/limits.ts" \
+  || { echo "FAIL - no configured window for how long an unfinished upload holds a slot"; exit 1; }
+echo "  R2: an unfinished upload stops counting once B2's lifecycle sweep would have removed it ✓"
+
+echo "PASS ✓  access control: session required, ownership bound, validated, CORS exact, dev mode intact" \
              || { echo "FAIL"; exit 1; }
