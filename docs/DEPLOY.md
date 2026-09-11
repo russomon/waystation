@@ -459,7 +459,7 @@ rather than letting the list fall behind what is running.
    is the check that proves the ceiling is holding, so it matters more in
    transfer-only mode, not less
 8. **progress SSE** updates the hosted page
-9. the **recipient link** opens in a second private browser with **no** sender session
+9. the **recipient link** asks for the password — in the sending browser too (the sender session is not a key; only `/progress` exempts it)
 11. **download and verify** the result
 12. restart the gateway with the compose file this deployment actually uses
     (`docker-compose.transfer.yml` in transfer-only) → the transfer
@@ -518,7 +518,7 @@ Deployment mode: **transfer-only** (no worker). Gateway `a9f1588`, client
 | 6 | B2 webhook reaches the gateway | passed |
 | 7 | service policy honoured | no services ran, `pipeline_skipped` |
 | 8 | progress SSE | passed |
-| 9 | recipient link with no sender session | 401 password gate; unknown id → neutral 404 |
+| 9 | recipient link with no sender session | 401 password gate; unknown id → neutral 404. *Since 2026-09-11 the sending browser is gated too — re-check on next rehearsal* |
 | **10** | **QC / passport render** | **N/A — no worker deployed (transfer-only stack)** |
 | 11 | download and verify | passed |
 | 12–13 | restart persistence; meter records | passed |

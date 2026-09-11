@@ -16,6 +16,31 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-11 - The sender is asked for the password too; only the progress stream exempts them
+
+- Context: The 2026-09-01 gate accepted *either* the originating sender
+  session *or* a recipient unlock cookie. A sender opening their own link in
+  the browser that sent it was therefore never asked for the password they
+  had just set, and reported the feature as working "intermittently" — the
+  intermittency being the one-hour session cookie. A sender rehearsing a link
+  before forwarding it could not see what the recipient sees.
+- Decision: `recipientGate` accepts an unlock cookie only. The sender's
+  session is not a key to the delivery page. The exemption survives on
+  exactly one route, `/progress/:id`, via a separate `progressGate`: that
+  stream is the send page's QC view, opened under the sender session with no
+  unlock step, so removing it would leave a protected QC transfer's own
+  sender "waiting for Waystation services" forever.
+- Why it matters: a feature a sender cannot rehearse reads as broken. Keeping
+  the exemption named on the one route that needs it, instead of inherited by
+  four, means the parked QC path keeps precisely its current behaviour and
+  the delivery routes cannot quietly regain the bypass.
+- Rejected: keeping the bypass and adding a "you are viewing as the sender"
+  banner. Smaller, but the sender still could not test the password.
+- Verified: `scripts/recipient-password-proof.sh` asserts a sender session
+  gets 401 on metadata, download signing and the mediated download, and 200
+  on progress; both assertions were mutation-tested. Supersedes the "sender
+  session or unlock cookie" clause of 2026-09-01.
+
 ### 2026-09-07 - Measure throughput over gigabytes; concurrency 12
 
 - Context: Parallel downloads shipped and needed a real number. Two attempts to
@@ -156,6 +181,8 @@ is itself the useful part.
 - Protected transfer metadata, progress, and download-token signing require
   the originating sender session or a transfer-specific signed HttpOnly unlock
   cookie. A missing optional analyzer or QC service is unrelated to access.
+  *(Superseded 2026-09-11: the sender session now opens only the progress
+  stream; the delivery routes take the unlock cookie alone.)*
 - The gateway never stores the plaintext password. Recipient passwords are an
   authorization gate, not client-side encryption: a presigned B2 URL issued
   after unlock remains usable until its existing signature expires.
