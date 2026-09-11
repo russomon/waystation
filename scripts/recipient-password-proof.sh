@@ -103,6 +103,18 @@ code(){ curl -s -o /dev/null -w '%{http_code}' "$@"; }
 [ "$(code -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' --data '{"password":"wrong"}' http://127.0.0.1:$GW/api/transfers/$TID/unlock)" = 401 ]
 echo "  protected metadata, progress, and download signing refuse unauthenticated recipients"
 
+# The sender's own session is not a key to the delivery page. A sender tests
+# the link before forwarding it; being waved past the password they just set
+# looks like the feature is broken and hides what the recipient will see.
+[ "$(code -b "$SENDER" http://127.0.0.1:$GW/api/transfers/$TID)" = 401 ]
+[ "$(code -b "$SENDER" --get --data-urlencode "key=transfers/$TID/protected.bin" http://127.0.0.1:$GW/api/transfers/$TID/download)" = 401 ]
+[ "$(code -b "$SENDER" http://127.0.0.1:$GW/api/transfers/$TID/original)" = 401 ]
+echo "  the sender's own session is asked for the password like any recipient"
+# ...but the progress stream is the send page's QC view, opened under the
+# sender session with no unlock step, so it must still admit the sender.
+{ curl -sN --max-time 1 -b "$SENDER" http://127.0.0.1:$GW/api/progress/$TID 2>/dev/null || true; } | grep -q subscribed
+echo "  the progress stream still admits the originating sender session"
+
 curl -fsS -c "$RECIPIENT" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
   --data '{"password":"x"}' http://127.0.0.1:$GW/api/transfers/$TID/unlock >/dev/null
 [ "$(code -b "$RECIPIENT" http://127.0.0.1:$GW/api/transfers/$TID)" = 200 ]

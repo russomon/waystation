@@ -309,16 +309,35 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
 const belongsToTransfer = (key: string, id: string): boolean =>
   key.startsWith(`transfers/${id}/`) || key.startsWith(`derivatives/${id}/`);
 
+// The password gate. A protected transfer opens only to a browser that has
+// unlocked it — the sender's own session is NOT a key. Senders test their links
+// before forwarding them, and a sender who is waved through sees a page that
+// never asks for the password they just set, then reports the feature broken.
+// Making the sender enter it is the only rehearsal of what the recipient sees.
+//
+// The one place the sender session still counts is the progress stream; see
+// progressGate below.
 const recipientGate = (c: Context, id: string): Response | undefined => {
   const transfer = getTransfer(id);
   if (!transfer?.passwordHash) return undefined;
-  const upload = getUploadByTransferId(id);
-  const senderOwns = !!upload && upload.sessionId === sessionIdOf(c);
-  if (senderOwns || hasRecipientUnlock(c, id)) return undefined;
+  if (hasRecipientUnlock(c, id)) return undefined;
   return c.json(
     { error: "Password required.", code: "recipient_password_required", passwordRequired: true },
     401,
   );
+};
+
+// The progress stream is the SEND page's view of QC, opened under the sender's
+// session the moment the upload completes. The sender sets the password there;
+// nothing ever asks them to enter it, so this route must keep recognising the
+// originating session or a protected QC transfer would show its own sender
+// "waiting for Waystation services" forever. Transfer-only deployments never
+// open the stream, which is exactly why this exemption stays explicit here
+// rather than being inherited by the delivery routes above.
+const progressGate = (c: Context, id: string): Response | undefined => {
+  const upload = getUploadByTransferId(id);
+  if (upload && upload.sessionId === sessionIdOf(c)) return undefined;
+  return recipientGate(c, id);
 };
 
 api.post("/transfers/:id/unlock", enforceOrigin, limiter("recipient-unlock", 10, 60_000), async (c) => {
@@ -386,8 +405,8 @@ api.get("/transfers/:id/original", async (c) => {
   // Either proof of authorization is accepted: a ticket in the query string, or
   // the recipient unlock cookie for a page that already unlocked in this
   // browser. recipientGate() returns a Response only when the transfer is
-  // password-protected AND neither the sender nor an unlocked recipient is
-  // asking, so an unprotected transfer needs no ticket at all.
+  // password-protected AND no unlocked recipient is asking, so an unprotected
+  // transfer needs no ticket at all.
   if (!verifyDownloadTicket(c.req.query("ticket"), id)) {
     const locked = recipientGate(c, id);
     if (locked) return locked;
@@ -578,7 +597,7 @@ api.post("/events/b2", async (c) => {
 // ───────── progress stream (sender + recipient subscribe) ─────────
 api.get("/progress/:transferId", (c) => {
   const id = c.req.param("transferId");
-  const locked = recipientGate(c, id);
+  const locked = progressGate(c, id);
   if (locked) return locked;
   return streamSSE(c, async (stream) => {
     let alive = true;
