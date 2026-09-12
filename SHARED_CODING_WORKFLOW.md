@@ -1,8 +1,11 @@
 # Shared Coding Workflow
 
-Use this routine when moving Waystation between computers, Codex, and Claude
-Code. GitHub is the source of truth; consumer file sync (iCloud, Dropbox,
-Google Drive) is never used for live source.
+Use this routine when moving Waystation between computers, Codex, Claude Code
+and Cursor. GitHub is the source of truth; consumer file sync (iCloud, Dropbox,
+Google Drive) is never used for live source. Platform shortcuts invoke this
+file rather than restating it — in Cursor, `/resume` runs *Start On A
+Computer* and `/handoff` runs *Handoff Before Switching*
+(`.cursor/commands/`).
 
 ## Start On A Computer
 
@@ -162,7 +165,7 @@ left uncommitted on purpose, say which files and why.
 ## Branch Discipline
 
 - **`codex/hosted-waystation-mvp` is the trunk.** It holds the entire history —
-  105 commits back to the first scaffold — and ordinary work happens there. The
+  every commit back to the first scaffold — and ordinary work happens there. The
   `codex/` prefix is only a name from when the work started; it does not mean
   the branch belongs to a particular agent.
 - **`main` is a follower**, fast-forwarded to the trunk after each push. The two

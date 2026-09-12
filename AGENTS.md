@@ -38,7 +38,7 @@ its home, and link rather than duplicate.
 | `AGENTS.md` | durable rules for every agent | always, first |
 | `CURRENT_WORK.md` | current state, the exact next step | always, second |
 | `NEXT_STEPS.md` | the work queue | picking up work |
-| `DECISIONS.md` | 47 dated decisions + rationale | before contradicting a choice |
+| `DECISIONS.md` | dated decisions + rationale, newest first | before contradicting a choice |
 | `SHARED_CODING_WORKFLOW.md` | startup, validation commands, handoff | every session |
 | `docs/ARCHITECTURE.md` | how the system works | the task is unfamiliar |
 | `docs/REPO_MAP.md` | where things live | looking for code |
@@ -49,6 +49,7 @@ its home, and link rather than duplicate.
 | `README.md` | front door, proof scripts, capability status | orienting or writing claims |
 | `SETUP.md` | B2 / GMI account setup | a fresh environment |
 | `docs/PROJECT_HISTORY.md` | archived session journal | tracing how something came to be |
+| `.cursor/commands/` | `/resume` and `/handoff` — thin wrappers that invoke the workflow above; never state | working in Cursor |
 
 `docs/PROJECT_HISTORY.md` is **history, not state**. Parts of it were true only
 on the day they were written. Never resume work from it.

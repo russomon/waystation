@@ -179,7 +179,7 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
 - ✅ **bao outboard — verified, resumable, tamper-checked range download.**
   Upload produces a `.obao` sidecar; download pulls the object in
   chunk-aligned ranges and verifies each against the BLAKE3 root before
-  accepting (`crates/blake3-outboard` + `client/src/downloader.ts`).
+  accepting (`crates/blake3-outboard` + `client/src/delivery.ts`).
   Native cargo tests + the comprehensive `gateway/scripts/e2e.mjs` cover it.
 - ✅ **B2 Object Lock on the manifest** — when `MANIFEST_LOCK_DAYS > 0`, the
   provenance manifest is written WORM (COMPLIANCE retention): immutable,

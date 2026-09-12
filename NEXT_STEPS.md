@@ -71,16 +71,17 @@ it, because several obvious-looking shortcuts are already ruled out there.
 
 ## Now
 
-- ~~**Unify byte formatting on decimal units.**~~ **DONE 2026-09-08.** One
-  shared `client/src/format.ts`, decimal, used by both pages; the sender no
-  longer says GiB while the recipient says GB. Operator-facing surfaces stay
-  binary as specified. Guarded in `transfer-mode-proof.sh` and mutation-tested.
-
+- **Confirm `X-Forwarded-Host` cannot be spoofed through Cloudflare.**
+  `mediatedDownloadUrl` (`gateway/src/routes.ts`) trusts `X-Forwarded-Proto`
+  and `X-Forwarded-Host` to build the mediated download link. cloudflared
+  should overwrite a client-supplied value; verify it with a request carrying
+  a forged header. If it does not, take the public host from configuration
+  and drop the header trust. Untested as of 2026-09-11.
 - **Decide the fate of `codex/hosted-cloud-control`.** It has carried one
   unmerged commit — "Show hosted cloud compute selection" — since 2026-08-04.
   Merge it or delete the branch; a month-old dangling branch is a trap for the
   next agent.
-- **Add a proof-suite runner.** There are 40 `scripts/*-proof.sh` and no way to
+- **Add a proof-suite runner.** There are 43 `scripts/*-proof.sh` and no way to
   run them as a suite, so "the proofs are green" is currently a manual claim.
   A discovery-based runner (`ls scripts/*-proof.sh`, run each, tally
   `PASS ✓` / `FAIL`, honour the self-skip convention) also stops the table in
@@ -94,12 +95,6 @@ Real engineering, deliberately deferred. Any of these can start whenever.
   `docs/DEFERRED_TOOLING.md` — currently OpenCV, with the pin, the derived-layer
   build and the integration point already worked out. Do this while a full-QC
   box is already up; that is the cheap moment.
-- ~~**Parallel ranged downloads.**~~ **DONE 2026-09-07, measured and tuned.**
-  1 connection 23.2 MB/s, 6 → 76.7, 12 → 91.1 (729 Mb/s, near the 800 Mb/s
-  line). `DOWNLOAD_CONCURRENCY` raised to 12; past 12 is untested. Full record
-  in `docs/DEPLOY.md`. **Measure over gigabytes** — sub-1 GB samples measure TCP
-  slow-start, not capacity, and produced two badly wrong readings before this.
-
 - **Decide on synthetic-origin QC.** Full design preserved in
   `docs/SYNTHETIC_ORIGIN_PLAN.md` — deliberately not implemented. The deciding
   factor is whether a corpus can be assembled; the code is the cheaper half.

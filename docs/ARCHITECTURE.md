@@ -78,13 +78,22 @@ credentialed cross-origin request would fail at preflight.
 Vite + TypeScript. `main.ts` is the sender, `delivery.ts` the recipient page.
 
 Uploads run through `uploader.ts` (resumable multipart, concurrency 6) with
-`resumeStore.ts` persisting resume state. Downloads now match: `delivery.ts`
-fetches `planRanges()` chunks over six connections and writes each at its own
-offset into one file handle, because B2 throttles per connection rather than per
-client. Nothing is buffered in either direction. Hashing runs in a Web Worker
-(`hashWorker.ts` / `hashClient.ts`) so BLAKE3 finalization cannot block the main
-thread — a lesson learned the hard way on a 27 GiB master. `downloader.ts`
-handles verified download; `delivery.ts` owns the save-picker streaming path.
+`resumeStore.ts` persisting resume state; the server's `ListParts` is the
+source of truth on resume. Downloads live in `delivery.ts`: it resolves the
+storage URL once through the mediated route, then fetches `planRanges()` chunks
+over **twelve** connections and writes each at its own offset into one
+`FileSystemWritableFileStream`, because B2 throttles per connection rather than
+per client. Resume is Range requests plus bookkeeping in IndexedDB
+(`downloadResume.ts`, shared opener `idb.ts`); the record is written only after
+`close()` commits, since the writable holds nothing durable until then. When
+the transfer carries a bao outboard small enough to hold in memory, each range
+is verified against the BLAKE3 root **before** it is written (`blake3.ts`,
+1024-aligned ranges from `ranges.ts`); otherwise the status line says the file
+was not range-verified. Nothing is buffered beyond the range in flight in either
+direction. Hashing runs in a Web Worker (`hashWorker.ts` / `hashClient.ts`) so
+BLAKE3 finalization cannot block the main thread — a lesson learned the hard
+way on a 27 GiB master. `format.ts` is the one decimal byte formatter for both
+pages.
 
 ### Worker — `pipeline/`
 
@@ -134,7 +143,8 @@ With every service flag off — the current production posture — the gateway
 publishes `pipeline_skipped` and **no job is dispatched at all**.
 
 **Delivery.** The recipient opens `/transfers/:id`, unlocks with a password if
-one was set, and downloads through `GET /transfers/:id/original` — a **mediated**
+one was set — the sender's own session is not a key; only the progress stream
+exempts it — and downloads through `GET /transfers/:id/original` — a **mediated**
 link that never expires on its own. The gateway re-checks revocation and expiry
 on every request, records the egress, then 302s to a freshly minted, short-lived
 presigned URL. The master's storage URL is never disclosed to the recipient, so

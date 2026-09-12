@@ -41,6 +41,63 @@ is itself the useful part.
   on progress; both assertions were mutation-tested. Supersedes the "sender
   session or unlock cookie" clause of 2026-09-01.
 
+### 2026-09-08 - One download button; verification happens before the write, or is honestly absent
+
+- Context: a separate "Download (verified)" button fetched the mediated URL
+  with `Range` (impossible since the redirect) and buffered the whole file in
+  memory; `planRanges` divided by 400, so range starts were never the
+  1024-byte boundaries bao verifies on.
+- Decision: one download path (`saveToDisk` in `client/src/delivery.ts`).
+  When the `.obao` sidecar is ≤ 256 MB it is loaded once and every range is
+  verified against the BLAKE3 root **before** it is written, with ranges
+  capped at 8 MiB in that mode; above that the download proceeds unverified
+  and the status line says so. `planRanges` rounds chunk sizes up to whole
+  1024-byte BLAKE3 chunks. `client/src/downloader.ts` deleted.
+- Why it matters: a button whose label became its error message was the
+  symptom; the alignment bug meant verification would have failed exactly on
+  the large transfers it exists for. Silence about an unverified download is
+  worse than saying it plainly.
+- Verified: guards in `scripts/resumable-download-proof.sh` (no `downloader.ts`,
+  master never blobbed, verify precedes write, 1024 alignment), mutation-tested.
+
+### 2026-09-08 - User-facing byte counts are decimal; operator surfaces stay binary
+
+- Decision: `client/src/format.ts` is the only formatter on both pages —
+  MB/GB as Finder and B2's invoices count them, two decimals below 100. The
+  boot banner, `limits.ts`, `docs/DEPLOY.md`, the 16 MiB part floor and the
+  5 GiB PUT cap remain binary because those are the units the underlying
+  limits are specified in. Never relabel a unit without recomputing the value.
+- Verified: guard in `scripts/transfer-mode-proof.sh`, mutation-tested.
+
+### 2026-09-08 - "Active" uploads age out; the per-session ceiling is 3
+
+- Context: `MAX_ACTIVE_UPLOADS_PER_SESSION=1` counted `active` rows forever,
+  so one Wi-Fi drop left a session unable to upload again until its cookie
+  expired.
+- Decision: `countActive` is bounded by `ACTIVE_UPLOAD_WINDOW_HOURS` (default
+  24, matching B2's one-day sweep of unfinished multipart uploads), and
+  production runs the ceiling at 3. The quotas themselves are re-scoped with
+  billing, not before (`NEXT_STEPS.md` step 7).
+
+### 2026-09-07 - Resume is Range requests plus bookkeeping; the record is written only after close()
+
+- Context: iroh/BLAKE3-style verified streaming was considered for resumable
+  downloads and rejected for the browser path — the outboard limit is a wasm
+  limit, and a native receiver is a separate idea (`docs/NATIVE_SENDER_PLAN.md`).
+- Decision: resume = HTTP Range + a per-transfer record in IndexedDB
+  (`client/src/downloadResume.ts`, shared opener `client/src/idb.ts`). A
+  `FileSystemWritableFileStream` commits nothing until `close()`, so the set of
+  completed ranges is held in memory and persisted **only after a successful
+  close**; `createWritable({ keepExistingData: true })` on resume. Killing the
+  tab starts over. Pause aborts the pool and never falls back to the
+  single-stream path. Both pages have a pause button; a paused batch offers
+  "Resume send" and reattaches through B2 `ListParts`.
+- Why it matters: recording ranges before the close produced a file of the
+  right size full of garbage — a resumed download must never be trusted more
+  than its storage guarantees.
+- Verified: `scripts/resumable-download-proof.sh` (interruption at every
+  range boundary, byte-identical on the second attempt).
+
 ### 2026-09-07 - Measure throughput over gigabytes; concurrency 12
 
 - Context: Parallel downloads shipped and needed a real number. Two attempts to

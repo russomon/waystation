@@ -9,10 +9,11 @@ AGENTS.md                  durable instructions for every coding agent — read 
 CLAUDE.md                  Claude Code specifics only
 CURRENT_WORK.md            current state and the exact next step
 NEXT_STEPS.md              the work queue
-DECISIONS.md               47 dated durable decisions and their rationale
+DECISIONS.md               dated durable decisions and their rationale, newest first
 SHARED_CODING_WORKFLOW.md  session startup, validation commands, handoff
 README.md                  front door: architecture summary, proof scripts, status
 SETUP.md                   B2 / GMI account setup for a fresh environment
+.cursor/commands/          /resume and /handoff — thin wrappers over SHARED_CODING_WORKFLOW.md
 ```
 
 ## Source
@@ -29,13 +30,15 @@ gateway/src/               Hono/Node control plane — 12 modules
   sse.ts  store.ts           progress fan-out
   metering.ts  env.ts        usage ledger · environment loading
 
-client/src/                Vite + TypeScript browser app — 11 modules
+client/src/                Vite + TypeScript browser app — 14 modules
   main.ts                    the sender
-  delivery.ts                the recipient page
-  uploader.ts                resumable multipart, concurrency 6
-  resumeStore.ts             resume state
+  delivery.ts                the recipient page: mediated, parallel, resumable, verified download
+  uploader.ts                resumable multipart, concurrency 6, pool()
+  resumeStore.ts downloadResume.ts idb.ts   resume bookkeeping in IndexedDB
+  ranges.ts                  range plan (1024-aligned, inclusive ends)
   hashWorker.ts hashClient.ts  BLAKE3 off the main thread
-  downloader.ts blake3.ts    verified download
+  blake3.ts                  wasm bindings, verifyRange
+  format.ts                  decimal byte formatting (the only one)
   fileQueue.ts clipboard.ts config.ts
 
 pipeline/                  Python 3.13 FastAPI worker
