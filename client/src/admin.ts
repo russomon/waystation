@@ -126,7 +126,7 @@ export function mountAdmin(root: HTMLDetailsElement): void {
     warn.className = "muted";
     warn.style.margin = ".5rem 0 0";
     warn.textContent = row.custom
-      ? "Tell the client privately. It is not case-sensitive. The page will not show it again, but you chose it, so you know it."
+      ? "Tell the client privately, exactly as written — it is case-sensitive. The page will not show it again, but you chose it, so you know it."
       : "Send it to the client privately. It cannot be shown again; if it is lost, revoke it and add a new one.";
     actions.append(copy, done, status);
     reveal.append(head, code, actions, warn);

@@ -93,31 +93,27 @@ api.post("/session", enforceOrigin, limiter("session", 10, 60_000), globalLimite
  *  anything a caller controls. The failure response never says which kind of
  *  code was tried. */
 function resolveAccessCode(code: string): { ownerId: string; admin: boolean } | undefined {
-  const tryCode = (candidate: string) => {
-    if (verifyAccessCode(candidate, authConfig.codeHash!)) return { ownerId: ADMIN_OWNER, admin: true };
-    for (const row of activeAccessCodes())
-      if (verifyAccessCode(candidate, row.codeHash)) return { ownerId: row.codeId, admin: false };
-    return undefined;
-  };
-  // Admin-chosen codes are stored lower-cased so a code told aloud works
-  // however it is typed; generated codes are upper-case and never match the
-  // second pass, which only runs when the first finds nothing.
-  return tryCode(code) ?? (code !== code.toLowerCase() ? tryCode(code.toLowerCase()) : undefined);
+  // Exact match only. Codes are case-sensitive, chosen ones included — the
+  // admin says "all lower-case" on the call rather than the gateway guessing.
+  if (verifyAccessCode(code, authConfig.codeHash!)) return { ownerId: ADMIN_OWNER, admin: true };
+  for (const row of activeAccessCodes())
+    if (verifyAccessCode(code, row.codeHash)) return { ownerId: row.codeId, admin: false };
+  return undefined;
 }
 
-/** Admin-chosen codes: 8–64 characters after trimming, case-insensitive,
- *  and not already in use by any active code (including the admin's own),
- *  because login takes the first match and a shared code would silently
- *  credit one client's transfers to another. */
+/** Admin-chosen codes: 8–64 characters after trimming, case-sensitive, and
+ *  not already in use by any active code (including the admin's own), because
+ *  login takes the first match and a shared code would silently credit one
+ *  client's transfers to another. Only the admin can reach this, and the
+ *  admin issued every code, so the refusal tells them nothing they do not
+ *  already know. */
 const MIN_CUSTOM_CODE = 8, MAX_CUSTOM_CODE = 64;
 function validateCustomCode(raw: unknown): { code: string } | { error: string; code: string; status: 400 | 409 } {
   if (typeof raw !== "string") return { error: "Code must be text.", code: "bad_code", status: 400 };
-  const code = raw.trim().toLowerCase();
+  const code = raw.trim();
   if (code.length < MIN_CUSTOM_CODE || code.length > MAX_CUSTOM_CODE)
     return { error: `A custom code must be ${MIN_CUSTOM_CODE}–${MAX_CUSTOM_CODE} characters.`, code: "bad_code", status: 400 };
-  // Generated codes are upper-case, so check that spelling too: a chosen code
-  // that is someone's generated code in another case is still theirs.
-  if (resolveAccessCode(code) || resolveAccessCode(code.toUpperCase()))
+  if (resolveAccessCode(code))
     return { error: "That code is already in use — choose another.", code: "code_in_use", status: 409 };
   return { code };
 }
