@@ -62,7 +62,7 @@ Hono on `@hono/node-server`. Entry point `server.ts`. The only stateful service.
 
 **Routes.** Sender: `POST /session`, `/session/logout`, `/uploads`,
 `/uploads/parts`, `/uploads/complete`, `/uploads/outboard-url`,
-`/uploads/sidecar-url`. Admin only: `GET /admin/codes`, `POST /admin/codes`,
+`/uploads/sidecar-url`, `GET /session` (says who is signed in), `POST /session/logout`. Admin only: `GET /admin/codes`, `POST /admin/codes`,
 `POST /admin/codes/:id/revoke`. Recipient: `GET /transfers/:id`,
 `/transfers/:id/original` (the mediated download), `/transfers/:id/download`,
 `POST /transfers/:id/unlock`,

@@ -16,6 +16,27 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-17 - Labels are unique among live codes; the page says who is signed in
+
+- Context: first day in production, the admin issued "RussoFree", then a
+  second "RussoFree" with a chosen code, and revoked the wrong one — two live
+  rows with the same label and the same date were indistinguishable. Separately,
+  a private window opened next to another private window inherited its
+  session (Chrome and Firefox share one private cookie jar per browser) and
+  nothing on the page said which code it was.
+- Decision: `POST /admin/codes` refuses a label already carried by an active
+  code (409 `label_in_use`, case-insensitive); revoked rows keep their label
+  so a name can be reused once retired. The list shows time of day. `GET
+  /session` returns `who` — the code's label, or `admin` — and reads a
+  revoked code as no session. The sender page shows "Signed in as <label>"
+  with a **Sign out** button; there was previously no way to sign out at all.
+- Why it matters: the only person who can see labels is the admin who wrote
+  them, so exposing one to the signed-in browser costs nothing and answers
+  the question the admin actually had.
+- Verified: `scripts/access-codes-proof.sh` (duplicate label refused, retired
+  label reusable, `who` for admin and client, revoked reads as no session;
+  two mutations caught) and a browser run of sign-in identity and sign-out.
+
 ### 2026-09-17 - The admin may choose a code; codes are case-sensitive and login is capped deployment-wide
 
 - Context: a generated `XXXXX-XXXXX-XXXXX-XXXXX` code cannot be told over
