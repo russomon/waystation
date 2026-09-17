@@ -49,6 +49,7 @@ import {
   MAX_ACTIVE_UPLOADS_PER_SESSION,
   MAX_DAILY_JOBS,
   MAX_JOBS_PER_SESSION,
+  QC_MODE,
   SERVICE_KEYS,
   RECIPIENT_LINK_TTL_DAYS,
   validateFilename,
@@ -141,6 +142,8 @@ api.get("/session", (c) => {
     hasSession: !!live,
     admin: !!live && s.admin,
     who: live ? (s.admin ? ADMIN_OWNER : accessCodeLabel(s.ownerId) ?? "") : undefined,
+    // Resolved for THIS viewer: the admin sees QC live even in preview.
+    qc: QC_MODE === "preview" && !(live && s.admin) ? "preview" : "live",
   });
 });
 
@@ -236,6 +239,13 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
     );
 
   const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  // Which tab the sender is on. In preview only the admin may start a QC
+  // upload; refused here, before B2 has a multipart to clean up.
+  const mode = body.mode === undefined ? "transfer" : body.mode;
+  if (mode !== "transfer" && mode !== "qc")
+    return c.json({ error: "mode must be transfer or qc.", code: "bad_request" }, 400);
+  if (mode === "qc" && QC_MODE === "preview" && !sessionOf(c)?.admin)
+    return c.json({ error: "QC uploads aren't open yet — use Transfer.", code: "qc_preview" }, 403);
   const name = validateFilename(body.filename);
   if ("error" in name) return c.json({ error: name.error, code: name.code }, name.status);
   const sized = validateSize(body.size);

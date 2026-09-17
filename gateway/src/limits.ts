@@ -117,6 +117,17 @@ export type VerificationMode = "range" | "root";
 /** Master kill switch: stop new financial exposure without taking the service
  *  down. Existing recipient links keep working. */
 export const ACCEPT_UPLOADS = flag(env.WAYSTATION_ACCEPT_UPLOADS, true);
+/** QC lane visibility. "preview": every sender sees the Transfer + QC tab, but
+ *  only the admin session may start a QC upload — clients get 403 qc_preview
+ *  at initiate, before anything exists on B2. Independent of MAX_QC_BYTES,
+ *  which decides what runs once an upload exists; this decides who may start
+ *  one. Anything but the two values refuses to boot, like WAYSTATION_AUTH_MODE. */
+export const QC_MODE = ((): "live" | "preview" => {
+  const v = (env.WAYSTATION_QC_MODE || "live").trim();
+  if (v !== "live" && v !== "preview")
+    throw new Error(`WAYSTATION_QC_MODE must be "live" or "preview" (got "${v}")`);
+  return v;
+})();
 export const MAX_ACTIVE_UPLOADS_PER_SESSION = num(env.MAX_ACTIVE_UPLOADS_PER_SESSION, 3);
 /** How long an unfinished upload keeps occupying a slot. Matched to B2's
  *  one-day lifecycle sweep of unfinished multipart uploads: past that the parts
@@ -207,7 +218,7 @@ export function applyServicePolicy(options?: Record<string, boolean | string>, s
 }
 
 export const policyBanner = (): string =>
-  `limits: uploads=${ACCEPT_UPLOADS ? "accepting" : "PAUSED"} ` +
+  `limits: uploads=${ACCEPT_UPLOADS ? "accepting" : "PAUSED"} qc=${QC_MODE} ` +
   `max=${(MAX_UPLOAD_BYTES / GiB).toFixed(1)}GiB ` +
   `verifiedRangeMax=${(VERIFIED_RANGE_MAX_BYTES / GiB).toFixed(1)}GiB ` +
   `rootOnly=${ALLOW_ROOT_ONLY_UPLOADS} maxQC=${(MAX_QC_BYTES / GiB).toFixed(1)}GiB ` +

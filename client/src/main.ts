@@ -16,7 +16,7 @@ const gateEl = document.querySelector<HTMLDivElement>("#gate")!;
  *  The recipient view never calls this — a delivery link must open without a
  *  sender session. */
 async function openSender(): Promise<void> {
-  let status: { authRequired?: boolean; hasSession?: boolean; admin?: boolean; who?: string } = {};
+  let status: { authRequired?: boolean; hasSession?: boolean; admin?: boolean; who?: string; qc?: string } = {};
   try {
     status = await gwGet("/session");
   } catch {
@@ -26,15 +26,24 @@ async function openSender(): Promise<void> {
     return;
   }
   if (!status.authRequired || status.hasSession) {
-    revealSender(status.admin === true, status.who);
+    revealSender(status.admin === true, status.who, status.qc);
     return;
   }
   showGate();
 }
 
-function revealSender(admin: boolean, who?: string): void {
+/** Whether this viewer may start a QC upload. Resolved by the gateway per
+ *  session (the admin stays live in preview), so it is re-read after login. */
+let qcPreview = false;
+const setQcPreview = (qc: unknown): void => {
+  qcPreview = qc === "preview";
+  document.dispatchEvent(new Event("qc-mode-changed"));
+};
+
+function revealSender(admin: boolean, who?: string, qc?: string): void {
   gateEl.hidden = true;
   senderEl.hidden = false;
+  setQcPreview(qc);
   const whoami = document.querySelector<HTMLElement>("#whoami")!;
   if (who) {
     document.querySelector<HTMLElement>("#whoLabel")!.textContent = who;
@@ -74,7 +83,7 @@ function showGate(message = ""): void {
       // Which panel to show depends on which code was accepted; ask rather
       // than assume, because the login response deliberately says nothing.
       const after = await gwGet("/session").catch(() => ({}));
-      revealSender(after?.admin === true, after?.who);
+      revealSender(after?.admin === true, after?.who, after?.qc);
     } catch (e) {
       msg.textContent =
         e instanceof GatewayError ? e.message : "Could not reach the waystation.";
@@ -193,7 +202,7 @@ if (tid) {
       options.ai_interpretive, options.thumbnail, options.summarize].some(Boolean);
 
   const refreshSidecars = (): void => {
-    const available = mode === "qc" && queuedFiles.length === 1 && !sending;
+    const available = mode === "qc" && queuedFiles.length === 1 && !sending && !qcPreview;
     capIn.disabled = !available;
     genIn.disabled = !available;
     pickCaps.classList.toggle("disabled", !available);
@@ -252,9 +261,13 @@ if (tid) {
       : resuming
         ? "Resume send"
         : count > 1 ? `Send ${count} files` : "Send file";
-    sendBtn.disabled = !sending && count === 0;
-    fileIn.disabled = sending;
-    pickMaster.classList.toggle("disabled", sending);
+    const previewLocked = mode === "qc" && qcPreview && !sending;
+    if (previewLocked) queueNote.textContent = count
+      ? "QC uploads aren't open yet. Switch to Transfer to send these files."
+      : "QC uploads aren't open yet.";
+    sendBtn.disabled = (!sending && count === 0) || previewLocked;
+    fileIn.disabled = sending || previewLocked;
+    pickMaster.classList.toggle("disabled", sending || previewLocked);
     modeTransfer.disabled = sending;
     modeQc.disabled = sending;
     recipientPassword.disabled = sending;
@@ -289,6 +302,7 @@ if (tid) {
     if (event.dataTransfer?.files.length) addFiles(event.dataTransfer.files);
   });
 
+  const qcPreviewNote = $("#qcPreviewNote");
   const setMode = (next: SenderMode): void => {
     if (sending) return;
     mode = next;
@@ -297,6 +311,14 @@ if (tid) {
     modeQc.setAttribute("aria-selected", String(!transfer));
     senderPanel.setAttribute("aria-labelledby", transfer ? "modeTransfer" : "modeQc");
     qcOptions.hidden = transfer;
+    // Preview: the whole QC panel is on show and every control in it is off.
+    // The gateway refuses a QC initiate from a client anyway; this is the
+    // same rule made visible, so nobody discovers it by trying.
+    const preview = !transfer && qcPreview;
+    qcPreviewNote.hidden = !preview;
+    qcOptions.classList.toggle("preview", preview);
+    for (const el of qcOptions.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>("input, select, textarea, button"))
+      el.disabled = preview;
     senderTag.textContent = transfer
       ? "Send large files securely and share them."
       : "Send mastered media with deterministic and AI-assisted QC.";
@@ -306,6 +328,7 @@ if (tid) {
       : "Select one or more video or audio masters, or drag them here";
     renderQueue();
   };
+  document.addEventListener("qc-mode-changed", () => setMode(mode));
   modeTransfer.onclick = () => setMode("transfer");
   modeQc.onclick = () => setMode("qc");
   for (const tab of [modeTransfer, modeQc]) {
@@ -446,7 +469,7 @@ if (tid) {
       try {
         const { transferId } = await uploadFile(
           file,
-          { captions, genManifest, options, recipientPassword: password },
+          { mode: selectedMode, captions, genManifest, options, recipientPassword: password },
           updateProgress,
           sendAbort.signal,
         );

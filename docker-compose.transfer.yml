@@ -81,6 +81,10 @@ services:
       # PIPELINE_SERVICE_KEY is forced false. A 1-byte file would technically
       # keep QC, which is vacuous — there is no worker on this host anyway.
       MAX_QC_BYTES: "1"
+      # The QC tab stays visible as a showcase, but only the admin session may
+      # start a QC upload; clients are refused at initiate (403 qc_preview).
+      # Flip to "live" together with MAX_QC_BYTES when QC returns.
+      WAYSTATION_QC_MODE: "preview"
 
       WAYSTATION_ACCEPT_UPLOADS: "true"
       MAX_UPLOAD_BYTES: "375809638400"        # 350 GiB

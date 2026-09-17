@@ -29,6 +29,8 @@ export interface ServiceOptions {
   compute: string;      // "local" | "cloud" — where the waystation crunches
 }
 export interface SendExtras {
+  /** Which tab the sender is on. The gateway may refuse "qc" in preview. */
+  mode?: "transfer" | "qc";
   captions?: File | null;
   genManifest?: File | null;  // source Genblaze manifest → prompt-adherence QC
   options?: ServiceOptions;
@@ -57,6 +59,7 @@ export async function uploadFile(
   if (!st) {
     const r = await post("/uploads", {
       filename: file.name, contentType: file.type || "application/octet-stream", size: file.size,
+      mode: extras.mode ?? "transfer",
     });
     st = {
       fp, key: r.key, uploadId: r.uploadId, partSize: r.partSize, partCount: r.partCount,
