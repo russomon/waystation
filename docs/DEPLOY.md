@@ -551,6 +551,12 @@ after migration the live database reports schema 4 with identical counts,
 | 17 | `/admin/*` with no session | 401 on list, create, revoke |
 | 3, 11, 17 (authenticated) | **pending** — require the admin code; to be run by the operator from the portal |
 
+**Follow-up release the same day — source `fa7e167`, OrbitWebsite `713bd44`:**
+admin-chosen, case-sensitive codes and the 60/min deployment-wide login cap.
+Gateway rebuilt in place (no schema change, no re-login); banner showed
+`senderCodes=1` — the operator had already issued a code from the panel.
+Health 200, wrong code 401, `/admin` without a session 401.
+
 
 **Throughput, measured against a real 28 GB object in the production bucket**
 from a wired 10Gbase-T Mac, using the client's own chunk size over

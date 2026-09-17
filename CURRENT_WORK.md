@@ -18,8 +18,8 @@ narrative to `docs/PROJECT_HISTORY.md`.
 |---|---|
 | Live stack | `docker-compose.transfer.yml` — gateway + cloudflared only |
 | Host | Vultr Los Angeles, 1 vCPU / 1 GB / 25 GB, no block volume |
-| Gateway source | `5aa7036` — pulled and rebuilt in place 2026-09-17 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v4 |
-| Portal | OrbitWebsite `b464447`, client pinned to `5aa7036`, at `https://orbitolive.com/waystation/` |
+| Gateway source | `fa7e167` — pulled and rebuilt in place 2026-09-17 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v4 |
+| Portal | OrbitWebsite `713bd44`, client pinned to `fa7e167`, at `https://orbitolive.com/waystation/` |
 | API | `https://api.orbitolive.com` behind an outbound-only Cloudflare Tunnel |
 | QC ceiling | `MAX_QC_BYTES: "1"` — every pipeline service forced off |
 | Upload ceilings | `MAX_ACTIVE_UPLOADS_PER_SESSION=3` (24 h window), jobs/session 10, jobs/day 20 (global) |
