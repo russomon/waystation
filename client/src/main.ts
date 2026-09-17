@@ -265,7 +265,8 @@ if (tid) {
     if (previewLocked) queueNote.textContent = count
       ? "QC uploads aren't open yet. Switch to Transfer to send these files."
       : "QC uploads aren't open yet.";
-    sendBtn.disabled = (!sending && count === 0) || previewLocked;
+    sendBtn.disabled = !sending && count === 0;
+    if (previewLocked) sendBtn.disabled = true; // never while sending: previewLocked requires !sending
     fileIn.disabled = sending || previewLocked;
     pickMaster.classList.toggle("disabled", sending || previewLocked);
     modeTransfer.disabled = sending;
