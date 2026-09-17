@@ -18,10 +18,10 @@ narrative to `docs/PROJECT_HISTORY.md`.
 |---|---|
 | Live stack | `docker-compose.transfer.yml` — gateway + cloudflared only |
 | Host | Vultr Los Angeles, 1 vCPU / 1 GB / 25 GB, no block volume |
-| Gateway source | `127e7a5` — pulled and rebuilt in place 2026-09-17 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v4 |
-| Portal | OrbitWebsite `b48b435`, client pinned to `127e7a5`, at `https://orbitolive.com/waystation/` |
+| Gateway source | `2621608` — pulled and rebuilt in place 2026-09-17 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v4 |
+| Portal | OrbitWebsite `465e305`, client pinned to `2621608`, at `https://orbitolive.com/waystation/` |
 | API | `https://api.orbitolive.com` behind an outbound-only Cloudflare Tunnel |
-| QC ceiling | `MAX_QC_BYTES: "1"` — every pipeline service forced off |
+| QC ceiling | `MAX_QC_BYTES: "1"` — every pipeline service forced off; `WAYSTATION_QC_MODE: "preview"` — clients see the QC tab, only the admin may start a QC upload |
 | Upload ceilings | `MAX_ACTIVE_UPLOADS_PER_SESSION=3` (24 h window), jobs/session 10, jobs/day 20 (global) |
 
 Transfers, recipient links, download passwords, mediated parallel downloads
@@ -38,7 +38,7 @@ not assume a running worker, a scratch disk, or GMI spend.
   Transfer + QC tab stays visible to clients as a greyed-out showcase, a
   client's QC initiate is refused 403 before spend, the admin stays live.
   `scripts/qc-preview-proof.sh`, four mutations caught, browser-verified.
-  **Built and committed, not yet deployed.**
+  **Deployed 2026-09-17.**
 - **2026-09-17** — named sender access codes. The env code is the admin and
   opens a *Manage access codes* panel on the sender page; client codes live in
   `access_codes` (schema v4), are shown once, hashed, and revocable with effect

@@ -564,6 +564,11 @@ Gateway rebuilt in place (no schema change, no re-login); banner showed
 `senderCodes=1` — the operator had already issued a code from the panel.
 Health 200, wrong code 401, `/admin` without a session 401.
 
+**Fourth release the same day — source `2621608`, OrbitWebsite `465e305`:**
+QC preview. Gateway recreated with `WAYSTATION_QC_MODE=preview`; banner
+`qc=preview maxQC=0.0GiB`. `/session` unauthenticated reports `qc:"preview"`.
+Check 18 (client view of the greyed panel) pending from the portal.
+
 **Third release the same day — source `127e7a5`, OrbitWebsite `b48b435`:**
 unique labels among live codes, created time in the list, "Signed in as"
 with Sign out. Gateway rebuilt in place; banner `senderCodes=2`. Health 200,
