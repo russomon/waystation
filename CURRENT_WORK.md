@@ -34,6 +34,11 @@ not assume a running worker, a scratch disk, or GMI spend.
 
 ## Recently completed
 
+- **2026-09-17** — QC preview mode (`WAYSTATION_QC_MODE=preview`): the
+  Transfer + QC tab stays visible to clients as a greyed-out showcase, a
+  client's QC initiate is refused 403 before spend, the admin stays live.
+  `scripts/qc-preview-proof.sh`, four mutations caught, browser-verified.
+  **Built and committed, not yet deployed.**
 - **2026-09-17** — named sender access codes. The env code is the admin and
   opens a *Manage access codes* panel on the sender page; client codes live in
   `access_codes` (schema v4), are shown once, hashed, and revocable with effect
@@ -86,7 +91,7 @@ not assume a running worker, a scratch disk, or GMI spend.
 - `codex/hosted-cloud-control` has carried one unmerged commit since
   2026-08-04 ("Show hosted cloud compute selection"). Decide whether to merge
   or delete it.
-- There is no proof-suite runner. All 44 `scripts/*-proof.sh` are invoked
+- There is no proof-suite runner. All 45 `scripts/*-proof.sh` are invoked
   individually.
 
 ## Blockers

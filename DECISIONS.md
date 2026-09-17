@@ -16,6 +16,31 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-17 - QC preview: the tab is a showcase for clients, live for the admin
+
+- Context: production is transfer-only, yet the Transfer + QC tab was fully
+  usable — a client could pick services and upload, and the gateway silently
+  forced every service off. The user wants clients to *see* the QC lane but
+  not use it, while still walking the flow themselves.
+- Decision: `WAYSTATION_QC_MODE` = `live` (default) | `preview`; anything
+  else refuses to boot. `POST /uploads` takes `mode: transfer|qc`; in preview
+  a non-admin `qc` initiate is 403 `qc_preview` **before anything exists on
+  B2**, beside the other pre-spend checks. `GET /session` returns `qc` as
+  resolved for that viewer (the admin sees `live`), and the page renders the
+  full QC panel disabled with one "in development" line, Send locked, the
+  Transfer tab untouched. Independent of `MAX_QC_BYTES`, which still decides
+  what runs; flip both together when QC returns.
+- Why it matters: the API is authoritative — a page-only lock is a
+  suggestion. Refusing at initiate leaves no multipart to sweep and no meter
+  event. Per-viewer resolution keeps the page free of policy arithmetic.
+- Rejected: hiding the tab (the user wants it seen); a client-only disable
+  (not authoritative); refusing at `/uploads/complete` (bytes already
+  uploaded by then).
+- Verified: `scripts/qc-preview-proof.sh` — invalid mode refuses boot,
+  banner, admin live, client 403 with no row, Transfer and no-mode succeed,
+  bogus mode 400, default live; four mutations caught. Browser run on the
+  local stack as client and admin.
+
 ### 2026-09-17 - Labels are unique among live codes; the page says who is signed in
 
 - Context: first day in production, the admin issued "RussoFree", then a

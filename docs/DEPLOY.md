@@ -494,6 +494,12 @@ rather than letting the list fall behind what is running.
     visible), send a small file, then revoke it from the admin window. The
     private window must be bounced to the access panel on its next action and
     the code must no longer log in. Revoke leaves the row listed as revoked.
+18. **QC preview** (transfer-only deployments set `WAYSTATION_QC_MODE=preview`)
+    — signed in with a client code, the Transfer + QC tab shows the whole
+    panel greyed out with the "in development" note and Send stays disabled
+    with a file queued; the boot banner reads `qc=preview`; a forced
+    `POST /uploads` with `mode:"qc"` from that session is 403 `qc_preview`.
+    The admin session sees the tab live.
 
 ### QC path — only when a worker is deployed
 
@@ -533,6 +539,7 @@ Deployment mode: **transfer-only** (no worker). Gateway `a9f1588`, client
 | 15 | mediated download + live revocation | 302 to storage; revoked link 404s on the next request |
 | 16 | parallel ranged download integrity | file complete and usable |
 | 17 | named access codes | *added 2026-09-17 — not yet rehearsed in production* |
+| 18 | QC preview | *added 2026-09-17 — not yet rehearsed in production* |
 
 **Rehearsal record — 2026-09-17, access-code release (source `5aa7036`,
 OrbitWebsite `b464447`).** Gateway container rebuilt in place; cloudflared
@@ -776,6 +783,16 @@ scratch disk, since loading an image does not run it:
 docker load < waystation-worker-753b834fbac5-2026-08-02.tar.gz
 docker images waystation-worker      # expect id 753b834fbac5
 ```
+
+## WAYSTATION_QC_MODE: who may start a QC upload
+
+`MAX_QC_BYTES` decides what runs once an upload exists; `WAYSTATION_QC_MODE`
+decides who may *start* one from the Transfer + QC tab. `preview` (the
+transfer-only compose file) keeps the tab visible to every sender as a
+showcase but refuses a client's QC initiate with 403 `qc_preview` before any
+multipart exists; the admin session stays live. `live` (default) lets anyone
+start one. Any other value refuses to boot. Flip both together when QC
+returns, and read the result off the banner: `qc=preview` / `qc=live`.
 
 ## ⚠ MAX_QC_BYTES: use 1, never 0
 

@@ -203,6 +203,11 @@ Violating these silently breaks guarantees the project makes publicly.
 - **Waystation reports; it never repairs.** No transformation or remediation in
   the QC path.
 - **The worker is stateless.** Keep it that way.
+- **Policy lives in the gateway, the page only reflects it.** A service the
+  deployment disables is forced off in the stored options; a QC upload the
+  deployment does not accept (`WAYSTATION_QC_MODE=preview`) is refused at
+  initiate. `GET /session` tells each viewer what they may do so the page can
+  grey things out, but the page is never the enforcement.
 - **The gateway never touches file bytes.**
 - **Every capability claim needs a passing proof script.** See
   `SHARED_CODING_WORKFLOW.md`.

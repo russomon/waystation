@@ -87,7 +87,7 @@ it, because several obvious-looking shortcuts are already ruled out there.
   unmerged commit — "Show hosted cloud compute selection" — since 2026-08-04.
   Merge it or delete the branch; a month-old dangling branch is a trap for the
   next agent.
-- **Add a proof-suite runner.** There are 44 `scripts/*-proof.sh` and no way to
+- **Add a proof-suite runner.** There are 45 `scripts/*-proof.sh` and no way to
   run them as a suite, so "the proofs are green" is currently a manual claim.
   A discovery-based runner (`ls scripts/*-proof.sh`, run each, tally
   `PASS ✓` / `FAIL`, honour the self-skip convention) also stops the table in
@@ -97,6 +97,9 @@ it, because several obvious-looking shortcuts are already ruled out there.
 
 Real engineering, deliberately deferred. Any of these can start whenever.
 
+- **When QC returns, flip `WAYSTATION_QC_MODE` to `live` together with
+  `MAX_QC_BYTES`** (`docker-compose.transfer.yml`); the tab is a preview until
+  then. See `docs/DEPLOY.md` → *WAYSTATION_QC_MODE*.
 - **Deterministic tooling for the worker image.** Register in
   `docs/DEFERRED_TOOLING.md` — currently OpenCV, with the pin, the derived-layer
   build and the integration point already worked out. Do this while a full-QC
