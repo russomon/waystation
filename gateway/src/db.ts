@@ -16,7 +16,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // :memory: is the default so dev and the proof suite stay clean and isolated.
 // Production must set a real path on a persistent volume — and fails closed
@@ -103,6 +103,28 @@ function migrate(): void {
     if (!cols("transfers").includes("password_hash"))
       db.exec(`ALTER TABLE transfers ADD COLUMN password_hash TEXT`);
   }
+  if (current < 4) {
+    // Named sender access codes, administered from the portal, and the durable
+    // owner key on every transfer that docs/COMMERCIAL_DELIVERY_PLAN.md says
+    // must not be deferred. owner_id is the code_id that sent it, "admin" for
+    // the environment code, and NULL for rows that predate identity.
+    const cols = (table: string) =>
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS access_codes (
+        code_id      TEXT PRIMARY KEY,
+        label        TEXT NOT NULL,
+        code_hash    TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        revoked_at   TEXT,
+        last_used_at TEXT
+      );
+    `);
+    if (!cols("uploads").includes("owner_id"))
+      db.exec(`ALTER TABLE uploads ADD COLUMN owner_id TEXT`);
+    if (!cols("transfers").includes("owner_id"))
+      db.exec(`ALTER TABLE transfers ADD COLUMN owner_id TEXT`);
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 migrate();
@@ -120,11 +142,12 @@ export interface TransferRow {
   expiresAt?: number;
   revoked?: boolean;
   passwordHash?: string;
+  ownerId?: string;
 }
 
 const insertTransfer = db.prepare(`
-  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at, password_hash)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at, password_hash, owner_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(transfer_id) DO UPDATE SET
     object_key  = excluded.object_key,
     blake3_root = COALESCE(excluded.blake3_root, transfers.blake3_root),
@@ -132,7 +155,8 @@ const insertTransfer = db.prepare(`
     -- Only overwrite options when the caller actually supplied them, so a
     -- later partial write cannot erase the sender's original selections.
     options_json = COALESCE(excluded.options_json, transfers.options_json),
-    password_hash = COALESCE(excluded.password_hash, transfers.password_hash)
+    password_hash = COALESCE(excluded.password_hash, transfers.password_hash),
+    owner_id      = COALESCE(excluded.owner_id, transfers.owner_id)
 `);
 const selectTransfer = db.prepare(`SELECT * FROM transfers WHERE transfer_id = ?`);
 
@@ -146,6 +170,7 @@ export function saveTransfer(transferId: string, meta: TransferRow): void {
     new Date(meta.createdAt || Date.now()).toISOString(),
     meta.expiresAt ? new Date(meta.expiresAt).toISOString() : null,
     meta.passwordHash ?? null,
+    meta.ownerId ?? null,
   );
 }
 
@@ -197,6 +222,7 @@ export function getTransfer(transferId: string): TransferRow | undefined {
     expiresAt: row.expires_at ? Date.parse(row.expires_at) : undefined,
     revoked: !!row.revoked,
     passwordHash: row.password_hash ?? undefined,
+    ownerId: row.owner_id ?? undefined,
   };
 }
 
@@ -211,6 +237,7 @@ export interface UploadRow {
   uploadId: string;
   transferId: string;
   sessionId: string | null;
+  ownerId?: string | null;
   filename?: string;
   contentType?: string;
   declaredSize?: number;
@@ -222,9 +249,9 @@ export interface UploadRow {
 }
 
 const insertUpload = db.prepare(`
-  INSERT INTO uploads (object_key, upload_id, transfer_id, session_id, filename,
+  INSERT INTO uploads (object_key, upload_id, transfer_id, session_id, owner_id, filename,
                        content_type, declared_size, part_size, part_count, verification_mode, state, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
 `);
 const selectUpload = db.prepare(`SELECT * FROM uploads WHERE object_key = ? AND upload_id = ?`);
 const updateUploadState = db.prepare(
@@ -252,7 +279,7 @@ const countAllSince = db.prepare(
 
 export function createUpload(u: Omit<UploadRow, "state" | "createdAt">): void {
   insertUpload.run(
-    u.objectKey, u.uploadId, u.transferId, u.sessionId,
+    u.objectKey, u.uploadId, u.transferId, u.sessionId, u.ownerId ?? null,
     u.filename ?? null, u.contentType ?? null,
     u.declaredSize ?? null, u.partSize ?? null, u.partCount ?? null,
     u.verificationMode,
@@ -288,7 +315,8 @@ export function getUpload(objectKey: string, uploadId: string): UploadRow | unde
 function rowToUpload(r: any): UploadRow {
   return {
     objectKey: r.object_key, uploadId: r.upload_id, transferId: r.transfer_id,
-    sessionId: r.session_id, filename: r.filename ?? undefined,
+    sessionId: r.session_id, ownerId: r.owner_id ?? undefined,
+    filename: r.filename ?? undefined,
     contentType: r.content_type ?? undefined,
     declaredSize: r.declared_size ?? undefined,
     partSize: r.part_size ?? undefined, partCount: r.part_count ?? undefined,
@@ -311,6 +339,79 @@ export const completedSince = (sessionId: string, sinceIso: string): number =>
 /** Completed uploads across all sessions since an ISO timestamp (daily cap). */
 export const completedSinceAll = (sinceIso: string): number =>
   Number((countAllSince.get(sinceIso) as { n: number }).n);
+
+// ── access codes (named sender identities) ──
+//
+// The plaintext code exists exactly once: in the create response, on the
+// admin's screen. Only its scrypt hash is stored. The list query deliberately
+// never selects code_hash, so no route can leak it by spreading a row.
+
+export interface AccessCodeRow {
+  codeId: string;
+  label: string;
+  createdAt: string;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+  transfers: number;
+}
+
+const insertAccessCode = db.prepare(`
+  INSERT INTO access_codes (code_id, label, code_hash, created_at) VALUES (?, ?, ?, ?)
+`);
+const selectActiveCodes = db.prepare(
+  `SELECT code_id, code_hash FROM access_codes WHERE revoked_at IS NULL`,
+);
+const selectCodeStatus = db.prepare(
+  `SELECT revoked_at FROM access_codes WHERE code_id = ?`,
+);
+const selectCodeList = db.prepare(`
+  SELECT a.code_id, a.label, a.created_at, a.revoked_at, a.last_used_at,
+         (SELECT COUNT(*) FROM transfers t WHERE t.owner_id = a.code_id) AS transfers
+  FROM access_codes a ORDER BY a.created_at DESC
+`);
+const updateCodeRevoked = db.prepare(
+  `UPDATE access_codes SET revoked_at = ? WHERE code_id = ? AND revoked_at IS NULL`,
+);
+const updateCodeUsed = db.prepare(`UPDATE access_codes SET last_used_at = ? WHERE code_id = ?`);
+const countActiveCodes = db.prepare(`SELECT COUNT(*) AS n FROM access_codes WHERE revoked_at IS NULL`);
+
+export function createAccessCode(codeId: string, label: string, codeHash: string): void {
+  insertAccessCode.run(codeId, label, codeHash, new Date().toISOString());
+}
+
+/** id + hash pairs for login. Bounded by the admin, not by users. */
+export const activeAccessCodes = (): { codeId: string; codeHash: string }[] =>
+  (selectActiveCodes.all() as any[]).map((r) => ({ codeId: r.code_id, codeHash: r.code_hash }));
+
+/** true only for a code that exists AND is not revoked — the per-request
+ *  check that makes revocation take effect on the next call. */
+export function accessCodeActive(codeId: string): boolean {
+  const r = selectCodeStatus.get(codeId) as { revoked_at: string | null } | undefined;
+  return !!r && r.revoked_at === null;
+}
+
+export const listAccessCodes = (): AccessCodeRow[] =>
+  (selectCodeList.all() as any[]).map((r) => ({
+    codeId: r.code_id, label: r.label, createdAt: r.created_at,
+    revokedAt: r.revoked_at ?? null, lastUsedAt: r.last_used_at ?? null,
+    transfers: Number(r.transfers),
+  }));
+
+/** Idempotent: a second revoke leaves the original timestamp. Returns the
+ *  timestamp in force, or undefined for an unknown id. */
+export function revokeAccessCode(codeId: string): string | undefined {
+  const now = new Date().toISOString();
+  updateCodeRevoked.run(now, codeId);
+  const r = selectCodeStatus.get(codeId) as { revoked_at: string | null } | undefined;
+  return r?.revoked_at ?? undefined;
+}
+
+export const touchAccessCode = (codeId: string): void => {
+  updateCodeUsed.run(new Date().toISOString(), codeId);
+};
+
+export const activeAccessCodeCount = (): number =>
+  Number((countActiveCodes.get() as { n: number }).n);
 
 // ── meter events (idempotent) ──
 

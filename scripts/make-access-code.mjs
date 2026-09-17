@@ -11,16 +11,9 @@
 // Rotation (see the MVP runbook): generate a new pair, update the VPS secret,
 // restart the gateway, reissue instructions, retire the old code.
 import { randomBytes } from "node:crypto";
-import { hashAccessCode } from "../gateway/src/auth.ts";
+import { generateAccessCode, hashAccessCode } from "../gateway/src/auth.ts";
 
-// ~103 bits of entropy in an unambiguous alphabet (no O/0/I/l), grouped for
-// dictation over a call without transcription errors.
-const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-const pick = (n) =>
-  Array.from(randomBytes(n))
-    .map((b) => ALPHABET[b % ALPHABET.length])
-    .join("");
-const code = [pick(5), pick(5), pick(5), pick(5)].join("-");
+const code = generateAccessCode();
 
 console.log("\n  access code (give privately, store in a password manager):\n");
 console.log(`    ${code}\n`);

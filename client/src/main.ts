@@ -5,6 +5,7 @@ import { appendUniqueFiles, fileIdentity } from "./fileQueue.js";
 import { formatBytes } from "./format.js";
 import { uploadFile, type Progress, type ServiceOptions } from "./uploader.js";
 import { renderDelivery } from "./delivery.js";
+import { mountAdmin } from "./admin.js";
 
 const tid = new URLSearchParams(location.search).get("t");
 const deliveryEl = document.querySelector<HTMLDivElement>("#delivery")!;
@@ -15,7 +16,7 @@ const gateEl = document.querySelector<HTMLDivElement>("#gate")!;
  *  The recipient view never calls this — a delivery link must open without a
  *  sender session. */
 async function openSender(): Promise<void> {
-  let status: { authRequired?: boolean; hasSession?: boolean } = {};
+  let status: { authRequired?: boolean; hasSession?: boolean; admin?: boolean } = {};
   try {
     status = await gwGet("/session");
   } catch {
@@ -25,14 +26,28 @@ async function openSender(): Promise<void> {
     return;
   }
   if (!status.authRequired || status.hasSession) {
-    senderEl.hidden = false;
+    revealSender(status.admin === true);
     return;
   }
+  showGate();
+}
 
+function revealSender(admin: boolean): void {
+  gateEl.hidden = true;
+  senderEl.hidden = false;
+  if (admin) mountAdmin(document.querySelector<HTMLDetailsElement>("#admin")!);
+}
+
+/** The access panel. Also the landing place when a session is revoked
+ *  mid-use, so it binds its own handlers every time it is shown. */
+function showGate(message = ""): void {
+  senderEl.hidden = true;
   gateEl.hidden = false;
   const input = document.querySelector<HTMLInputElement>("#accessCode")!;
   const go = document.querySelector<HTMLButtonElement>("#gateGo")!;
   const msg = document.querySelector<HTMLElement>("#gateMsg")!;
+  msg.textContent = message;
+  go.disabled = false;
   const submit = async () => {
     const code = input.value.trim();
     if (!code) { msg.textContent = "Enter the access code from your invitation."; return; }
@@ -43,8 +58,10 @@ async function openSender(): Promise<void> {
       // The code itself is never retained — the gateway set an HttpOnly cookie
       // this page cannot read, which is the whole point.
       input.value = "";
-      gateEl.hidden = true;
-      senderEl.hidden = false;
+      // Which panel to show depends on which code was accepted; ask rather
+      // than assume, because the login response deliberately says nothing.
+      const after = await gwGet("/session").catch(() => ({}));
+      revealSender(after?.admin === true);
     } catch (e) {
       msg.textContent =
         e instanceof GatewayError ? e.message : "Could not reach the waystation.";
@@ -464,6 +481,13 @@ if (tid) {
         failed.push(file);
         status.classList.add("bad");
         status.textContent = "Error · " + (err as Error).message;
+        if (err instanceof GatewayError && err.code === "session_revoked") {
+          // Nothing after this file can succeed either; keep it all queued
+          // and send the user back to the access panel.
+          failed.push(...files.slice(index + 1));
+          showGate("This access code has been revoked.");
+          break;
+        }
       }
     }
 

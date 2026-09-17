@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { allowedOrigins, authBanner, authEnabled } from "./auth.js";
+import { activeAccessCodeCount } from "./db.js";
 import { dbPathLabel } from "./db.js";
 import { policyBanner } from "./limits.js";
 import { api } from "./routes.js";
@@ -47,7 +48,7 @@ const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, () => {
   // Configuration disclosure only — never a code, hash, token, or secret.
   console.log(`gateway listening on :${port}`);
-  console.log(`  ${authBanner()}`);
+  console.log(`  ${authBanner()} senderCodes=${activeAccessCodeCount()}`);
   console.log(`  origins: ${allowedOrigins.join(", ")}`);
   console.log(`  state: ${dbPathLabel}`);
   console.log(`  ${policyBanner()}`);

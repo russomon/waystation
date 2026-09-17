@@ -61,7 +61,7 @@ import sqlite3,sys
 db=sqlite3.connect(sys.argv[1])
 cols={row[1] for row in db.execute("PRAGMA table_info(transfers)")}
 version=db.execute("PRAGMA user_version").fetchone()[0]
-assert version == 3 and "password_hash" in cols
+assert version >= 3 and "password_hash" in cols  # >= : later migrations (v4 access codes) may run in the same start
 print("  schema v2 migrates in place to the password-capable schema")
 PY
 ORIGIN=https://orbitolive.com SENDER="$WORK/sender.cookie" RECIPIENT="$WORK/recipient.cookie"

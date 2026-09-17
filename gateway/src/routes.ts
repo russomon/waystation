@@ -1,25 +1,34 @@
 import { Hono, type Context } from "hono";
 import { streamSSE } from "hono/streaming";
 import {
+  ADMIN_OWNER,
   authConfig,
   authEnabled,
   clearSessionCookie,
+  generateAccessCode,
   enforceOrigin,
   hasRecipientUnlock,
   hashAccessCode,
   issueDownloadTicket,
   issueSession,
   limiter,
+  requireAdmin,
   requireSession,
   sessionIdOf,
+  sessionOf,
   setRecipientUnlockCookie,
   setSessionCookie,
   verifyAccessCode,
   verifyDownloadTicket,
 } from "./auth.js";
 import {
+  activeAccessCodes,
   activeUploadCount,
   completedSince,
+  createAccessCode,
+  listAccessCodes,
+  revokeAccessCode,
+  touchAccessCode,
   completedSinceAll,
   capabilityRevoked,
   createUpload,
@@ -64,12 +73,26 @@ api.post("/session", enforceOrigin, limiter("session", 10, 60_000), async (c) =>
     return c.json({ ok: true, mode: "disabled", note: "authentication is off (development)" });
   const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
   const code = typeof body.code === "string" ? body.code : "";
-  if (!code || !verifyAccessCode(code, authConfig.codeHash!))
+  const who = code ? resolveAccessCode(code) : undefined;
+  if (!who)
     return c.json({ error: "That access code was not accepted.", code: "bad_code" }, 401);
-  const { token, expiresAt } = issueSession();
+  if (!who.admin) touchAccessCode(who.ownerId);
+  const { token, expiresAt } = issueSession(who);
   setSessionCookie(c, token);
   return c.json({ ok: true, expiresAt });
 });
+
+/** The environment code is the admin; every other code is a named sender row
+ *  in access_codes. Each active row costs one scrypt (~50 ms) — that is bounded
+ *  by however many codes the admin has issued, and the route's limiter, not by
+ *  anything a caller controls. The failure response never says which kind of
+ *  code was tried. */
+function resolveAccessCode(code: string): { ownerId: string; admin: boolean } | undefined {
+  if (verifyAccessCode(code, authConfig.codeHash!)) return { ownerId: ADMIN_OWNER, admin: true };
+  for (const row of activeAccessCodes())
+    if (verifyAccessCode(code, row.codeHash)) return { ownerId: row.codeId, admin: false };
+  return undefined;
+}
 
 api.post("/session/logout", (c) => {
   clearSessionCookie(c);
@@ -80,8 +103,37 @@ api.post("/session/logout", (c) => {
 // only that a code is required and whether this browser already holds a valid
 // session — both of which the UI must know to render at all, and neither of
 // which helps an attacker. No mode names, versions, origins, or limits.
-api.get("/session", (c) =>
-  c.json({ authRequired: authEnabled, hasSession: sessionIdOf(c) !== null }));
+api.get("/session", (c) => {
+  const s = sessionOf(c);
+  return c.json({ authRequired: authEnabled, hasSession: s !== null, admin: s?.admin === true });
+});
+
+// ───────── access-code administration ─────────
+//
+// Only the admin session reaches these; anyone else sees a neutral 404 from
+// requireAdmin. The plaintext code appears exactly once — in the create
+// response — and is never logged or stored.
+const MAX_LABEL = 64;
+
+api.get("/admin/codes", requireAdmin, limiter("admin", 30, 60_000), (c) =>
+  c.json({ codes: listAccessCodes() }));
+
+api.post("/admin/codes", requireAdmin, enforceOrigin, limiter("admin", 30, 60_000), async (c) => {
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const label = typeof body.label === "string" ? body.label.trim() : "";
+  if (!label || label.length > MAX_LABEL)
+    return c.json({ error: `A label of 1–${MAX_LABEL} characters is required.`, code: "bad_label" }, 400);
+  const code = generateAccessCode();
+  const codeId = crypto.randomUUID();
+  createAccessCode(codeId, label, hashAccessCode(code));
+  return c.json({ codeId, label, code });
+});
+
+api.post("/admin/codes/:id/revoke", requireAdmin, enforceOrigin, limiter("admin", 30, 60_000), (c) => {
+  const revokedAt = revokeAccessCode(c.req.param("id"));
+  if (!revokedAt) return c.json({ error: "not found" }, 404);
+  return c.json({ ok: true, revokedAt });
+});
 
 // ───────── upload (control plane) ─────────
 //
@@ -156,7 +208,8 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
   const out = await g.initiate(name.filename, contentType, sized.size);
   createUpload({
     objectKey: out.key, uploadId: out.uploadId, transferId: out.transferId,
-    sessionId: sessionIdOf(c), filename: name.filename, contentType,
+    sessionId: sessionIdOf(c), ownerId: sessionOf(c)?.ownerId ?? null,
+    filename: name.filename, contentType,
     declaredSize: sized.size, partSize: out.partSize, partCount: out.partCount,
     verificationMode: verification.verificationMode,
   });
@@ -275,6 +328,7 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
       ? Date.now() + RECIPIENT_LINK_TTL_DAYS * 86_400_000
       : undefined,
     passwordHash: recipientPassword ? hashAccessCode(recipientPassword) : undefined,
+    ownerId: owned.row.ownerId ?? undefined,
   });
   // Report the skip honestly rather than silently dropping a requested service.
   if (disabled.length)

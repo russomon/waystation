@@ -21,6 +21,7 @@ import {
 } from "node:crypto";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
+import { accessCodeActive } from "./db.js";
 
 const env = process.env as Record<string, string | undefined>;
 
@@ -62,6 +63,19 @@ export function verifyAccessCode(code: string, stored: string): boolean {
     return false;
   }
   return derived.length === expected.length && timingSafeEqual(derived, expected);
+}
+
+/** Owner id carried by sessions opened with the environment access code. */
+export const ADMIN_OWNER = "admin";
+
+// ~103 bits of entropy in an unambiguous alphabet (no O/0/I/l), grouped so it
+// can be dictated over a call without transcription errors. Shared by the
+// operator script and the admin create route so every code has one shape.
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export function generateAccessCode(): string {
+  const pick = (n: number) =>
+    Array.from(randomBytes(n)).map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+  return [pick(5), pick(5), pick(5), pick(5)].join("-");
 }
 
 /** Structural check for `scrypt$N$r$p$saltB64$hashB64`. Guards against a hash
@@ -138,18 +152,32 @@ function sign(payload: string): string {
   return b64url(createHmac("sha256", authConfig.sessionSecret!).update(payload).digest());
 }
 
-export function issueSession(existingSid?: string): { token: string; sid: string; expiresAt: number } {
+export interface Session {
+  sid: string;
+  /** Who this session acts as: an access_codes.code_id, or ADMIN_OWNER. */
+  ownerId: string;
+  admin: boolean;
+}
+
+export function issueSession(
+  who: { ownerId: string; admin: boolean },
+  existingSid?: string,
+): { token: string; sid: string; expiresAt: number } {
   const sid = existingSid ?? randomUUID();
   const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
-  const payload = b64url(Buffer.from(JSON.stringify({ sid, exp: expiresAt })));
+  const payload = b64url(
+    Buffer.from(JSON.stringify({ sid, exp: expiresAt, oid: who.ownerId, adm: who.admin })),
+  );
   return { token: `${payload}.${sign(payload)}`, sid, expiresAt };
 }
 
-export const refreshSession = (sid: string): { token: string; sid: string; expiresAt: number } =>
-  issueSession(sid);
+export const refreshSession = (s: Session): { token: string; sid: string; expiresAt: number } =>
+  issueSession({ ownerId: s.ownerId, admin: s.admin }, s.sid);
 
-/** Returns the session id, or null when absent, tampered, or expired. */
-export function readSession(token: string | undefined): string | null {
+/** Returns the session, or null when absent, tampered, expired — or issued
+ *  before sessions carried an owner (`oid`), which forces one re-login after
+ *  that change rather than treating an ownerless cookie as anybody. */
+export function readSessionToken(token: string | undefined): Session | null {
   if (!token) return null;
   const [payload, mac] = token.split(".");
   if (!payload || !mac) return null;
@@ -157,13 +185,18 @@ export function readSession(token: string | undefined): string | null {
   const givenMac = Buffer.from(mac);
   if (expectedMac.length !== givenMac.length || !timingSafeEqual(expectedMac, givenMac)) return null;
   try {
-    const { sid, exp } = JSON.parse(Buffer.from(payload, "base64url").toString());
+    const { sid, exp, oid, adm } = JSON.parse(Buffer.from(payload, "base64url").toString());
     if (typeof sid !== "string" || typeof exp !== "number" || Date.now() > exp) return null;
-    return sid;
+    if (typeof oid !== "string" || !oid) return null;
+    return { sid, ownerId: oid, admin: adm === true };
   } catch {
     return null;
   }
 }
+
+/** Session id only, for the many call sites that need just ownership. */
+export const readSession = (token: string | undefined): string | null =>
+  readSessionToken(token)?.sid ?? null;
 
 export function setSessionCookie(c: Context, token: string): void {
   setCookie(c, COOKIE, token, {
@@ -184,8 +217,12 @@ export const clearSessionCookie = (c: Context): void => {
   deleteCookie(c, COOKIE, { path: "/", secure: IS_PRODUCTION, sameSite: "Strict" });
 };
 
-export const sessionIdOf = (c: Context): string | null =>
-  authEnabled ? readSession(getCookie(c, COOKIE)) : "dev-session";
+const DEV_SESSION: Session = { sid: "dev-session", ownerId: ADMIN_OWNER, admin: true };
+
+export const sessionOf = (c: Context): Session | null =>
+  authEnabled ? readSessionToken(getCookie(c, COOKIE)) : DEV_SESSION;
+
+export const sessionIdOf = (c: Context): string | null => sessionOf(c)?.sid ?? null;
 
 // ── transfer-scoped recipient unlock ──
 
@@ -266,11 +303,34 @@ export const verifyDownloadTicket = (ticket: string | undefined, transferId: str
  *  this — a 401 on preflight would stop the browser sending the real request. */
 export const requireSession: MiddlewareHandler = async (c: Context, next: Next) => {
   if (!authEnabled) return next();
-  const sid = sessionIdOf(c);
-  if (!sid)
+  const s = sessionOf(c);
+  if (!s)
     return c.json({ error: "Session required or expired.", code: "session_required" }, 401);
-  c.set("sessionId", sid);
-  const { token } = refreshSession(sid);
+  // Revocation is live: a named code is re-checked on every credentialed call
+  // (in-process SQLite, microseconds), so revoking it cuts the holder off at
+  // their next request rather than when the cookie happens to expire. The
+  // environment code has no row and cannot be revoked here — rotate it.
+  if (!s.admin && !accessCodeActive(s.ownerId)) {
+    clearSessionCookie(c);
+    return c.json({ error: "This access code has been revoked.", code: "session_revoked" }, 401);
+  }
+  c.set("sessionId", s.sid);
+  c.set("ownerId", s.ownerId);
+  const { token } = refreshSession(s);
+  setSessionCookie(c, token);
+  return next();
+};
+
+/** Admin-only routes. A signed-in sender who is not the admin gets the same
+ *  neutral 404 an unknown path would — never confirm the routes exist. */
+export const requireAdmin: MiddlewareHandler = async (c: Context, next: Next) => {
+  if (!authEnabled) return next();
+  const s = sessionOf(c);
+  if (!s) return c.json({ error: "Session required or expired.", code: "session_required" }, 401);
+  if (!s.admin) return c.json({ error: "not found" }, 404);
+  c.set("sessionId", s.sid);
+  c.set("ownerId", s.ownerId);
+  const { token } = refreshSession(s);
   setSessionCookie(c, token);
   return next();
 };
