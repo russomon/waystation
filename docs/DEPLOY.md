@@ -534,6 +534,24 @@ Deployment mode: **transfer-only** (no worker). Gateway `a9f1588`, client
 | 16 | parallel ranged download integrity | file complete and usable |
 | 17 | named access codes | *added 2026-09-17 — not yet rehearsed in production* |
 
+**Rehearsal record — 2026-09-17, access-code release (source `5aa7036`,
+OrbitWebsite `b464447`).** Gateway container rebuilt in place; cloudflared
+untouched. `VACUUM INTO` snapshot taken first (`backups/control-pre-v4-*.db`
+on the VPS: schema 3, 8 transfers, 9 uploads, 18 meter events, integrity ok);
+after migration the live database reports schema 4 with identical counts,
+`access_codes` empty, integrity ok. Boot banner shows `senderCodes=0`.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | health | 200 |
+| 2 | wrong code refused | 401 `bad_code` |
+| 3 | session probe | `authRequired`, `hasSession:false`, `admin:false` — no mode or version disclosed |
+| 9 | unknown transfer | neutral 404; a protected transfer 401s without an unlock |
+| 14 | no public service ports | 8787, 8000 closed |
+| 17 | `/admin/*` with no session | 401 on list, create, revoke |
+| 3, 11, 17 (authenticated) | **pending** — require the admin code; to be run by the operator from the portal |
+
+
 **Throughput, measured against a real 28 GB object in the production bucket**
 from a wired 10Gbase-T Mac, using the client's own chunk size over
 multi-gigabyte samples:

@@ -18,8 +18,8 @@ narrative to `docs/PROJECT_HISTORY.md`.
 |---|---|
 | Live stack | `docker-compose.transfer.yml` — gateway + cloudflared only |
 | Host | Vultr Los Angeles, 1 vCPU / 1 GB / 25 GB, no block volume |
-| Gateway source | `9a47e9e` — pulled and rebuilt in place 2026-09-11 (gateway container only; cloudflared untouched since 2026-09-01) |
-| Portal | OrbitWebsite `b7fb649`, client pinned to `539c4ab`, at `https://orbitolive.com/waystation/` |
+| Gateway source | `5aa7036` — pulled and rebuilt in place 2026-09-17 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v4 |
+| Portal | OrbitWebsite `b464447`, client pinned to `5aa7036`, at `https://orbitolive.com/waystation/` |
 | API | `https://api.orbitolive.com` behind an outbound-only Cloudflare Tunnel |
 | QC ceiling | `MAX_QC_BYTES: "1"` — every pipeline service forced off |
 | Upload ceilings | `MAX_ACTIVE_UPLOADS_PER_SESSION=3` (24 h window), jobs/session 10, jobs/day 20 (global) |
@@ -39,7 +39,7 @@ not assume a running worker, a scratch disk, or GMI spend.
   `access_codes` (schema v4), are shown once, hashed, and revocable with effect
   on the next request. `owner_id` recorded on every upload and transfer.
   `scripts/access-codes-proof.sh`, six mutations caught; browser-verified on
-  the local stack. **Built and committed, not yet deployed** — see Next step.
+  the local stack. **Deployed 2026-09-17** (rehearsal record in `docs/DEPLOY.md`).
 - **2026-09-11** — the sender is asked for the password too. `recipientGate`
   takes the unlock cookie only; a separate `progressGate` keeps the sender
   exemption on `/progress/:id` alone, so the parked QC send-page stream is
@@ -92,13 +92,12 @@ None.
 
 ## Next step
 
-**Deploy the access-code release** (needs the user's go-ahead): `VACUUM INTO`
-snapshot on the VPS, pull, rebuild the gateway container only, confirm the boot
-banner shows `senderCodes=0`; publish the client to OrbitWebsite pinned to the
-commit; run rehearsal checks 1–3, 9, 11 and the new 17. Everyone re-enters
-their code once afterwards (sessions now carry their owner). Then the user
-issues the first real client code from the panel.
-
+**Operator to finish rehearsal check 17 from the portal** with the admin code:
+log in, open *Manage access codes*, issue a code with a throwaway label, log
+in with it in a private window (no admin panel), send a small file, revoke it
+from the admin window, confirm the private window is bounced to the access
+panel. Then issue the first real client code. Everyone re-enters their code
+once — sessions issued before this release are rejected by design.
 
 The engine is parked, but the **direction is set**: turn Waystation into a
 client-facing paid transfer service. `docs/COMMERCIAL_DELIVERY_PLAN.md` holds
