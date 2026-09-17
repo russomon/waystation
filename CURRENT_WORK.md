@@ -38,7 +38,7 @@ not assume a running worker, a scratch disk, or GMI spend.
   opens a *Manage access codes* panel on the sender page; client codes live in
   `access_codes` (schema v4), are shown once, hashed, and revocable with effect
   on the next request. The admin may also **choose** a code (8+ characters,
-  case-insensitive) to tell a client over the phone; login is capped 60/min
+  case-sensitive) to tell a client over the phone; login is capped 60/min
   deployment-wide. `owner_id` recorded on every upload and transfer.
   `scripts/access-codes-proof.sh`, six mutations caught; browser-verified on
   the local stack. **Deployed 2026-09-17** (rehearsal record in `docs/DEPLOY.md`).

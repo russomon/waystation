@@ -16,27 +16,30 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
-### 2026-09-17 - The admin may choose a code; chosen codes are case-insensitive and login is capped deployment-wide
+### 2026-09-17 - The admin may choose a code; codes are case-sensitive and login is capped deployment-wide
 
 - Context: a generated `XXXXX-XXXXX-XXXXX-XXXXX` code cannot be told over
   the phone, and the point of client codes is to get someone transferring
   from a call.
 - Decision: `POST /admin/codes` accepts an optional `code` — 8–64 characters
-  after trimming, stored **lower-cased** and matched case-insensitively (login
-  tries the code as typed, then lower-cased; generated codes are upper-case
-  and never match the second pass). A chosen code is refused (409) if it
-  matches any active code in either case, including the admin's, because
-  login takes the first match and a shared code would credit one client's
-  transfers to another. Because chosen codes carry less entropy, `/session`
+  after trimming, stored and matched **exactly as written**. Case-sensitive
+  was the user's call, made the same day, over an earlier case-insensitive
+  draft: the admin says how the code is capitalised on the call rather than
+  the gateway guessing. A chosen code is refused (409) if it exactly matches
+  any active code, including the admin's, because login takes the first
+  match and a shared code would credit one client's transfers to another.
+  That refusal is not an oracle: only the admin session can reach the route,
+  and the admin issued every code. Because chosen codes carry less entropy, `/session`
   now has a **60/min cap across all source addresses** on top of the 10/min
   per-address one — about 86k guesses a day, from any number of machines.
 - Rejected: forcing complexity rules on chosen codes (the 2026-09-01
   password decision already rejected that shape); a longer minimum (a code
   that has to be spelled out defeats the purpose).
 - Verified: `scripts/access-codes-proof.sh` — 7 characters refused, the
-  admin's own code refused, trim + lower-case, case-insensitive duplicate
-  refused, mixed-case login, near-miss and lower-cased-generated refused,
-  90 attempts from 30 addresses tripping the global cap; four mutations caught.
+  admin's own code refused, trimmed and kept as written, exact duplicate
+  refused, login exactly as written, other case / near-miss /
+  lower-cased-generated refused, 90 attempts from 30 addresses tripping the
+  global cap; five mutations caught.
 
 ### 2026-09-17 - Named sender codes live in the database; the environment code is the admin
 
