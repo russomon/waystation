@@ -557,6 +557,11 @@ Gateway rebuilt in place (no schema change, no re-login); banner showed
 `senderCodes=1` — the operator had already issued a code from the panel.
 Health 200, wrong code 401, `/admin` without a session 401.
 
+**Third release the same day — source `127e7a5`, OrbitWebsite `b48b435`:**
+unique labels among live codes, created time in the list, "Signed in as"
+with Sign out. Gateway rebuilt in place; banner `senderCodes=2`. Health 200,
+`/admin` without a session 401.
+
 
 **Throughput, measured against a real 28 GB object in the production bucket**
 from a wired 10Gbase-T Mac, using the client's own chunk size over

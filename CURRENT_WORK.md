@@ -18,8 +18,8 @@ narrative to `docs/PROJECT_HISTORY.md`.
 |---|---|
 | Live stack | `docker-compose.transfer.yml` — gateway + cloudflared only |
 | Host | Vultr Los Angeles, 1 vCPU / 1 GB / 25 GB, no block volume |
-| Gateway source | `fa7e167` — pulled and rebuilt in place 2026-09-17 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v4 |
-| Portal | OrbitWebsite `713bd44`, client pinned to `fa7e167`, at `https://orbitolive.com/waystation/` |
+| Gateway source | `127e7a5` — pulled and rebuilt in place 2026-09-17 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v4 |
+| Portal | OrbitWebsite `b48b435`, client pinned to `127e7a5`, at `https://orbitolive.com/waystation/` |
 | API | `https://api.orbitolive.com` behind an outbound-only Cloudflare Tunnel |
 | QC ceiling | `MAX_QC_BYTES: "1"` — every pipeline service forced off |
 | Upload ceilings | `MAX_ACTIVE_UPLOADS_PER_SESSION=3` (24 h window), jobs/session 10, jobs/day 20 (global) |
@@ -39,7 +39,8 @@ not assume a running worker, a scratch disk, or GMI spend.
   `access_codes` (schema v4), are shown once, hashed, and revocable with effect
   on the next request. The admin may also **choose** a code (8+ characters,
   case-sensitive) to tell a client over the phone; login is capped 60/min
-  deployment-wide. `owner_id` recorded on every upload and transfer.
+  deployment-wide. Labels unique among live codes; the page says who is
+  signed in and has Sign out. `owner_id` recorded on every upload and transfer.
   `scripts/access-codes-proof.sh`, six mutations caught; browser-verified on
   the local stack. **Deployed 2026-09-17** (rehearsal record in `docs/DEPLOY.md`).
 - **2026-09-11** — the sender is asked for the password too. `recipientGate`
