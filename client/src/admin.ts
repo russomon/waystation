@@ -18,8 +18,11 @@ interface CodeRow {
 }
 
 const icon = (glyph: Parameters<typeof createIcon>[0]) => createIcon(glyph, { width: 16, height: 16 });
+// Date AND time: two codes made minutes apart must be tellable apart.
 const when = (iso: string | null): string =>
-  iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "never";
+  iso
+    ? new Date(iso).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : "never";
 
 export function mountAdmin(root: HTMLDetailsElement): void {
   const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;

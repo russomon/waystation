@@ -26,6 +26,9 @@ import {
   activeAccessCodes,
   activeUploadCount,
   completedSince,
+  accessCodeActive,
+  accessCodeLabel,
+  activeLabelExists,
   createAccessCode,
   listAccessCodes,
   revokeAccessCode,
@@ -129,7 +132,16 @@ api.post("/session/logout", (c) => {
 // which helps an attacker. No mode names, versions, origins, or limits.
 api.get("/session", (c) => {
   const s = sessionOf(c);
-  return c.json({ authRequired: authEnabled, hasSession: s !== null, admin: s?.admin === true });
+  // `who` is the label the admin gave this code (or "admin"), so the page can
+  // say which code a browser is signed in as. A label is not a secret; the
+  // code id is not returned. A revoked code reads as no session at all.
+  const live = s && (s.admin || accessCodeActive(s.ownerId));
+  return c.json({
+    authRequired: authEnabled,
+    hasSession: !!live,
+    admin: !!live && s.admin,
+    who: live ? (s.admin ? ADMIN_OWNER : accessCodeLabel(s.ownerId) ?? "") : undefined,
+  });
 });
 
 // ───────── access-code administration ─────────
@@ -147,6 +159,8 @@ api.post("/admin/codes", requireAdmin, enforceOrigin, limiter("admin", 30, 60_00
   const label = typeof body.label === "string" ? body.label.trim() : "";
   if (!label || label.length > MAX_LABEL)
     return c.json({ error: `A label of 1–${MAX_LABEL} characters is required.`, code: "bad_label" }, 400);
+  if (activeLabelExists(label))
+    return c.json({ error: `"${label}" is already an active code — revoke it first, or choose another label.`, code: "label_in_use" }, 409);
   let code: string;
   if (typeof body.code === "string" && body.code.trim()) {
     const custom = validateCustomCode(body.code);

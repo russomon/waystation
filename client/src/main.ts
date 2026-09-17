@@ -1,5 +1,5 @@
 import { Check, Copy, Eye, EyeOff, createElement as createIcon } from "lucide";
-import { createSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink } from "./config.js";
+import { createSession, endSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink } from "./config.js";
 import { copyText } from "./clipboard.js";
 import { appendUniqueFiles, fileIdentity } from "./fileQueue.js";
 import { formatBytes } from "./format.js";
@@ -16,7 +16,7 @@ const gateEl = document.querySelector<HTMLDivElement>("#gate")!;
  *  The recipient view never calls this — a delivery link must open without a
  *  sender session. */
 async function openSender(): Promise<void> {
-  let status: { authRequired?: boolean; hasSession?: boolean; admin?: boolean } = {};
+  let status: { authRequired?: boolean; hasSession?: boolean; admin?: boolean; who?: string } = {};
   try {
     status = await gwGet("/session");
   } catch {
@@ -26,15 +26,28 @@ async function openSender(): Promise<void> {
     return;
   }
   if (!status.authRequired || status.hasSession) {
-    revealSender(status.admin === true);
+    revealSender(status.admin === true, status.who);
     return;
   }
   showGate();
 }
 
-function revealSender(admin: boolean): void {
+function revealSender(admin: boolean, who?: string): void {
   gateEl.hidden = true;
   senderEl.hidden = false;
+  const whoami = document.querySelector<HTMLElement>("#whoami")!;
+  if (who) {
+    document.querySelector<HTMLElement>("#whoLabel")!.textContent = who;
+    whoami.hidden = false;
+    document.querySelector<HTMLButtonElement>("#signOut")!.onclick = async () => {
+      await endSession().catch(() => {});
+      whoami.hidden = true;
+      document.querySelector<HTMLDetailsElement>("#admin")!.hidden = true;
+      showGate("Signed out. Enter a code to continue.");
+    };
+  } else {
+    whoami.hidden = true;
+  }
   if (admin) mountAdmin(document.querySelector<HTMLDetailsElement>("#admin")!);
 }
 
@@ -61,7 +74,7 @@ function showGate(message = ""): void {
       // Which panel to show depends on which code was accepted; ask rather
       // than assume, because the login response deliberately says nothing.
       const after = await gwGet("/session").catch(() => ({}));
-      revealSender(after?.admin === true);
+      revealSender(after?.admin === true, after?.who);
     } catch (e) {
       msg.textContent =
         e instanceof GatewayError ? e.message : "Could not reach the waystation.";

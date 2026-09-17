@@ -374,6 +374,10 @@ const updateCodeRevoked = db.prepare(
 );
 const updateCodeUsed = db.prepare(`UPDATE access_codes SET last_used_at = ? WHERE code_id = ?`);
 const countActiveCodes = db.prepare(`SELECT COUNT(*) AS n FROM access_codes WHERE revoked_at IS NULL`);
+const selectActiveLabel = db.prepare(
+  `SELECT 1 FROM access_codes WHERE revoked_at IS NULL AND label = ? COLLATE NOCASE LIMIT 1`,
+);
+const selectLabel = db.prepare(`SELECT label FROM access_codes WHERE code_id = ?`);
 
 export function createAccessCode(codeId: string, label: string, codeHash: string): void {
   insertAccessCode.run(codeId, label, codeHash, new Date().toISOString());
@@ -412,6 +416,14 @@ export const touchAccessCode = (codeId: string): void => {
 
 export const activeAccessCodeCount = (): number =>
   Number((countActiveCodes.get() as { n: number }).n);
+
+/** Two live codes must never share a label: the admin revoked the wrong
+ *  "RussoFree" on 2026-09-17 because the list could not tell them apart.
+ *  Revoked rows keep their label, so a name can be reused once retired. */
+export const activeLabelExists = (label: string): boolean => !!selectActiveLabel.get(label);
+
+export const accessCodeLabel = (codeId: string): string | undefined =>
+  (selectLabel.get(codeId) as { label: string } | undefined)?.label;
 
 // ── meter events (idempotent) ──
 

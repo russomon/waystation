@@ -209,6 +209,9 @@
       .share-link { display: grid; grid-template-columns: minmax(0, 1fr) 42px; gap: .5rem;
                     align-items: center; margin-top: .7rem; }
       .share-link a { overflow-wrap: anywhere; font: 12.5px/1.5 'IBM Plex Mono', monospace; }
+      .whoami { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin: -.4rem 0 1rem;
+                color: var(--mut); font: 13px/1.4 'IBM Plex Mono', monospace; }
+      .whoami strong { color: var(--ink); font-weight: 600; }
       /* access-code administration — rendered only for the admin session */
       .admin { margin-top: 1.4rem; }
       .admin summary { cursor: pointer; font-weight: 600; padding: .6rem 0; }
@@ -217,11 +220,11 @@
       .admin th { color: var(--mut); font-weight: 500; font-size: 12.5px; }
       .admin td.num { text-align: right; }
       .admin tr.revoked td { color: var(--mut); }
-      .admin .btn-small { font: inherit; font-size: 13px; min-height: 36px; padding: .3rem .8rem; border: 1px solid var(--line);
+      .btn-small { font: inherit; font-size: 13px; min-height: 36px; padding: .3rem .8rem; border: 1px solid var(--line);
                           border-radius: 6px; background: var(--surface2); color: var(--amber-light); cursor: pointer;
                           display: inline-flex; align-items: center; gap: .35rem; }
-      .admin .btn-small:hover { border-color: var(--blue); background: #302817; }
-      .admin .btn-small[disabled] { opacity: .55; cursor: not-allowed; }
+      .btn-small:hover { border-color: var(--blue); background: #302817; }
+      .btn-small[disabled] { opacity: .55; cursor: not-allowed; }
       .admin .add-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: .5rem; align-items: center; }
       @media (max-width: 640px) { .admin .add-row { grid-template-columns: 1fr; } }
       .admin .add-row input { min-width: 0; height: 36px; font: inherit; padding: 0 .7rem; border: 1px solid var(--line); border-radius: 6px; }
@@ -278,6 +281,12 @@
     <div id="sender" hidden>
       <h1>Waystation</h1>
       <p class="tag" id="senderTag">Send large files securely and share them.</p>
+      <!-- Which code this browser is signed in as. Private windows share one
+           cookie jar per browser, so "who am I?" is a real question. -->
+      <p class="whoami" id="whoami" hidden>
+        <span>Signed in as <strong id="whoLabel"></strong></span>
+        <button type="button" class="btn-small" id="signOut">Sign out</button>
+      </p>
       <div class="mode-switch" role="tablist" aria-label="Waystation service">
         <button type="button" id="modeTransfer" role="tab" aria-selected="true"
                 aria-controls="senderPanel">Transfer</button>

@@ -119,10 +119,17 @@ printf '%s' "$LIST" | grep -q 'scrypt\$\|code_hash\|codeHash' && { echo "FAIL - 
 printf '%s' "$LIST" | grep -q '"label":"Acme Post"' || { echo "FAIL - list is missing the new code"; exit 1; }
 grep -q "$CLIENT_CODE" /tmp/codes-gateway.log && { echo "FAIL - the code reached the gateway log"; exit 1; }
 echo "  the list shows the label and never the code or hash; the log never saw the code"
+# Two live codes never share a label — the admin revoked the wrong "RussoFree"
+# because the list could not tell two same-named rows apart.
+[ "$(code -b "$ADMIN" -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"label":"acme post"}' http://127.0.0.1:$GW/api/admin/codes)" = 409 ]
+echo "  a label already carried by an active code is refused (case-insensitively)"
+curl -fsS -b "$ADMIN" http://127.0.0.1:$GW/api/session | grep -q '"who":"admin"' || { echo "FAIL - admin session does not say who it is"; exit 1; }
 
 # 4. the client logs in with it, is not admin, cannot reach /admin, and their upload records who they are
 curl -fsS -c "$CLIENT" -X POST -H "Origin: $ORIGIN" -H "$J" --data "{\"code\":\"$CLIENT_CODE\"}" http://127.0.0.1:$GW/api/session >/dev/null
 curl -fsS -b "$CLIENT" http://127.0.0.1:$GW/api/session | grep -q '"admin":false' || { echo "FAIL - client session is admin"; exit 1; }
+curl -fsS -b "$CLIENT" http://127.0.0.1:$GW/api/session | grep -q '"who":"Acme Post"' || { echo "FAIL - client session does not report its label"; exit 1; }
+echo "  /session names the signed-in code by its label ('admin' for the admin)"
 [ "$(code -b "$CLIENT" http://127.0.0.1:$GW/api/admin/codes)" = 404 ]
 [ "$(code -b "$CLIENT" -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"label":"x"}' http://127.0.0.1:$GW/api/admin/codes)" = 404 ]
 [ "$(code -b "$CLIENT" -X POST -H "Origin: $ORIGIN" http://127.0.0.1:$GW/api/admin/codes/$CODE_ID/revoke)" = 404 ]
@@ -174,7 +181,10 @@ REV2=$(curl -fsS -b "$ADMIN" -X POST -H "Origin: $ORIGIN" http://127.0.0.1:$GW/a
 [ "$REV" = "$REV2" ] || { echo "FAIL - a second revoke changed the timestamp"; exit 1; }
 [ "$(code -b "$ADMIN" -X POST -H "Origin: $ORIGIN" http://127.0.0.1:$GW/api/admin/codes/no-such-id/revoke)" = 404 ]
 [ "$(code -b "$ADMIN" http://127.0.0.1:$GW/api/session)" = 200 ]
-echo "  revoke cuts off the live session at its next request, blocks login, is idempotent; the admin is unaffected"
+curl -fsS -b "$CLIENT" http://127.0.0.1:$GW/api/session | grep -q '"hasSession":false' || { echo "FAIL - a revoked code still reads as a session"; exit 1; }
+# ...and the retired label may be reused for a fresh code.
+[ "$(code -b "$ADMIN" -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"label":"Acme Post"}' http://127.0.0.1:$GW/api/admin/codes)" = 200 ]
+echo "  revoke cuts off the live session at its next request, blocks login, is idempotent; the admin is unaffected; the label is free again"
 
 # 6. a cookie from before sessions carried an owner is rejected, not treated as anybody
 OLD=$(cd "$WEB/gateway" && WAYSTATION_AUTH_MODE=access-code WAYSTATION_ACCESS_CODE_HASH="$HASH" WAYSTATION_SESSION_SECRET="$SECRET" \
