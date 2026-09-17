@@ -187,4 +187,30 @@ curl -fsS -H "Cookie: ws_session=$OLD" http://127.0.0.1:$GW/api/session | grep -
   || { echo "FAIL - an ownerless pre-change cookie was accepted"; exit 1; }
 echo "  a correctly signed cookie without an owner is rejected (one re-login after deploy)"
 
-echo "PASS - access codes: admin-issued, shown once, hashed, owner-recorded, live-revocable"
+# 7. admin-chosen codes: memorable, case-insensitive, never colliding
+[ "$(code -b "$ADMIN" -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"label":"Short","code":"abc1234"}' http://127.0.0.1:$GW/api/admin/codes)" = 400 ]
+R=$(curl -s -b "$ADMIN" -X POST -H "Origin: $ORIGIN" -H "$J" --data "{\"label\":\"Admin dup\",\"code\":\"$CODE\"}" -w '\n%{http_code}' http://127.0.0.1:$GW/api/admin/codes)
+[ "$(printf '%s' "$R" | tail -1)" = 409 ] || { echo "FAIL - a custom code equal to the admin code was accepted"; exit 1; }
+CUSTOM=$(curl -fsS -b "$ADMIN" -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"label":"Phone client","code":"  Orbit Post 2026  "}' http://127.0.0.1:$GW/api/admin/codes)
+printf '%s' "$CUSTOM" | grep -q '"code":"orbit post 2026"' || { echo "FAIL - custom code was not trimmed and lower-cased: $CUSTOM"; exit 1; }
+printf '%s' "$CUSTOM" | grep -q '"custom":true' || { echo "FAIL - response does not flag the code as chosen"; exit 1; }
+[ "$(code -b "$ADMIN" -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"label":"Dup","code":"ORBIT POST 2026"}' http://127.0.0.1:$GW/api/admin/codes)" = 409 ]
+echo "  custom codes: 7 chars refused, the admin's own code refused, trimmed + lower-cased, duplicates refused case-insensitively"
+
+PHONE="$WORK/phone.cookie"
+curl -fsS -c "$PHONE" -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"code":"Orbit POST 2026"}' http://127.0.0.1:$GW/api/session >/dev/null
+curl -fsS -b "$PHONE" http://127.0.0.1:$GW/api/session | grep -q '"hasSession":true,"admin":false' || { echo "FAIL - mixed-case login with a custom code"; exit 1; }
+[ "$(code -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"code":"orbit post 2025"}' http://127.0.0.1:$GW/api/session)" = 401 ]
+[ "$(code -X POST -H "Origin: $ORIGIN" -H "$J" --data "{\"code\":\"$(printf '%s' "$CODE" | tr 'A-Z' 'a-z')\"}" http://127.0.0.1:$GW/api/session)" = 401 ]
+echo "  a custom code logs in however it is capitalised; near-misses and a lower-cased generated code do not"
+
+# 8. the deployment-wide login cap holds across source addresses
+#    (per-address cap is 10/min; use 30 addresses x 3 attempts = 90 > 60)
+HIT=0
+for ip in $(seq 1 30); do for n in 1 2 3; do
+  [ "$(code -X POST -H "Origin: $ORIGIN" -H "$J" -H "cf-connecting-ip: 10.9.$ip.1" --data '{"code":"nope-nope-nope"}' http://127.0.0.1:$GW/api/session)" = 429 ] && HIT=$((HIT+1)) || true
+done; done
+[ "$HIT" -ge 25 ] || { echo "FAIL - global login cap did not engage ($HIT of 90 refused)"; exit 1; }
+echo "  90 wrong-code attempts from 30 addresses: $HIT refused by the deployment-wide cap"
+
+echo "PASS - access codes: admin-issued or admin-chosen, shown once, hashed, owner-recorded, live-revocable, guess-rate bounded"

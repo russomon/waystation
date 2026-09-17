@@ -24,6 +24,7 @@ const when = (iso: string | null): string =>
 export function mountAdmin(root: HTMLDetailsElement): void {
   const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
   const label = $<HTMLInputElement>("#codeLabel");
+  const custom = $<HTMLInputElement>("#codeCustom");
   const add = $<HTMLButtonElement>("#codeAdd");
   const reveal = $("#codeReveal");
   const msg = $("#adminMsg");
@@ -93,10 +94,12 @@ export function mountAdmin(root: HTMLDetailsElement): void {
     } catch (e) { fail(e); }
   };
 
-  const showCode = (row: { label: string; code: string }) => {
+  const showCode = (row: { label: string; code: string; custom?: boolean }) => {
     reveal.replaceChildren();
     const head = document.createElement("strong");
-    head.textContent = `Access code for ${row.label} — shown once`;
+    head.textContent = row.custom
+      ? `Access code for ${row.label} — as you chose it`
+      : `Access code for ${row.label} — shown once`;
     const code = document.createElement("code");
     code.textContent = row.code;
     const actions = document.createElement("div");
@@ -122,7 +125,9 @@ export function mountAdmin(root: HTMLDetailsElement): void {
     const warn = document.createElement("p");
     warn.className = "muted";
     warn.style.margin = ".5rem 0 0";
-    warn.textContent = "Send it to the client privately. It cannot be shown again; if it is lost, revoke it and add a new one.";
+    warn.textContent = row.custom
+      ? "Tell the client privately. It is not case-sensitive. The page will not show it again, but you chose it, so you know it."
+      : "Send it to the client privately. It cannot be shown again; if it is lost, revoke it and add a new one.";
     actions.append(copy, done, status);
     reveal.append(head, code, actions, warn);
     reveal.hidden = false;
@@ -131,11 +136,14 @@ export function mountAdmin(root: HTMLDetailsElement): void {
   const create = async () => {
     const text = label.value.trim();
     if (!text) { note("Give the code a label — usually the client's name."); label.focus(); return; }
+    const chosen = custom.value.trim();
+    if (chosen && chosen.length < 8) { note("A code you choose must be at least 8 characters."); custom.focus(); return; }
     add.disabled = true;
     note("Issuing…");
     try {
-      const row = await gwPost("/admin/codes", { label: text });
+      const row = await gwPost("/admin/codes", chosen ? { label: text, code: chosen } : { label: text });
       label.value = "";
+      custom.value = "";
       showCode(row);
       note("");
       await refresh();
@@ -143,7 +151,7 @@ export function mountAdmin(root: HTMLDetailsElement): void {
     add.disabled = false;
   };
   add.onclick = () => void create();
-  label.onkeydown = (e) => { if (e.key === "Enter") void create(); };
+  label.onkeydown = custom.onkeydown = (e) => { if (e.key === "Enter") void create(); };
 
   root.hidden = false;
   root.addEventListener("toggle", () => { if (root.open) void refresh(); }, { once: true });

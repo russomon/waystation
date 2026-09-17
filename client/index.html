@@ -222,7 +222,8 @@
                           display: inline-flex; align-items: center; gap: .35rem; }
       .admin .btn-small:hover { border-color: var(--blue); background: #302817; }
       .admin .btn-small[disabled] { opacity: .55; cursor: not-allowed; }
-      .admin .add-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: center; }
+      .admin .add-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: .5rem; align-items: center; }
+      @media (max-width: 640px) { .admin .add-row { grid-template-columns: 1fr; } }
       .admin .add-row input { min-width: 0; height: 36px; font: inherit; padding: 0 .7rem; border: 1px solid var(--line); border-radius: 6px; }
       .admin .reveal { border: 1px solid var(--blue); background: #242012; border-radius: 8px; padding: .9rem 1rem; margin: .8rem 0; }
       .admin .reveal code { display: block; font: 18px/1.5 'IBM Plex Mono', monospace; letter-spacing: .04em; margin: .3rem 0 .5rem; overflow-wrap: anywhere; color: var(--amber-light); }
@@ -363,8 +364,10 @@
           client off immediately. Your own code is the admin code and is managed on the server.</p>
         <div class="add-row">
           <input id="codeLabel" type="text" maxlength="64" placeholder="Label — e.g. Acme Post" autocomplete="off" />
+          <input id="codeCustom" type="text" maxlength="64" placeholder="Code (optional — blank generates one)" autocomplete="off" spellcheck="false" />
           <button type="button" class="btn-small" id="codeAdd">Add code</button>
         </div>
+        <p class="muted" style="margin:.4rem 0 0;font-size:12.5px">A code you choose must be at least 8 characters and is not case-sensitive — pick something you can say over the phone. Leave it blank for a random 20-character code.</p>
         <div id="codeReveal" class="reveal" hidden></div>
         <p id="adminMsg" class="muted" aria-live="polite" style="min-height:1.4rem;margin:.5rem 0 0"></p>
         <table id="codeTable" hidden>

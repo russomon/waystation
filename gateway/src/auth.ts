@@ -380,6 +380,17 @@ export function rateLimit(key: string, limit: number, windowMs: number): boolean
 export const clientKey = (c: Context): string =>
   c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "local";
 
+/** One bucket for everyone, regardless of source address. The per-client
+ *  limiter bounds one attacker; this bounds a distributed one. Sized for
+ *  humans: a whole deployment's senders do not log in 60 times a minute. */
+export const globalLimiter =
+  (name: string, limit: number, windowMs: number): MiddlewareHandler =>
+  async (c: Context, next: Next) => {
+    if (!rateLimit(`${name}:*`, limit, windowMs))
+      return c.json({ error: "Too many sign-in attempts right now — try again in a minute.", code: "rate_limited" }, 429);
+    return next();
+  };
+
 export const limiter =
   (name: string, limit: number, windowMs: number, bySession = false): MiddlewareHandler =>
   async (c: Context, next: Next) => {
