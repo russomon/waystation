@@ -77,11 +77,17 @@ it, because several obvious-looking shortcuts are already ruled out there.
   should overwrite a client-supplied value; verify it with a request carrying
   a forged header. If it does not, take the public host from configuration
   and drop the header trust. Untested as of 2026-09-11.
+- **Move upload ownership from session to owner.** `ownUpload`
+  (`gateway/src/routes.ts`) still compares `session_id`, so a client whose
+  hour-long session lapses mid-upload cannot resume it after logging back in
+  — `ListParts` reattachment 404s as "not yours". Rows now carry `owner_id`;
+  compare that instead (falling back to `session_id` for pre-identity rows).
+  Small, and it removes the last reason a client would have to start over.
 - **Decide the fate of `codex/hosted-cloud-control`.** It has carried one
   unmerged commit — "Show hosted cloud compute selection" — since 2026-08-04.
   Merge it or delete the branch; a month-old dangling branch is a trap for the
   next agent.
-- **Add a proof-suite runner.** There are 43 `scripts/*-proof.sh` and no way to
+- **Add a proof-suite runner.** There are 44 `scripts/*-proof.sh` and no way to
   run them as a suite, so "the proofs are green" is currently a manual claim.
   A discovery-based runner (`ls scripts/*-proof.sh`, run each, tally
   `PASS ✓` / `FAIL`, honour the self-skip convention) also stops the table in

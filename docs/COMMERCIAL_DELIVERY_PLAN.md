@@ -23,13 +23,12 @@ More than expected. Three of the foundations are in place.
 
 ## What is missing
 
-**Durable ownership.** `gateway/src/routes.ts` already stores a per-transfer
-owner — `sessionId: sessionIdOf(c)` — and every ownership check reads it. But
-that value is a random UUID in a signed cookie with a TTL: an *ephemeral*
-pseudo-identity. The slot exists; the value does not persist.
-
-So this is not "add tenancy to a system that has none". It is **put a durable
-value where an ephemeral one already lives.**
+~~**Durable ownership.**~~ **Built 2026-09-17.** Every upload and transfer now
+carries `owner_id`: the `access_codes.code_id` of the named sender code that
+sent it, or `"admin"` for the environment code (`DECISIONS.md` 2026-09-17).
+Ownership checks on the upload routes still compare the ephemeral `sessionId`;
+moving them to `owner_id` — so a client can resume after a re-login — is
+queued in `NEXT_STEPS.md`.
 
 **Only ingest is metered.** Uploads produce meter events; downloads produce
 none. For a delivery product that is the wrong half.
@@ -77,10 +76,11 @@ attribute** of that owner. It costs nothing now and prevents two certainties:
 With `owner_id`, both are a row update. A "my transfers" view, whenever it is
 wanted, is then just a query on that key.
 
-**This is the one thing that must not be deferred.** Adding richer accounts
-later *on top of* a stable `owner_id` is grouping rows that already carry the
-key. Retrofitting a key onto transfers that never had one is a migration with
-no source of truth — ownership would have to be guessed from timestamps.
+**This is the one thing that must not be deferred** — and it was not: since
+2026-09-17 `owner_id` is written on every transfer, keyed to the sender's
+named access code. Adding richer accounts later *on top of* it is grouping
+rows that already carry the key. Payment and email become attributes of an
+owner that already exists.
 
 Skip signup; keep tenancy.
 
@@ -216,11 +216,12 @@ once, and the prerequisite for parallel downloads.
 Step 1, by contrast, is blocked on a decision nobody has made yet — the pricing
 model. You cannot build a checkout without knowing what it charges for.
 
-1. **Payment + identity.** Take the card, capture the email, mint an
-   `owner_id`, write it where `sessionId` is written today, and email the sender
-   capability URL. Payment comes **first, not last** — it is what produces the
-   identity everything else is keyed to, and for a pay-per-use product it *is*
-   the authorization, which lets the shared access code retire.
+1. **Payment + email, attached to an owner.** The `owner_id` half is done
+   (2026-09-17: named access codes, `owners`-equivalent rows in
+   `access_codes`). What remains: take the card, capture the email, attach
+   both to the owner, and email the sender capability URL. Payment still comes
+   **first, not last** — for a pay-per-use product it *is* the authorization.
+   The shared code no longer needs to retire; it is the operator's admin code.
 2. ~~**Gateway-mediated download + egress metering**~~ — **DONE 2026-09-05.**
    `GET /transfers/:id/original`, proven by `scripts/mediated-download-proof.sh`.
    The recipient no longer receives a storage URL for the master; revocation

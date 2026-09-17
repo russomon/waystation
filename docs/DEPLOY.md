@@ -143,9 +143,11 @@ your personal SSH agent to a server.)
 
 ## 4 · Secrets
 
-Generate the judge code and session secret **on your Mac** (the code prints
-once — store it in a password manager, hand it to judges privately, and never
-commit it, put it in Devpost text, or show it on screen):
+Generate the **admin** code and session secret **on your Mac** (the code
+prints once — store it in a password manager and never commit it or show it
+on screen). This is the operator's code: it sends like any other and it opens
+the *Manage access codes* panel. Client codes are not configured here — issue
+them from that panel; they live in the control database:
 
 ```bash
 node scripts/make-access-code.mjs
@@ -352,7 +354,7 @@ docker compose -f docker-compose.prod.yml exec worker sh -c 'echo $TMPDIR; df -h
 The gateway boot log must show — and **must not** show any secret:
 
 ```
-auth: access-code (session ttl 3600s)
+auth: access-code (session ttl 3600s) senderCodes=0
 origins: https://orbitolive.com, https://www.orbitolive.com
 state: /data/waystation.db
 limits: uploads=accepting max=0.5GiB ... compute=PINNED:cloud
@@ -487,6 +489,11 @@ rather than letting the list fall behind what is running.
     to what was uploaded. Six connections writing at their own offsets means a
     range error corrupts the file *without* reporting an error, so compare
     checksums rather than trusting that the download finished.
+17. **named access codes** — from the admin session, issue a code with a
+    throwaway label; in a private window log in with it (no admin panel
+    visible), send a small file, then revoke it from the admin window. The
+    private window must be bounced to the access panel on its next action and
+    the code must no longer log in. Revoke leaves the row listed as revoked.
 
 ### QC path — only when a worker is deployed
 
@@ -525,6 +532,7 @@ Deployment mode: **transfer-only** (no worker). Gateway `a9f1588`, client
 | 14 | no public service ports | 8787, 8000, 443 all closed |
 | 15 | mediated download + live revocation | 302 to storage; revoked link 404s on the next request |
 | 16 | parallel ranged download integrity | file complete and usable |
+| 17 | named access codes | *added 2026-09-17 — not yet rehearsed in production* |
 
 **Throughput, measured against a real 28 GB object in the production bucket**
 from a wired 10Gbase-T Mac, using the client's own chunk size over

@@ -16,6 +16,37 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-17 - Named sender codes live in the database; the environment code is the admin
+
+- Context: one shared access code, hashed in the VPS `.env`, was the only way
+  in. Giving a client their own code meant SSH, edit, recreate the container,
+  and nothing recorded who sent what — transfers carried only a one-hour
+  session UUID. `docs/COMMERCIAL_DELIVERY_PLAN.md` names a durable `owner_id`
+  as the one thing that must not be deferred.
+- Decision: `WAYSTATION_ACCESS_CODE_HASH` stays as it is and becomes the
+  **admin** code; it opens a session that can send and can reach `/admin/*`.
+  Every other code is a row in `access_codes` (schema v4), issued from a
+  *Manage access codes* panel on the sender page, generated server-side in the
+  operator script's shape, shown to the admin **once**, stored only as an
+  scrypt hash, and never logged or listed. Sessions carry `oid`/`adm`;
+  `requireSession` re-checks the owner row on every call, so revocation cuts
+  the holder off at their next request. Uploads and transfers record
+  `owner_id` — the code id, `"admin"`, or NULL for pre-identity rows.
+  Non-admins get a neutral 404 on `/admin/*`. No delete, un-revoke or rename.
+- Why it matters: a code-holder is an owner today, so payment and email attach
+  to a key that already exists; the shared code no longer has to retire — it
+  narrows to the operator. Cookies issued before this are rejected once
+  (ownerless sessions must not be treated as anybody).
+- Rejected: a list of hashes in env (still a restart per client; still no
+  identity); an SSH-only admin script (not usable from a phone, and the
+  product is meant to be self-administered).
+- Verified: `scripts/access-codes-proof.sh` — migration v3→v4 in place, code
+  shape, hash-only storage, list and log never see the code, neutral 404,
+  owner recording, live revocation of an existing session, idempotent revoke,
+  ownerless-cookie rejection; six mutations caught. Browser run on the local
+  stack: issue, log in as the client, revoke from outside, client bounced to
+  the access panel with the queue intact.
+
 ### 2026-09-11 - The sender is asked for the password too; only the progress stream exempts them
 
 - Context: The 2026-09-01 gate accepted *either* the originating sender

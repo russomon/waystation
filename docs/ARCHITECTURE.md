@@ -50,7 +50,7 @@ Hono on `@hono/node-server`. Entry point `server.ts`. The only stateful service.
 |---|---|
 | `server.ts` | app assembly, CORS, boot banner |
 | `routes.ts` | every HTTP route |
-| `auth.ts` | access-code login, sliding sessions, recipient unlock |
+| `auth.ts` | access-code login (env code = admin, named codes in the DB), sliding sessions carrying their owner, per-request revocation check, recipient unlock |
 | `db.ts` | SQLite schema and migrations |
 | `s3.ts` | B2 presigning, multipart bookkeeping |
 | `limits.ts` | size ceilings and the service-policy reducer |
@@ -62,7 +62,8 @@ Hono on `@hono/node-server`. Entry point `server.ts`. The only stateful service.
 
 **Routes.** Sender: `POST /session`, `/session/logout`, `/uploads`,
 `/uploads/parts`, `/uploads/complete`, `/uploads/outboard-url`,
-`/uploads/sidecar-url`. Recipient: `GET /transfers/:id`,
+`/uploads/sidecar-url`. Admin only: `GET /admin/codes`, `POST /admin/codes`,
+`POST /admin/codes/:id/revoke`. Recipient: `GET /transfers/:id`,
 `/transfers/:id/original` (the mediated download), `/transfers/:id/download`,
 `POST /transfers/:id/unlock`,
 `GET /transfers/:id/usage`. Machine: `POST /events/b2`,
@@ -154,9 +155,10 @@ storage serves.
 
 ## Persistence and state
 
-SQLite in the `control` Docker volume at `/data`. Three tables — `transfers`,
-`uploads`, `meter_events` — at **schema v3**, migrated in place via
-`PRAGMA user_version` (`gateway/src/db.ts`).
+SQLite in the `control` Docker volume at `/data`. Four tables — `transfers`,
+`uploads`, `meter_events`, `access_codes` — at **schema v4**, migrated in place
+via `PRAGMA user_version` (`gateway/src/db.ts`). `transfers.owner_id` and
+`uploads.owner_id` name the sender code that created the row.
 
 It runs in **WAL mode**, which has bitten this project: `cp waystation.db`
 yields a nearly empty file that still passes `integrity_check`. Always back up

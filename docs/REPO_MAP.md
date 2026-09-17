@@ -23,15 +23,16 @@ gateway/src/               Hono/Node control plane — 12 modules
   server.ts                  entry point: app assembly, CORS, boot banner
   routes.ts                  every HTTP route
   auth.ts                    access codes, sessions, recipient unlock
-  db.ts                      SQLite schema + migrations (schema v3)
+  db.ts                      SQLite schema + migrations (schema v4)
   s3.ts                      B2 presigning and multipart bookkeeping
   limits.ts                  size ceilings, service policy, verification mode
   events.ts  pipeline.ts     B2 webhook · worker dispatch
   sse.ts  store.ts           progress fan-out
   metering.ts  env.ts        usage ledger · environment loading
 
-client/src/                Vite + TypeScript browser app — 14 modules
+client/src/                Vite + TypeScript browser app — 15 modules
   main.ts                    the sender
+  admin.ts                   Manage access codes panel (admin session only)
   delivery.ts                the recipient page: mediated, parallel, resumable, verified download
   uploader.ts                resumable multipart, concurrency 6, pool()
   resumeStore.ts downloadResume.ts idb.ts   resume bookkeeping in IndexedDB

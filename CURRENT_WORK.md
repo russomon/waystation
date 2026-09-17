@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-09-11
+Updated: 2026-09-17
 Branch: `codex/hosted-waystation-mvp` (the trunk — `main` is fast-forwarded to
 follow it, and the two should always be equal)
 
@@ -34,6 +34,12 @@ not assume a running worker, a scratch disk, or GMI spend.
 
 ## Recently completed
 
+- **2026-09-17** — named sender access codes. The env code is the admin and
+  opens a *Manage access codes* panel on the sender page; client codes live in
+  `access_codes` (schema v4), are shown once, hashed, and revocable with effect
+  on the next request. `owner_id` recorded on every upload and transfer.
+  `scripts/access-codes-proof.sh`, six mutations caught; browser-verified on
+  the local stack. **Built and committed, not yet deployed** — see Next step.
 - **2026-09-11** — the sender is asked for the password too. `recipientGate`
   takes the unlock cookie only; a separate `progressGate` keeps the sender
   exemption on `/progress/:id` alone, so the parked QC send-page stream is
@@ -77,7 +83,7 @@ not assume a running worker, a scratch disk, or GMI spend.
 - `codex/hosted-cloud-control` has carried one unmerged commit since
   2026-08-04 ("Show hosted cloud compute selection"). Decide whether to merge
   or delete it.
-- There is no proof-suite runner. All 43 `scripts/*-proof.sh` are invoked
+- There is no proof-suite runner. All 44 `scripts/*-proof.sh` are invoked
   individually.
 
 ## Blockers
@@ -85,6 +91,14 @@ not assume a running worker, a scratch disk, or GMI spend.
 None.
 
 ## Next step
+
+**Deploy the access-code release** (needs the user's go-ahead): `VACUUM INTO`
+snapshot on the VPS, pull, rebuild the gateway container only, confirm the boot
+banner shows `senderCodes=0`; publish the client to OrbitWebsite pinned to the
+commit; run rehearsal checks 1–3, 9, 11 and the new 17. Everyone re-enters
+their code once afterwards (sessions now carry their owner). Then the user
+issues the first real client code from the panel.
+
 
 The engine is parked, but the **direction is set**: turn Waystation into a
 client-facing paid transfer service. `docs/COMMERCIAL_DELIVERY_PLAN.md` holds

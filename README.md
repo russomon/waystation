@@ -176,6 +176,11 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   download, and a working **Verify provenance** button (re-hashes the
   original + derivatives, compares to the manifest). Endpoint
   `GET /api/transfers/:id`; proven by `scripts/delivery-proof.sh`.
+- ✅ **Named sender access codes, self-administered.** The environment code
+  is the admin; it opens a *Manage access codes* panel that issues per-client
+  codes (shown once, stored as scrypt hashes) and revokes them with effect on
+  the client's next request. Every transfer records its `owner_id`. Proven by
+  `scripts/access-codes-proof.sh`.
 - ✅ **bao outboard — verified, resumable, tamper-checked range download.**
   Upload produces a `.obao` sidecar; download pulls the object in
   chunk-aligned ranges and verifies each against the BLAKE3 root before
