@@ -113,7 +113,7 @@ handoff:
 | `scripts/mediated-download-proof.sh` | gateway-mediated download: no storage URL in the payload, byte-identical delivery through the redirect, Range survives it, transfer-scoped tickets, immediate revocation, egress metered once per download rather than once per range |
 | `scripts/transfer-mode-proof.sh` | sender contract: transfer-first mode, additive multi-file queue, drag/drop, optional recipient passwords, honest concurrent progress, copyable share URLs |
 | `scripts/recipient-password-proof.sh` | optional recipient password over the real gateway + MinIO multipart path |
-| `scripts/access-codes-proof.sh` | named sender access codes: v3→v4 migration, admin-issued, shown once, hash-only storage, neutral 404 for non-admins, owner_id recorded, live revocation, ownerless cookies rejected |
+| `scripts/access-codes-proof.sh` | named sender access codes: v3→v4 migration, admin-issued or admin-chosen (case-insensitive, no collisions), shown once, hash-only storage, neutral 404 for non-admins, owner_id recorded, live revocation, ownerless cookies rejected, deployment-wide login cap |
 | `scripts/authority-boundary-proof.sh` | deterministic delivery authority + advisory PSE (no network or media I/O) |
 | `scripts/triage-proof.sh` | cost-aware AI triage: the router changes spend decisions only, never verdicts |
 | `scripts/ai-thumbnail-proof.sh` | AI poster selection against an SDK-shaped mock; no network or spend |

@@ -490,7 +490,7 @@ rather than letting the list fall behind what is running.
     range error corrupts the file *without* reporting an error, so compare
     checksums rather than trusting that the download finished.
 17. **named access codes** — from the admin session, issue a code with a
-    throwaway label; in a private window log in with it (no admin panel
+    throwaway label (generated, or chosen — at least 8 characters, told aloud); in a private window log in with it (no admin panel
     visible), send a small file, then revoke it from the admin window. The
     private window must be bounced to the access panel on its next action and
     the code must no longer log in. Revoke leaves the row listed as revoked.
