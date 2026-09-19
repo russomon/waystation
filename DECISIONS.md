@@ -16,6 +16,60 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-19 - Pay-per-gig transfer: dual gateway (Stripe + Coinbase), payment as authorization
+
+- Context: the commercial track's Step 1 (`docs/COMMERCIAL_DELIVERY_PLAN.md`) was
+  blocked only on a pricing model. The owner set one, so Waystation's Cloud
+  transfer becomes a public, pay-per-use service: pick a file, pay by card or
+  crypto, and a confirmed payment unlocks the upload.
+- Decision:
+  - **Pricing** (`gateway/src/pricing.ts`), in cents, rounded UP once at the end:
+    `base = (bytes/1e9) * 2c`; Stripe `= base*1.03 + 30c` (floored to the $0.50
+    Stripe minimum); Coinbase `= base*1.02` (no flat fee). GB is **decimal** to
+    match `metering.ts` and `format.ts`.
+  - **Download allowance**: every link includes **2** downloads; a sender may raise
+    it to **10**. Each download beyond the included 2 costs a flat **2% of the base
+    transfer cost** (no processing fee) and is part of "our cost", so the gateway
+    markup applies to it. 40 GB: 2 dl = $1.13 card / $0.82 crypto; 4 dl = $1.16 /
+    $0.85; 10 dl = $1.26 / $0.95.
+  - **One charge per checkout**: the whole queued batch is priced on total bytes
+    with a single flat fee.
+  - **Payment IS the authorization** for a public sender — no access code, no
+    signup. On payment, `POST /payments/:orderId/session` mints a payment-backed
+    session (`auth.ts`: the session carries the order id; `requireSession`
+    validates the order is *paid* instead of checking an access code). Access codes
+    remain for comped/admin **free** uploads. Email is captured (Stripe) and stored
+    on the order; no mail is sent yet.
+  - **Gateways**: Stripe Checkout via the pure-JS `stripe` SDK; Coinbase Commerce
+    via `fetch` (its SDK is stale). Webhooks verify the RAW body BEFORE parsing
+    (like `/events/b2`) — Stripe via `constructEvent`, Coinbase via HMAC-SHA256 of
+    the body — and a direct provider lookup covers the sender-returns-before-webhook
+    race. `WAYSTATION_PAYMENTS_MODE=test` short-circuits the network for the proof.
+  - **Integrity**: the order's `priced_bytes` is the upload budget, reserved
+    atomically at `POST /uploads` (`consumeOrderBudget`) so declaring/uploading more
+    than paid is refused; the multipart plan is sized from the declared size, which
+    bounds B2 bytes. `transfers.downloads_allowed` is set from the ORDER at complete
+    (never a client value). The download count is enforced on
+    `GET /transfers/:id/original` by GRANTS (`download_grants`): one download = one
+    grant, so a resumed or parallel download of one file spends one credit and the
+    (N+1)th ungranted request is `403 downloads_exhausted`. `downloads_allowed` is
+    NULLABLE = **unlimited**, so comped/admin and pre-feature transfers are never
+    retroactively capped.
+- Why it matters: it makes the tool a product without a signup system, keeps the
+  API authoritative (a paid budget and a download count a client cannot inflate),
+  and reuses the existing session/ownership/metering machinery instead of adding a
+  parallel one.
+- Rejected: per-file charging (a flat fee per file punishes multi-file sends);
+  storing a downloads-used counter (grants are the audit trail a charged feature
+  needs — `COMMERCIAL_DELIVERY_PLAN.md`); a NOT-NULL `downloads_allowed` default of
+  2 (would retroactively cap every existing link on migration).
+- Verified: `scripts/payment-gateway-proof.sh` (pricing, v4→v5 in-place migration,
+  quote, pre-payment refusal, webhook signature + underpayment, payment-backed
+  session, budget enforcement, `downloads_allowed` from the order, grant reuse,
+  exhaustion, comped uncapped). The transfer/password/mediated-download proofs stay
+  green. Not built yet: emailing the capability URL, magic-link recovery, credit
+  top-up/refunds, a full `owners` table.
+
 ### 2026-09-17 - QC preview: the tab is a showcase for clients, live for the admin
 
 - Context: production is transfer-only, yet the Transfer + QC tab was fully

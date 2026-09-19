@@ -1,8 +1,11 @@
 import { Check, Copy, Eye, EyeOff, createElement as createIcon } from "lucide";
-import { createSession, endSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink } from "./config.js";
+import {
+  createSession, endSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink,
+  paymentQuote, startCheckout, claimPaymentSession,
+} from "./config.js";
 import { copyText } from "./clipboard.js";
 import { appendUniqueFiles, fileIdentity } from "./fileQueue.js";
-import { formatBytes } from "./format.js";
+import { formatBytes, formatUsd } from "./format.js";
 import { uploadFile, type Progress, type ServiceOptions } from "./uploader.js";
 import { renderDelivery } from "./delivery.js";
 import { mountAdmin } from "./admin.js";
@@ -23,13 +26,14 @@ async function openSender(): Promise<void> {
     // Gateway unreachable: show the sender UI and let the first real call
     // report the failure, rather than trapping the user behind a code box.
     senderEl.hidden = false;
+    revealSender(false, undefined, undefined, false);
     return;
   }
-  if (!status.authRequired || status.hasSession) {
-    revealSender(status.admin === true, status.who, status.qc);
-    return;
-  }
-  showGate();
+  // Payment authorizes the public: a visitor with no session is NOT sent to the
+  // access-code gate — they see the sender and pay per transfer. A code or admin
+  // session (or auth-disabled dev) is "comped" and uploads for free.
+  const comped = !status.authRequired || status.hasSession === true;
+  revealSender(status.admin === true, status.who, status.qc, comped);
 }
 
 /** Whether this viewer may start a QC upload. Resolved by the gateway per
@@ -40,7 +44,7 @@ const setQcPreview = (qc: unknown): void => {
   document.dispatchEvent(new Event("qc-mode-changed"));
 };
 
-function revealSender(admin: boolean, who?: string, qc?: string): void {
+function revealSender(admin: boolean, who: string | undefined, qc: string | undefined, comped: boolean): void {
   gateEl.hidden = true;
   senderEl.hidden = false;
   setQcPreview(qc);
@@ -52,12 +56,16 @@ function revealSender(admin: boolean, who?: string, qc?: string): void {
       await endSession().catch(() => {});
       whoami.hidden = true;
       document.querySelector<HTMLDetailsElement>("#admin")!.hidden = true;
-      showGate("Signed out. Enter a code to continue.");
+      void openSender();   // return to the public, pay-per-use sender — not the gate
     };
   } else {
     whoami.hidden = true;
   }
   if (admin) mountAdmin(document.querySelector<HTMLDetailsElement>("#admin")!);
+  // Tell the sender-view logic whether this session uploads for free (comped) or
+  // must pay per transfer. The listener is registered synchronously in the sender
+  // block below; this fires after the awaited /session call, so it is caught.
+  document.dispatchEvent(new CustomEvent("sender-auth", { detail: { comped } }));
 }
 
 /** The access panel. Also the landing place when a session is revoked
@@ -83,7 +91,7 @@ function showGate(message = ""): void {
       // Which panel to show depends on which code was accepted; ask rather
       // than assume, because the login response deliberately says nothing.
       const after = await gwGet("/session").catch(() => ({}));
-      revealSender(after?.admin === true, after?.who, after?.qc);
+      revealSender(after?.admin === true, after?.who, after?.qc, true);
     } catch (e) {
       msg.textContent =
         e instanceof GatewayError ? e.message : "Could not reach the waystation.";
@@ -128,10 +136,24 @@ if (tid) {
   const reviewBriefRow = $("#reviewBriefRow");
   const recipientPassword = $<HTMLInputElement>("#recipientPassword");
   const togglePassword = $<HTMLButtonElement>("#togglePassword");
+  // Pay-per-gig UI.
+  const payPanel = $("#payPanel");
+  const downloadsSelect = $<HTMLSelectElement>("#downloadsAllowed");
+  const payTotal = $("#payTotal");
+  const payCard = $<HTMLButtonElement>("#payCard");
+  const payCrypto = $<HTMLButtonElement>("#payCrypto");
+  const payMsg = $("#payMsg");
+  const paidNote = $("#paidNote");
+  const signInRow = $("#signInRow");
+  const signInBtn = $<HTMLButtonElement>("#signIn");
   type SenderMode = "transfer" | "qc";
   let mode: SenderMode = "transfer";
   let queuedFiles: File[] = [];
   let sending = false;
+  let comped = false;   // access-code / admin / dev session → uploads are free
+  let paid = false;     // authorized to upload: comped, or a claimed paid order
+  let quoteToken = 0;   // guards against out-of-order price responses
+  let lastQuoteKey = ""; // skip re-quoting when nothing priced-relevant changed
 
   const icon = (node: any, label?: string): SVGElement => createIcon(node, {
     width: "18", height: "18", "stroke-width": "1.8",
@@ -273,8 +295,154 @@ if (tid) {
     modeQc.disabled = sending;
     recipientPassword.disabled = sending;
     togglePassword.disabled = sending;
+    // Payment gate: an unpaid public sender cannot send until a payment clears.
+    // "Payment required" replaces the label so the greyed-out reason is obvious.
+    const paymentRequired = mode === "transfer" && !paid && !comped && !sending;
+    if (paymentRequired) {
+      sendBtn.disabled = true;
+      if (count > 0) sendBtn.textContent = "Payment required";
+    }
+    downloadsSelect.disabled = sending;
+    void updatePayPanel();
     refreshSidecars();
   };
+
+  // ── payment (pay-per-gig) ──
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+  /** Price the queued batch for both gateways and render the pay panel. Shown only
+   *  to an unpaid public sender in Transfer mode with files queued. Cheap to call
+   *  from renderQueue: it re-quotes only when the total size or download count
+   *  actually changed, and ignores a stale response a newer one superseded. */
+  async function updatePayPanel(): Promise<void> {
+    const totalBytes = queuedFiles.reduce((sum, f) => sum + f.size, 0);
+    const show = mode === "transfer" && !paid && !comped && totalBytes > 0 && !sending;
+    payPanel.hidden = !show;
+    if (!show) { lastQuoteKey = ""; return; }
+    const downloads = Number(downloadsSelect.value) || 2;
+    const key = `${totalBytes}:${downloads}`;
+    if (key === lastQuoteKey) return;
+    lastQuoteKey = key;
+    const token = ++quoteToken;
+    payCard.disabled = true;
+    payCrypto.disabled = true;
+    payTotal.textContent = "Calculating price…";
+    try {
+      const q = await paymentQuote(totalBytes, downloads);
+      if (token !== quoteToken) return; // a newer request superseded this one
+      const parts: string[] = [];
+      if (q.stripe) parts.push(`Card ${formatUsd(q.stripe.amountCents)}`);
+      if (q.coinbase) parts.push(`Crypto ${formatUsd(q.coinbase.amountCents)}`);
+      payTotal.replaceChildren();
+      const strong = document.createElement("strong");
+      strong.textContent = parts.join(" · ") || "Payment unavailable";
+      payTotal.append(strong, document.createTextNode(
+        ` — ${formatBytes(totalBytes)}, ${downloads} download${downloads === 1 ? "" : "s"}`));
+      payCard.disabled = !q.stripe;
+      payCrypto.disabled = !q.coinbase;
+    } catch (e) {
+      if (token !== quoteToken) return;
+      lastQuoteKey = ""; // let the next call retry
+      payTotal.textContent = e instanceof GatewayError ? e.message : "Could not fetch the price.";
+    }
+  }
+
+  async function beginCheckout(gateway: "stripe" | "coinbase"): Promise<void> {
+    const totalBytes = queuedFiles.reduce((sum, f) => sum + f.size, 0);
+    if (!totalBytes) return;
+    const downloads = Number(downloadsSelect.value) || 2;
+    payCard.disabled = true;
+    payCrypto.disabled = true;
+    payMsg.textContent = "Starting secure checkout…";
+    try {
+      const res = await startCheckout(gateway, totalBytes, downloads);
+      // File objects do NOT survive the redirect. Remember what to re-select so
+      // the return screen can name the exact files — a convenience, not a gate:
+      // the gateway holds the upload to the paid byte budget regardless.
+      try {
+        sessionStorage.setItem(`ws_pay_${res.orderId}`, JSON.stringify({
+          files: queuedFiles.map((f) => ({ name: f.name, size: f.size })),
+          downloads, totalBytes,
+        }));
+      } catch { /* private windows block storage; the descriptor is optional */ }
+      location.assign(res.url);
+    } catch (e) {
+      payMsg.textContent = e instanceof GatewayError ? e.message : "Could not start checkout. Please try again.";
+      payCard.disabled = false;
+      payCrypto.disabled = false;
+    }
+  }
+
+  payCard.onclick = () => void beginCheckout("stripe");
+  payCrypto.onclick = () => void beginCheckout("coinbase");
+  downloadsSelect.onchange = () => void updatePayPanel();
+  signInBtn.onclick = () => showGate();
+
+  // Learn from revealSender whether this session pays or is comped, then repaint.
+  document.addEventListener("sender-auth", (event) => {
+    comped = (event as CustomEvent<{ comped: boolean }>).detail?.comped === true;
+    paid = comped;                 // comped sessions are already authorized
+    signInRow.hidden = comped;     // offer the code sign-in only to public senders
+    renderQueue();
+  });
+
+  /** On return from a provider redirect (?order=…&paid=1 / &canceled=1): claim the
+   *  paid order for an upload session, then ask the sender to re-select the files
+   *  they paid for (File handles cannot cross a navigation). */
+  async function handlePaymentReturn(): Promise<void> {
+    const params = new URLSearchParams(location.search);
+    const orderId = params.get("order");
+    if (!orderId) return;
+    const returnedPaid = params.get("paid") === "1";
+    const returnedCanceled = params.get("canceled") === "1";
+    // Scrub the query so a refresh does not re-run this.
+    const clean = new URL(location.href);
+    clean.search = "";
+    history.replaceState(null, "", clean.toString());
+
+    if (returnedCanceled) {
+      paidNote.hidden = false;
+      paidNote.textContent = "Payment canceled. Choose a file and try again when you're ready.";
+      return;
+    }
+    if (!returnedPaid) return;
+
+    paidNote.hidden = false;
+    paidNote.textContent = "Confirming your payment…";
+    // The server does a direct provider lookup when its webhook hasn't landed yet;
+    // a brief retry covers the gap on a slow confirmation.
+    let session: Awaited<ReturnType<typeof claimPaymentSession>> | null = null;
+    for (let attempt = 0; attempt < 4 && !session; attempt += 1) {
+      try {
+        session = await claimPaymentSession(orderId);
+      } catch (e) {
+        if (e instanceof GatewayError && e.status === 402) { await sleep(1500); continue; }
+        paidNote.textContent = e instanceof GatewayError ? e.message : "We couldn't confirm the payment.";
+        return;
+      }
+    }
+    if (!session?.authorized) {
+      paidNote.textContent = "Payment is still processing — refresh in a moment to continue your upload.";
+      return;
+    }
+
+    paid = true;
+    signInRow.hidden = true;
+    payPanel.hidden = true;
+    let expect: { files?: { name: string; size: number }[] } | null = null;
+    try {
+      const raw = sessionStorage.getItem(`ws_pay_${orderId}`);
+      if (raw) expect = JSON.parse(raw);
+    } catch { /* ignore */ }
+    const names = expect?.files?.length
+      ? " " + expect.files.map((f) => `${f.name} (${formatBytes(f.size)})`).join(", ")
+      : "";
+    const plural = (expect?.files?.length ?? 1) === 1 ? "" : "s";
+    paidNote.textContent =
+      `✓ Payment received — this link allows ${session.downloads ?? 2} downloads. ` +
+      `Re-select your file${plural} to start the upload:${names}`;
+    renderQueue();
+  }
 
   const addFiles = (incoming: FileList | File[]): void => {
     if (sending) return;
@@ -551,4 +719,5 @@ if (tid) {
   };
 
   setMode("transfer");
+  void handlePaymentReturn();
 }

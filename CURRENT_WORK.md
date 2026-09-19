@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-09-17
+Updated: 2026-09-19
 Branch: `codex/hosted-waystation-mvp` (the trunk — `main` is fast-forwarded to
 follow it, and the two should always be equal)
 
@@ -34,6 +34,20 @@ not assume a running worker, a scratch disk, or GMI spend.
 
 ## Recently completed
 
+- **2026-09-19** — **pay-per-gig dual-gateway checkout, built in source and proven
+  locally, NOT yet deployed** (uncommitted working tree at time of writing).
+  Public senders pay by card (Stripe Checkout) or crypto (Coinbase Commerce); a
+  confirmed payment mints a payment-backed upload session and *is* the
+  authorization (no access code). Pricing $0.02/decimal GB + per-gateway markup,
+  per-link download allowance (2 included, up to 10, extras at 2% of base). New:
+  `gateway/src/pricing.ts`, `gateway/src/payments.ts`, `payment_orders` +
+  `download_grants` tables + `transfers.downloads_allowed` (schema **v5**),
+  `/payments/*` routes, budget + download-credit enforcement; client pay panel +
+  downloads selector + return-from-checkout handling. `scripts/payment-gateway-proof.sh`
+  PASS; transfer/password/mediated-download proofs stay green; gateway type-checks,
+  client builds. `DECISIONS.md` 2026-09-19. **Before deploy**: set payment keys +
+  `WAYSTATION_PUBLIC_BASE_URL` + the large-file/quota ceilings on the VPS, register
+  both webhook endpoints, and re-pin the client build into OrbitWebsite.
 - **2026-09-17** — QC preview mode (`WAYSTATION_QC_MODE=preview`): the
   Transfer + QC tab stays visible to clients as a greyed-out showcase, a
   client's QC initiate is refused 403 before spend, the admin stays live.
@@ -110,9 +124,13 @@ once — sessions issued before this release are rejected by design.
 The engine is parked, but the **direction is set**: turn Waystation into a
 client-facing paid transfer service. `docs/COMMERCIAL_DELIVERY_PLAN.md` holds
 the design and the decisions already taken; `NEXT_STEPS.md` holds the ordered
-track. Steps 2 (mediated download) and 5 (parallel ranges) are done. **Step 1,
-payment + identity, remains blocked on an undecided pricing model** — nothing
-on the commercial track can start until the user decides what is charged for.
+track. Steps 2 (mediated download) and 5 (parallel ranges) were already done.
+**Step 1 (payment + identity) and the core of step 3 (download credits) are now
+built in source (2026-09-19) — the pricing model the owner set unblocked them.**
+The commercial track's next actionable move is to **deploy** that work: set the
+payment keys, `WAYSTATION_PUBLIC_BASE_URL`, and the large-file/quota ceilings on
+the VPS; register the Stripe and Coinbase webhook endpoints; and re-pin a fresh
+client build into OrbitWebsite via `docs/waystation-release.md`.
 
 Until then the actionable items are the two in **Open** above and the two
 under **Now** in `NEXT_STEPS.md`. If the next task touches the worker image or

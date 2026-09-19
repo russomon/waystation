@@ -216,12 +216,15 @@ once, and the prerequisite for parallel downloads.
 Step 1, by contrast, is blocked on a decision nobody has made yet — the pricing
 model. You cannot build a checkout without knowing what it charges for.
 
-1. **Payment + email, attached to an owner.** The `owner_id` half is done
-   (2026-09-17: named access codes, `owners`-equivalent rows in
-   `access_codes`). What remains: take the card, capture the email, attach
-   both to the owner, and email the sender capability URL. Payment still comes
-   **first, not last** — for a pay-per-use product it *is* the authorization.
-   The shared code no longer needs to retire; it is the operator's admin code.
+1. **Payment + email, attached to an owner.** **Dual-gateway checkout built
+   2026-09-19** (`DECISIONS.md` 2026-09-19; `scripts/payment-gateway-proof.sh`):
+   Stripe (cards) + Coinbase Commerce (crypto), priced at $0.02/decimal GB + a
+   per-gateway markup, with a per-link download allowance (2 included, up to 10).
+   A confirmed payment mints a payment-backed upload session and *is* the
+   authorization; the payer email is captured and stored on the order; the
+   `owner_id` half was already done (2026-09-17). **Still remaining**: email the
+   sender their capability URL at creation (with magic-link recovery, step 6), and
+   a fuller `owners` table (email rides on the order + `transfers.owner_id` for now).
 2. ~~**Gateway-mediated download + egress metering**~~ — **DONE 2026-09-05.**
    `GET /transfers/:id/original`, proven by `scripts/mediated-download-proof.sh`.
    The recipient no longer receives a storage URL for the master; revocation
@@ -231,7 +234,11 @@ model. You cannot build a checkout without knowing what it charges for.
    That stops a sixteen-connection download billing sixteen times, and is
    replaced by the grant ledger in step 3, which knows exactly when a download
    began and what it was entitled to.
-3. **Download credits** — grants, byte budgets, top-up.
+3. **Download credits** — ~~grants, default 2 per link (up to 10),
+   count-by-grant not by request, 7-day resume~~ **built 2026-09-19** with the pay
+   flow (`download_grants`; `GET /transfers/:id/original` claims one grant per
+   download and refuses past `downloads_allowed`). Remaining: the 1.7× byte budget
+   per grant and post-send top-up.
 4. **Per-transfer expiry selection** — small; the column already exists.
 5. ~~**Parallel ranged downloads**~~ — **DONE 2026-09-05**, against the endpoint
    from 2 exactly as intended. One authorization resolves the redirect once and

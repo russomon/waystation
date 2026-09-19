@@ -21,7 +21,7 @@ import {
 } from "node:crypto";
 import type { Context, MiddlewareHandler, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { accessCodeActive } from "./db.js";
+import { accessCodeActive, getOrder } from "./db.js";
 
 const env = process.env as Record<string, string | undefined>;
 
@@ -154,25 +154,35 @@ function sign(payload: string): string {
 
 export interface Session {
   sid: string;
-  /** Who this session acts as: an access_codes.code_id, or ADMIN_OWNER. */
+  /** Who this session acts as: an access_codes.code_id, ADMIN_OWNER, or the fresh
+   *  owner id minted for a paid order. */
   ownerId: string;
   admin: boolean;
+  /** Present when this session was minted by a PAID order rather than an access
+   *  code. It authorizes uploads against that order's budget — see requireSession
+   *  and the /uploads initiate route. */
+  orderId?: string;
 }
 
 export function issueSession(
-  who: { ownerId: string; admin: boolean },
+  who: { ownerId: string; admin: boolean; orderId?: string },
   existingSid?: string,
 ): { token: string; sid: string; expiresAt: number } {
   const sid = existingSid ?? randomUUID();
   const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
   const payload = b64url(
-    Buffer.from(JSON.stringify({ sid, exp: expiresAt, oid: who.ownerId, adm: who.admin })),
+    Buffer.from(
+      JSON.stringify({
+        sid, exp: expiresAt, oid: who.ownerId, adm: who.admin,
+        ...(who.orderId ? { ord: who.orderId } : {}),
+      }),
+    ),
   );
   return { token: `${payload}.${sign(payload)}`, sid, expiresAt };
 }
 
 export const refreshSession = (s: Session): { token: string; sid: string; expiresAt: number } =>
-  issueSession({ ownerId: s.ownerId, admin: s.admin }, s.sid);
+  issueSession({ ownerId: s.ownerId, admin: s.admin, orderId: s.orderId }, s.sid);
 
 /** Returns the session, or null when absent, tampered, expired — or issued
  *  before sessions carried an owner (`oid`), which forces one re-login after
@@ -185,10 +195,10 @@ export function readSessionToken(token: string | undefined): Session | null {
   const givenMac = Buffer.from(mac);
   if (expectedMac.length !== givenMac.length || !timingSafeEqual(expectedMac, givenMac)) return null;
   try {
-    const { sid, exp, oid, adm } = JSON.parse(Buffer.from(payload, "base64url").toString());
+    const { sid, exp, oid, adm, ord } = JSON.parse(Buffer.from(payload, "base64url").toString());
     if (typeof sid !== "string" || typeof exp !== "number" || Date.now() > exp) return null;
     if (typeof oid !== "string" || !oid) return null;
-    return { sid, ownerId: oid, admin: adm === true };
+    return { sid, ownerId: oid, admin: adm === true, orderId: typeof ord === "string" && ord ? ord : undefined };
   } catch {
     return null;
   }
@@ -271,6 +281,31 @@ function verifyRecipientToken(token: string | undefined, transferId: string): bo
 export const hasRecipientUnlock = (c: Context, transferId: string): boolean =>
   verifyRecipientToken(getCookie(c, recipientCookie(transferId)), transferId);
 
+// ── download-grant cookie (one download's continuation) ──
+//
+// The grant id itself is the bearer token — a random UUID looked up in
+// download_grants and scoped to one transfer. It rides in a Strict, HttpOnly,
+// transfer-scoped cookie so a browser resuming or parallel-ranging a download is
+// recognised as the SAME download and does not spend another credit. Non-browser
+// tools pass it back as ?grant=… instead.
+const grantCookieName = (transferId: string): string =>
+  `ws_g_${transferId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 64)}`;
+
+export const getDownloadGrantCookie = (c: Context, transferId: string): string | undefined =>
+  getCookie(c, grantCookieName(transferId));
+
+export function setDownloadGrantCookie(
+  c: Context, transferId: string, grantId: string, ttlSeconds: number,
+): void {
+  setCookie(c, grantCookieName(transferId), grantId, {
+    httpOnly: true,
+    sameSite: "Strict",
+    secure: IS_PRODUCTION,
+    path: "/api",
+    maxAge: ttlSeconds,
+  });
+}
+
 // ── download tickets ──
 //
 // A ticket authorizes one transfer's original for whoever holds it — but unlike
@@ -306,11 +341,21 @@ export const requireSession: MiddlewareHandler = async (c: Context, next: Next) 
   const s = sessionOf(c);
   if (!s)
     return c.json({ error: "Session required or expired.", code: "session_required" }, 401);
-  // Revocation is live: a named code is re-checked on every credentialed call
-  // (in-process SQLite, microseconds), so revoking it cuts the holder off at
-  // their next request rather than when the cookie happens to expire. The
-  // environment code has no row and cannot be revoked here — rotate it.
-  if (!s.admin && !accessCodeActive(s.ownerId)) {
+  if (s.orderId) {
+    // Payment-backed session: authorized by its PAID order, not an access code.
+    // The per-initiate budget guard (consumeOrderBudget) is what bounds how much
+    // may be uploaded; here we only require the order to still be paid, so an
+    // in-flight upload whose budget is already reserved can always finish.
+    const order = getOrder(s.orderId);
+    if (!order || order.status !== "paid") {
+      clearSessionCookie(c);
+      return c.json({ error: "Payment session is no longer valid.", code: "session_unpaid" }, 401);
+    }
+  } else if (!s.admin && !accessCodeActive(s.ownerId)) {
+    // Revocation is live: a named code is re-checked on every credentialed call
+    // (in-process SQLite, microseconds), so revoking it cuts the holder off at
+    // their next request rather than when the cookie happens to expire. The
+    // environment code has no row and cannot be revoked here — rotate it.
     clearSessionCookie(c);
     return c.json({ error: "This access code has been revoked.", code: "session_revoked" }, 401);
   }

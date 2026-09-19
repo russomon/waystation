@@ -18,20 +18,29 @@ Each step depends on the one above it. Full rationale in
 `docs/COMMERCIAL_DELIVERY_PLAN.md`; do not start one of these without reading
 it, because several obvious-looking shortcuts are already ruled out there.
 
-1. **Payment + identity.** Take the card, capture the email, mint a durable
-   `owner_id`, and write it where the ephemeral `sessionId` goes today. Email
-   the sender their capability URL at creation. Payment comes **first, not
-   last** — it produces the identity everything else is keyed to, and for
-   pay-per-use it *is* the authorization. **No signup, no passwords, no
-   dashboard**: email identifies, the capability URL authorizes.
+1. ~~**Payment + identity.**~~ **Dual-gateway checkout built 2026-09-19**
+   (`DECISIONS.md` 2026-09-19; `scripts/payment-gateway-proof.sh`). A public sender
+   pays by card (Stripe) or crypto (Coinbase); a confirmed payment mints a
+   payment-backed upload session and **is** the authorization — no code, no signup.
+   Pricing: $0.02/decimal GB + a per-gateway markup, with a per-link download
+   allowance (2 included, up to 10, extras at 2% of base). Access codes stay for
+   comped/admin free uploads. **Remaining follow-ups**: email the sender their
+   capability URL at creation + magic-link recovery (the payer email is captured and
+   stored on the order, but no mail is sent yet); a fuller `owners` table (email
+   currently rides on the order alongside the existing `transfers.owner_id`).
 2. ~~**Gateway-mediated download + egress metering.**~~ **DONE 2026-09-05.**
    `GET /transfers/:id/original` redirects to a freshly minted presigned URL
    after re-checking revocation and expiry, and meters egress once per transfer
    per hour rather than once per range. Proven by
    `scripts/mediated-download-proof.sh`. Credits and grant issuance hang off
    this endpoint next.
-3. **Download credits.** Grants with a 1.7× byte budget, 7-day resume, default
-   2 per link, top-up any time. Counting *requests* is wrong — see the plan.
+3. **Download credits.** ~~Grants, default 2 per link (up to 10), count-by-grant
+   not by request, 7-day resume~~ **built 2026-09-19** with the pay flow
+   (`download_grants`; `GET /transfers/:id/original` claims one grant per download
+   and refuses past `downloads_allowed` with `downloads_exhausted`). **Remaining**:
+   the 1.7× byte budget per grant (the column exists; enforcement is deferred — a
+   redirect hides byte counts from the gateway until the CDN worker is deployed) and
+   post-send credit **top-up**.
 4. **Per-transfer expiry selection** (7 / 14 / 21 / 30 days). Small: the
    `expires_at` column is already per-transfer, only the input is global.
 5. **Magic-link recovery** for a sender who loses their capability URL —
@@ -42,6 +51,11 @@ it, because several obvious-looking shortcuts are already ruled out there.
 7. **Re-scope the upload quotas.** Do this WITH billing, not before — the right
    ceiling is a pricing question, and raising the numbers now would only defer
    the same problem.
+
+   Partly addressed 2026-09-19: a **paid** session now bypasses the job-count caps
+   (`MAX_JOBS_PER_SESSION`, `MAX_DAILY_JOBS`) at `POST /uploads` — the prepaid byte
+   budget is the control instead. Comped/access-code sessions still hit them. The
+   large-file ceilings still need setting for production (see below).
 
    `MAX_JOBS_PER_SESSION` and `MAX_DAILY_JOBS` are named for jobs but count
    **completed uploads in a rolling 24 hours**, checked at `POST /uploads`.

@@ -36,3 +36,10 @@ export function formatBytes(n: number): string {
   // 50 MB, and a recipient checking against Finder expects to see it.
   return `${value >= 100 ? value.toFixed(1) : value.toFixed(2)} ${unit}`;
 }
+
+/** US dollars from an integer cent amount: 113 -> "$1.13". The price, the invoice
+ *  and the charge are all in whole cents, so formatting is the only rounding. */
+export function formatUsd(cents: number): string {
+  if (!Number.isFinite(cents)) return "—";
+  return `$${(cents / 100).toFixed(2)}`;
+}

@@ -194,6 +194,19 @@
                              border-radius: 6px 0 0 6px; font: 15px/1 'IBM Plex Mono', monospace; }
       .password-wrap .icon-button { border-left: 0; border-radius: 0 6px 6px 0; }
       .field-help { margin: .35rem 0 0; color: var(--mut); font-size: 12.5px; }
+      .pay-panel { margin: 1rem 0; padding: 1rem; border: 1px solid var(--blue); border-radius: 8px; background: #242012; }
+      .pay-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+      .pay-panel select { height: 38px; padding: 0 .5rem; border: 1px solid var(--line); border-radius: 6px;
+                          background: var(--surface2); color: var(--ink); font: 14px/1 'IBM Plex Mono', monospace; }
+      .pay-total { margin: .85rem 0 0; font: 14px/1.6 'IBM Plex Mono', monospace; color: var(--mut); }
+      .pay-total strong { color: var(--amber-light); font-size: 15px; }
+      .pay-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-top: .8rem; }
+      .pay-actions .btn { width: 100%; }
+      @media (max-width: 480px) { .pay-actions { grid-template-columns: 1fr; } }
+      .pay-note { margin: 1rem 0; padding: .6rem .8rem; border: 1px solid var(--green); border-radius: 6px;
+                  background: #182018; color: var(--ink); font: 13px/1.5 'IBM Plex Mono', monospace; }
+      .link-btn { background: none; border: 0; color: var(--amber-light); cursor: pointer; font: inherit;
+                  text-decoration: underline; padding: 0; }
       .icon-button { width: 42px; height: 42px; display: inline-grid; place-items: center; flex: 0 0 auto;
                      border: 1px solid var(--line); border-radius: 6px; background: var(--surface2);
                      color: var(--amber-light); cursor: pointer; }
@@ -290,6 +303,9 @@
         <span>Signed in as <strong id="whoLabel"></strong></span>
         <button type="button" class="btn-small" id="signOut">Sign out</button>
       </p>
+      <p class="whoami" id="signInRow" hidden>
+        <button type="button" class="link-btn" id="signIn">Have an access code? Sign in for free transfers</button>
+      </p>
       <div class="mode-switch" role="tablist" aria-label="Waystation service">
         <button type="button" id="modeTransfer" role="tab" aria-selected="true"
                 aria-controls="senderPanel">Transfer</button>
@@ -363,6 +379,31 @@
             Cloud compute <span class="muted">process at the Docker worker &middot; off = this machine</span></label>
         </div>
         </div>
+
+        <div class="pay-panel" id="payPanel" hidden>
+          <div class="pay-row">
+            <label class="field-label" for="downloadsAllowed" style="margin:0">Downloads allowed</label>
+            <select id="downloadsAllowed" aria-describedby="downloadsHelp">
+              <option value="2" selected>2 (included)</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+              <option value="7">7</option>
+              <option value="8">8</option>
+              <option value="9">9</option>
+              <option value="10">10</option>
+            </select>
+          </div>
+          <p id="downloadsHelp" class="field-help">Two downloads are included — one for your recipient and a spare to test the link or send to a second person. Each extra download adds 2% of the transfer price.</p>
+          <p class="pay-total" id="payTotal">Add a file to see the price.</p>
+          <div class="pay-actions">
+            <button type="button" class="btn" id="payCard" disabled>Pay with Credit Card</button>
+            <button type="button" class="btn" id="payCrypto" disabled>Pay with Crypto</button>
+          </div>
+          <p id="payMsg" class="field-help" aria-live="polite"></p>
+        </div>
+        <p class="pay-note" id="paidNote" hidden></p>
 
         <button id="send" class="btn" disabled>Send</button>
         <div id="log" aria-live="polite"></div>

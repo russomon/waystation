@@ -131,7 +131,20 @@ async function drain(
  *  The redirect is still the right shape for a top-level `<a href>` navigation
  *  (not a CORS request) and for curl or aria2c (no CORS at all). */
 async function resolveStorageUrl(url: string): Promise<string> {
-  const res = await fetch(url + (url.includes("?") ? "&" : "?") + "format=json");
+  // Credentialed, unlike the storage fetches below: this hits the gateway's
+  // mediated /original route, which for a paid link claims one download credit and
+  // sets an HttpOnly, transfer-scoped grant cookie. Sending that cookie back (it is
+  // same-site to the gateway, so a Strict cookie is delivered) is what makes a
+  // resumed or reloaded download reuse the SAME credit instead of spending another.
+  // This is JSON, not the 302, so the cross-origin-redirect CORS problem does not
+  // apply here — the storage bytes below are still fetched with a bare fetch.
+  const res = await fetch(url + (url.includes("?") ? "&" : "?") + "format=json", { credentials: "include" });
+  if (res.status === 403) {
+    const body = await res.json().catch(() => null);
+    if (body?.code === "downloads_exhausted")
+      throw Object.assign(new Error(body.error || "This link has reached its download limit."), { code: "downloads_exhausted" });
+    throw new Error(`HTTP ${res.status}`);
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = await res.json();
   if (!body?.url) throw new Error("gateway returned no storage url");
@@ -185,7 +198,15 @@ async function saveToDisk(
   // url — see resolveStorageUrl. If resolution fails we still try the url as
   // given: a deployment that serves storage directly needs no resolution.
   let src = url;
-  try { src = await resolveStorageUrl(url); } catch { /* fall through to url */ }
+  try {
+    src = await resolveStorageUrl(url);
+  } catch (e) {
+    // A spent download limit is terminal — surface it rather than falling through
+    // to a raw fetch of the mediated url, which would only 403 again less clearly.
+    if ((e as { code?: string })?.code === "downloads_exhausted") throw e;
+    /* otherwise fall through to `url`: a deployment that serves storage directly
+       needs no resolution */
+  }
 
   if (total < PARALLEL_MIN_BYTES) return single();
 
@@ -776,6 +797,18 @@ export async function renderDelivery(id: string, root: HTMLElement) {
         elTime.textContent = `done in ${hms((performance.now() - started) / 1000)}${how}`;
         elRate.textContent = "";
       } catch (e) {
+        // Download limit reached: nothing was fetched (resolve failed first), so
+        // there is nothing to salvage. Say so plainly and stop — do not offer a
+        // resume that would only be refused again.
+        if ((e as { code?: string })?.code === "downloads_exhausted") {
+          try { await writable?.abort(); } catch { /* nothing written */ }
+          await clearDownloadResume(t.transferId).catch(() => {});
+          prog.hidden = true;
+          dl.disabled = true;
+          dl.textContent = "✗ " + (e as Error).message;
+          controller = null;
+          return;
+        }
         // Previously this aborted, discarding the partial file so it could not
         // be mistaken for a complete one. Now that ranges are recorded as they
         // land, that partial file is worth keeping — throwing away 7 GB because

@@ -19,6 +19,8 @@ import {
   sessionOf,
   setRecipientUnlockCookie,
   setSessionCookie,
+  getDownloadGrantCookie,
+  setDownloadGrantCookie,
   verifyAccessCode,
   verifyDownloadTicket,
 } from "./auth.js";
@@ -40,6 +42,13 @@ import {
   getUploadByKey,
   getUploadByTransferId,
   setUploadState,
+  createOrder,
+  getOrder,
+  markOrderPaid,
+  setOrderSession,
+  consumeOrderBudget,
+  claimDownloadGrant,
+  getGrant,
   type UploadRow,
 } from "./db.js";
 import {
@@ -64,9 +73,33 @@ import { dispatchPipeline } from "./pipeline.js";
 import { saveTransfer, getTransfer } from "./store.js";
 import { meter, usageFor } from "./metering.js";
 import * as sse from "./sse.js";
+import {
+  quote,
+  quoteAll,
+  clampDownloads,
+  isGateway,
+  INCLUDED_DOWNLOADS,
+  MAX_DOWNLOADS,
+  type Gateway,
+} from "./pricing.js";
+import {
+  createCheckout,
+  parseStripeEvent,
+  parseCoinbaseEvent,
+  lookupPaid,
+  gatewayEnabled,
+  type PaymentEvent,
+} from "./payments.js";
 
 const env = process.env as Record<string, string>;
 export const api = new Hono();
+
+// How long a download grant stays valid — long enough to resume a large transfer
+// over days. A request carrying a live grant is one download's continuation and
+// never spends another credit.
+const GRANT_TTL_DAYS = Number(env.WAYSTATION_DOWNLOAD_GRANT_TTL_DAYS ?? 7);
+const GRANT_TTL_MS = GRANT_TTL_DAYS * 86_400_000;
+const GRANT_TTL_SECONDS = GRANT_TTL_DAYS * 86_400;
 
 // ───────── sender session ─────────
 // The access code is exchanged ONCE for a signed, short-lived, opaque cookie;
@@ -183,6 +216,169 @@ api.post("/admin/codes/:id/revoke", requireAdmin, enforceOrigin, limiter("admin"
   return c.json({ ok: true, revokedAt });
 });
 
+// ───────── payments (pay-per-gig checkout) ─────────
+//
+// Public and unauthenticated: for a public sender, payment IS the authorization —
+// no access code needed (docs/COMMERCIAL_DELIVERY_PLAN.md). `quote` is pure math;
+// `checkout` prices the send, records a PENDING order, and hands back the
+// provider's hosted payment URL; the provider's SIGNED webhook (or a direct-lookup
+// fallback) confirms payment; and `/session` then mints a payment-backed upload
+// session bound to the paid order. A browser's claim that it paid is never trusted.
+
+const PAY_CURRENCY = "USD";
+
+/** Base URL of the sender page, for the provider's success/cancel redirects. Set
+ *  WAYSTATION_PUBLIC_BASE_URL in production (e.g. https://orbitolive.com/waystation/);
+ *  the Origin fallback only fits local dev, where the page is served at the root. */
+const publicBaseUrl = (c: Context): string => {
+  const configured = (env.WAYSTATION_PUBLIC_BASE_URL || "").trim();
+  if (configured) return configured;
+  const origin = c.req.header("origin");
+  return origin ? `${origin.replace(/\/$/, "")}/` : "http://localhost:5173/";
+};
+
+const returnUrls = (c: Context, orderId: string): { successUrl: string; cancelUrl: string } => {
+  const mk = (flag: string): string => {
+    const u = new URL(publicBaseUrl(c));
+    u.searchParams.set("order", orderId);
+    u.searchParams.set(flag, "1");
+    return u.toString();
+  };
+  return { successUrl: mk("paid"), cancelUrl: mk("canceled") };
+};
+
+// Live price for both gateways. No side effects, no external calls; a disabled
+// gateway is returned as null so the UI shows only what it can actually charge on.
+api.post("/payments/quote", enforceOrigin, limiter("quote", 60, 60_000), async (c) => {
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const q = quoteAll(body.bytes, body.downloads);
+  if ("error" in q) return c.json({ error: q.error, code: q.code }, q.status);
+  return c.json({
+    downloads: q.downloads,
+    includedDownloads: INCLUDED_DOWNLOADS,
+    maxDownloads: MAX_DOWNLOADS,
+    stripe: gatewayEnabled("stripe") ? q.stripe : null,
+    coinbase: gatewayEnabled("coinbase") ? q.coinbase : null,
+  });
+});
+
+// Create a checkout for one gateway. The size must be uploadable under this
+// deployment's ceilings/verification policy — checked HERE too, so a sender never
+// pays for a file the upload path would then refuse.
+api.post("/payments/checkout", enforceOrigin, limiter("checkout", 20, 60_000), async (c) => {
+  if (!ACCEPT_UPLOADS)
+    return c.json({ error: "This deployment is not accepting new uploads right now.", code: "uploads_paused" }, 503);
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  if (!isGateway(body.gateway))
+    return c.json({ error: "gateway must be 'stripe' or 'coinbase'.", code: "bad_gateway" }, 400);
+  if (!gatewayEnabled(body.gateway))
+    return c.json({ error: "That payment method is not available.", code: "gateway_unavailable" }, 503);
+  const sized = validateSize(body.bytes);
+  if ("error" in sized) return c.json({ error: sized.error, code: sized.code }, sized.status);
+  const verification = verificationModeForSize(sized.size);
+  if ("error" in verification) return c.json({ error: verification.error, code: verification.code }, verification.status);
+
+  const downloads = clampDownloads(body.downloads);
+  const q = quote(sized.size, downloads, body.gateway);
+  const orderId = crypto.randomUUID();
+  const ownerId = `pay_${crypto.randomUUID()}`;
+
+  let checkout;
+  try {
+    const { successUrl, cancelUrl } = returnUrls(c, orderId);
+    checkout = await createCheckout({
+      orderId, gateway: body.gateway, amountCents: q.amountCents,
+      gb: q.gb, downloads, successUrl, cancelUrl,
+    });
+  } catch {
+    return c.json({ error: "Could not start checkout. Please try again.", code: "checkout_failed" }, 502);
+  }
+
+  createOrder({
+    orderId, gateway: body.gateway, pricedBytes: sized.size, downloads,
+    baseCents: q.baseCents, extraCents: q.extraCents, feeCents: q.feeCents,
+    amountCents: q.amountCents, currency: PAY_CURRENCY,
+    gatewayRef: checkout.gatewayRef, ownerId, expiresAt: checkout.expiresAt,
+  });
+  return c.json({
+    orderId, url: checkout.url, gateway: body.gateway,
+    amountCents: q.amountCents, downloads, expiresAt: checkout.expiresAt ?? null,
+  });
+});
+
+// Mark an order paid from a VERIFIED event, once, after re-checking that the amount
+// the provider collected covers what we priced and the currency matches. An
+// underpayment is refused rather than silently honored — never authorize an upload
+// a sender did not fully pay for.
+function applyPaymentEvent(gateway: Gateway, ev: PaymentEvent): void {
+  if (!ev.paid || !ev.orderId) return;
+  const order = getOrder(ev.orderId);
+  if (!order || order.gateway !== gateway) return;
+  if (ev.amountCents !== undefined && ev.amountCents < order.amountCents) return;
+  if (ev.currency && ev.currency !== order.currency) return;
+  markOrderPaid(order.orderId, ev.email);
+}
+
+// Provider webhooks. Server-to-server: NO session, NO origin check, NO CORS. The
+// raw body is read and the signature verified BEFORE parsing — mirroring
+// POST /events/b2. A non-2xx makes the provider retry, so acknowledge fast.
+api.post("/payments/stripe/webhook", async (c) => {
+  const raw = await c.req.text();
+  const ev = parseStripeEvent(raw, c.req.header("stripe-signature"));
+  if (!ev) return c.text("bad signature", 400);
+  applyPaymentEvent("stripe", ev);
+  return c.json({ received: true });
+});
+
+api.post("/payments/coinbase/webhook", async (c) => {
+  const raw = await c.req.text();
+  const ev = parseCoinbaseEvent(raw, c.req.header("x-cc-webhook-signature"));
+  if (!ev) return c.text("bad signature", 400);
+  applyPaymentEvent("coinbase", ev);
+  return c.json({ received: true });
+});
+
+// Claim the paid order and mint the payment-backed upload session. Called by the
+// client on return from the redirect. If the webhook has not landed yet, fall back
+// to a direct provider lookup so the sender is never stuck behind a race.
+api.post("/payments/:orderId/session", enforceOrigin, limiter("pay-session", 30, 60_000), async (c) => {
+  const orderId = c.req.param("orderId");
+  let order = getOrder(orderId);
+  if (!order) return c.json({ error: "Order not found.", code: "order_not_found" }, 404);
+  if (order.status !== "paid" && order.gatewayRef) {
+    const ev = await lookupPaid(order.gateway as Gateway, order.gatewayRef);
+    if (ev.paid && (ev.amountCents === undefined || ev.amountCents >= order.amountCents)) {
+      markOrderPaid(order.orderId, ev.email);
+      order = getOrder(orderId)!;
+    }
+  }
+  if (order.status !== "paid")
+    return c.json({ status: order.status, authorized: false, code: "payment_pending" }, 402);
+
+  // With sender auth disabled (development) there is no session secret to sign
+  // with, and uploads are already permitted without a session — so report
+  // authorized without minting one. Production runs access-code mode, where the
+  // secret exists and the payment-backed session is what gates the upload.
+  if (authEnabled) {
+    const { token, sid } = issueSession({
+      ownerId: order.ownerId ?? `pay_${order.orderId}`, admin: false, orderId: order.orderId,
+    });
+    setSessionCookie(c, token);
+    setOrderSession(order.orderId, sid);
+  }
+  return c.json({ status: "paid", authorized: true, downloads: order.downloads, pricedBytes: order.pricedBytes });
+});
+
+// Status poll (no session mint) — the UI can check where an order stands.
+api.get("/payments/:orderId", limiter("pay-status", 60, 60_000), (c) => {
+  const order = getOrder(c.req.param("orderId"));
+  if (!order) return c.json({ error: "Order not found.", code: "order_not_found" }, 404);
+  return c.json({
+    status: order.status, gateway: order.gateway, amountCents: order.amountCents,
+    downloads: order.downloads, pricedBytes: order.pricedBytes, expiresAt: order.expiresAt ?? null,
+  });
+});
+
 // ───────── upload (control plane) ─────────
 //
 // Every route here requires a sender session AND verifies that the supplied key
@@ -226,17 +422,23 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
       { error: `At most ${MAX_ACTIVE_UPLOADS_PER_SESSION} uploads may be in flight at once.`, code: "too_many_active" },
       429,
     );
-  const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
-  if (completedSince(sid, dayAgo) >= MAX_JOBS_PER_SESSION)
-    return c.json(
-      { error: "Daily job limit reached for this session.", code: "session_quota" },
-      429,
-    );
-  if (completedSinceAll(dayAgo) >= MAX_DAILY_JOBS)
-    return c.json(
-      { error: "This deployment has reached its daily job ceiling.", code: "daily_quota" },
-      429,
-    );
+  // A paid session is bounded by its prepaid byte budget, not by the QC-era job
+  // caps (those existed to cap GMI spend when every completed upload fired the
+  // pipeline). Comped and access-code sessions still hit the caps.
+  const orderId = sessionOf(c)?.orderId;
+  if (!orderId) {
+    const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
+    if (completedSince(sid, dayAgo) >= MAX_JOBS_PER_SESSION)
+      return c.json(
+        { error: "Daily job limit reached for this session.", code: "session_quota" },
+        429,
+      );
+    if (completedSinceAll(dayAgo) >= MAX_DAILY_JOBS)
+      return c.json(
+        { error: "This deployment has reached its daily job ceiling.", code: "daily_quota" },
+        429,
+      );
+  }
 
   const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
   // Which tab the sender is on. In preview only the admin may start a QC
@@ -252,6 +454,16 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
   if ("error" in sized) return c.json({ error: sized.error, code: sized.code }, sized.status);
   const verification = verificationModeForSize(sized.size);
   if ("error" in verification) return c.json({ error: verification.error, code: verification.code }, verification.status);
+
+  // Reserve the declared size against the paid order's budget — atomically and
+  // BEFORE any B2 multipart exists, so a refused request leaves no remote state.
+  // The multipart plan is sized from the declared size, so charging it here bounds
+  // what can actually land in the bucket. A batch draws down one shared budget.
+  if (orderId && !consumeOrderBudget(orderId, sized.size))
+    return c.json(
+      { error: "This exceeds the data you paid for. Start a new checkout for the additional files.", code: "insufficient_paid_budget" },
+      402,
+    );
 
   // contentType is INFORMATIONAL: recorded and forwarded, never trusted to
   // decide what work runs.
@@ -370,6 +582,12 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   // record is written so the policy survives a restart and the B2 event path
   // sees the same decision.
   const { options, disabled } = applyServicePolicy(requested, bytes);
+  // Paid links carry the download allowance the sender paid for. The ORDER is the
+  // source of truth — a client cannot request more downloads than it paid for by
+  // sending a larger number here. Comped/admin transfers leave it unset (NULL =
+  // unlimited), which preserves the pre-feature behaviour.
+  const payOrderId = sessionOf(c)?.orderId;
+  const downloadsAllowed = payOrderId ? getOrder(payOrderId)?.downloads : undefined;
   // Always record — the event path needs `options` even without a hash root.
   // Recipient links are bearer capabilities, so they carry an expiry from the
   // moment they exist (RECIPIENT_LINK_TTL_DAYS=0 disables expiry).
@@ -384,6 +602,7 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
       : undefined,
     passwordHash: recipientPassword ? hashAccessCode(recipientPassword) : undefined,
     ownerId: owned.row.ownerId ?? undefined,
+    downloadsAllowed,
   });
   // Report the skip honestly rather than silently dropping a requested service.
   if (disabled.length)
@@ -528,6 +747,28 @@ api.get("/transfers/:id/original", async (c) => {
   if (!original || !belongsToTransfer(original.key, id)) return c.json({ error: "not found" }, 404);
   const key = original.key;
 
+  // Download allowance. NULL = unlimited (comped/admin/pre-feature transfers) — no
+  // check. A finite allowance is enforced by GRANTS: a request carrying a live
+  // grant for this transfer is one download's continuation (a resume, or the many
+  // range requests of a parallel download) and never re-consumes; the first
+  // ungranted hit either claims one credit or is refused when they are all spent.
+  let grant: string | undefined;
+  const transfer = getTransfer(id);
+  const allowed = transfer?.downloadsAllowed;
+  if (typeof allowed === "number") {
+    const presented = c.req.query("grant") || getDownloadGrantCookie(c, id);
+    const held = presented ? getGrant(presented) : undefined;
+    if (held && held.transferId === id && Date.now() <= held.expiresAt) {
+      grant = presented!;
+    } else {
+      const claimed = claimDownloadGrant(id, allowed, GRANT_TTL_MS);
+      if (!claimed)
+        return c.json({ error: "This link has reached its download limit.", code: "downloads_exhausted" }, 403);
+      setDownloadGrantCookie(c, id, claimed, GRANT_TTL_SECONDS);
+      grant = claimed;
+    }
+  }
+
   // Egress metering. Honest about what it can and cannot see: because this is a
   // redirect, the gateway learns that a download STARTED but never how many
   // bytes actually moved — the transfer happens between the recipient and B2.
@@ -564,7 +805,7 @@ api.get("/transfers/:id/original", async (c) => {
   // the contexts where it genuinely works — a top-level `<a href>` navigation
   // is not a CORS request at all, and curl/aria2c have no CORS to satisfy —
   // which is what makes this a stable link for multi-connection tools.
-  if (c.req.query("format") === "json") return c.json({ url: storage });
+  if (c.req.query("format") === "json") return c.json({ url: storage, grant });
   return c.redirect(storage, 302);
 });
 

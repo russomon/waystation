@@ -14,9 +14,9 @@
 // from a recorded JSON object. Persisting faithfully is the fix; the semantics
 // are unchanged.
 import { DatabaseSync } from "node:sqlite";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 // :memory: is the default so dev and the proof suite stay clean and isolated.
 // Production must set a real path on a persistent volume — and fails closed
@@ -125,6 +125,59 @@ function migrate(): void {
     if (!cols("transfers").includes("owner_id"))
       db.exec(`ALTER TABLE transfers ADD COLUMN owner_id TEXT`);
   }
+  if (current < 5) {
+    // Pay-per-gig checkout. A payment order is priced BEFORE any upload exists:
+    // it records the byte budget the sender paid for and how many downloads the
+    // resulting link may serve, and it is the durable authorization the upload
+    // session is minted from (docs/COMMERCIAL_DELIVERY_PLAN.md, Step 1).
+    //
+    // download_grants is Step 3's ledger: one download is a GRANT, not an HTTP
+    // request, so a resumed or many-connection download of one file counts once.
+    // Used-count is derived by COUNTING grants — deliberately no stored counter,
+    // because a charged feature needs an audit trail (metering.ts's principle).
+    //
+    // transfers.downloads_allowed is NULLABLE on purpose: NULL means "unlimited",
+    // which is the pre-feature behaviour every existing row and every comped/admin
+    // transfer keeps. Only a PAID transfer gets a finite count (2..10), so this
+    // migration never retroactively caps a link that was already sent.
+    const cols = (table: string) =>
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols("transfers").includes("downloads_allowed"))
+      db.exec(`ALTER TABLE transfers ADD COLUMN downloads_allowed INTEGER`);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS payment_orders (
+        order_id       TEXT PRIMARY KEY,
+        gateway        TEXT NOT NULL,
+        status         TEXT NOT NULL DEFAULT 'pending',
+        priced_bytes   INTEGER NOT NULL,
+        downloads      INTEGER NOT NULL DEFAULT 2,
+        base_cents     INTEGER NOT NULL DEFAULT 0,
+        extra_cents    INTEGER NOT NULL DEFAULT 0,
+        fee_cents      INTEGER NOT NULL DEFAULT 0,
+        amount_cents   INTEGER NOT NULL,
+        currency       TEXT NOT NULL DEFAULT 'USD',
+        gateway_ref    TEXT,
+        owner_id       TEXT,
+        email          TEXT,
+        consumed_bytes INTEGER NOT NULL DEFAULT 0,
+        session_id     TEXT,
+        created_at     TEXT NOT NULL,
+        paid_at        TEXT,
+        expires_at     TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_orders_gateway_ref ON payment_orders(gateway_ref);
+
+      CREATE TABLE IF NOT EXISTS download_grants (
+        grant_id     TEXT PRIMARY KEY,
+        transfer_id  TEXT NOT NULL,
+        issued_at    TEXT NOT NULL,
+        expires_at   TEXT NOT NULL,
+        bytes_served INTEGER NOT NULL DEFAULT 0,
+        completed    INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_grants_transfer ON download_grants(transfer_id);
+    `);
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 migrate();
@@ -143,11 +196,14 @@ export interface TransferRow {
   revoked?: boolean;
   passwordHash?: string;
   ownerId?: string;
+  /** How many downloads the link may serve. undefined/NULL = unlimited (comped,
+   *  admin, or pre-feature transfers); a finite count is set for PAID transfers. */
+  downloadsAllowed?: number;
 }
 
 const insertTransfer = db.prepare(`
-  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at, password_hash, owner_id)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at, password_hash, owner_id, downloads_allowed)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(transfer_id) DO UPDATE SET
     object_key  = excluded.object_key,
     blake3_root = COALESCE(excluded.blake3_root, transfers.blake3_root),
@@ -156,7 +212,8 @@ const insertTransfer = db.prepare(`
     -- later partial write cannot erase the sender's original selections.
     options_json = COALESCE(excluded.options_json, transfers.options_json),
     password_hash = COALESCE(excluded.password_hash, transfers.password_hash),
-    owner_id      = COALESCE(excluded.owner_id, transfers.owner_id)
+    owner_id      = COALESCE(excluded.owner_id, transfers.owner_id),
+    downloads_allowed = COALESCE(excluded.downloads_allowed, transfers.downloads_allowed)
 `);
 const selectTransfer = db.prepare(`SELECT * FROM transfers WHERE transfer_id = ?`);
 
@@ -171,6 +228,7 @@ export function saveTransfer(transferId: string, meta: TransferRow): void {
     meta.expiresAt ? new Date(meta.expiresAt).toISOString() : null,
     meta.passwordHash ?? null,
     meta.ownerId ?? null,
+    meta.downloadsAllowed ?? null,
   );
 }
 
@@ -223,6 +281,7 @@ export function getTransfer(transferId: string): TransferRow | undefined {
     revoked: !!row.revoked,
     passwordHash: row.password_hash ?? undefined,
     ownerId: row.owner_id ?? undefined,
+    downloadsAllowed: row.downloads_allowed ?? undefined,
   };
 }
 
@@ -488,3 +547,180 @@ export function usageFor(transferId: string): {
   }
   return { events, totals };
 }
+
+// ── payment orders (pay-per-gig checkout) ──
+//
+// An order is priced and created BEFORE any upload exists. When the gateway
+// confirms payment (webhook, or a direct-lookup fallback), the order becomes the
+// durable authorization a payment-backed upload session is minted from (auth.ts).
+// priced_bytes is the budget the upload is held to; downloads is copied onto every
+// resulting transfer as downloads_allowed. See docs/COMMERCIAL_DELIVERY_PLAN.md.
+
+export interface PaymentOrderRow {
+  orderId: string;
+  gateway: string;
+  status: "pending" | "paid" | "expired" | "canceled";
+  pricedBytes: number;
+  downloads: number;
+  baseCents: number;
+  extraCents: number;
+  feeCents: number;
+  amountCents: number;
+  currency: string;
+  gatewayRef?: string;
+  ownerId?: string;
+  email?: string;
+  consumedBytes: number;
+  sessionId?: string;
+  createdAt: number;
+  paidAt?: number;
+  expiresAt?: number;
+}
+
+const insertOrder = db.prepare(`
+  INSERT INTO payment_orders
+    (order_id, gateway, status, priced_bytes, downloads, base_cents, extra_cents,
+     fee_cents, amount_cents, currency, gateway_ref, owner_id, expires_at, created_at)
+  VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const selectOrder = db.prepare(`SELECT * FROM payment_orders WHERE order_id = ?`);
+const selectOrderByRef = db.prepare(
+  `SELECT * FROM payment_orders WHERE gateway_ref = ? ORDER BY created_at DESC LIMIT 1`,
+);
+const updateOrderRef = db.prepare(`UPDATE payment_orders SET gateway_ref = ? WHERE order_id = ?`);
+// Idempotent paid transition: paid_at is fixed on the first confirmation, and the
+// guard keeps a replayed webhook from re-firing anything the caller keys on it.
+const updateOrderPaid = db.prepare(`
+  UPDATE payment_orders
+     SET status = 'paid', paid_at = COALESCE(paid_at, ?), email = COALESCE(?, email)
+   WHERE order_id = ? AND status != 'paid'
+`);
+const updateOrderStatus = db.prepare(
+  `UPDATE payment_orders SET status = ? WHERE order_id = ? AND status = 'pending'`,
+);
+const updateOrderSession = db.prepare(`UPDATE payment_orders SET session_id = ? WHERE order_id = ?`);
+// Atomic budget guard: the row moves only when the order is paid AND the new total
+// still fits the paid budget. Zero rows changed => refuse (unpaid or over budget).
+const consumeOrderBytes = db.prepare(`
+  UPDATE payment_orders
+     SET consumed_bytes = consumed_bytes + ?
+   WHERE order_id = ? AND status = 'paid' AND consumed_bytes + ? <= priced_bytes
+`);
+
+export function createOrder(o: {
+  orderId: string; gateway: string; pricedBytes: number; downloads: number;
+  baseCents: number; extraCents: number; feeCents: number; amountCents: number;
+  currency: string; gatewayRef?: string; ownerId?: string; expiresAt?: number;
+}): void {
+  insertOrder.run(
+    o.orderId, o.gateway, o.pricedBytes, o.downloads, o.baseCents, o.extraCents,
+    o.feeCents, o.amountCents, o.currency, o.gatewayRef ?? null, o.ownerId ?? null,
+    o.expiresAt ? new Date(o.expiresAt).toISOString() : null,
+    new Date().toISOString(),
+  );
+}
+
+function rowToOrder(r: any): PaymentOrderRow {
+  return {
+    orderId: r.order_id, gateway: r.gateway, status: r.status,
+    pricedBytes: Number(r.priced_bytes), downloads: Number(r.downloads),
+    baseCents: Number(r.base_cents), extraCents: Number(r.extra_cents),
+    feeCents: Number(r.fee_cents), amountCents: Number(r.amount_cents),
+    currency: r.currency, gatewayRef: r.gateway_ref ?? undefined,
+    ownerId: r.owner_id ?? undefined, email: r.email ?? undefined,
+    consumedBytes: Number(r.consumed_bytes), sessionId: r.session_id ?? undefined,
+    createdAt: Date.parse(r.created_at),
+    paidAt: r.paid_at ? Date.parse(r.paid_at) : undefined,
+    expiresAt: r.expires_at ? Date.parse(r.expires_at) : undefined,
+  };
+}
+
+export function getOrder(orderId: string): PaymentOrderRow | undefined {
+  const r = selectOrder.get(orderId) as any;
+  return r ? rowToOrder(r) : undefined;
+}
+
+export function getOrderByGatewayRef(ref: string): PaymentOrderRow | undefined {
+  const r = selectOrderByRef.get(ref) as any;
+  return r ? rowToOrder(r) : undefined;
+}
+
+export const setOrderGatewayRef = (orderId: string, ref: string): void => {
+  updateOrderRef.run(ref, orderId);
+};
+
+/** Mark paid (idempotent — a replayed webhook is a no-op). Returns true only on
+ *  the pending→paid transition, so the caller acts exactly once. */
+export function markOrderPaid(orderId: string, email?: string): boolean {
+  const info = updateOrderPaid.run(new Date().toISOString(), email ?? null, orderId);
+  return Number(info.changes) > 0;
+}
+
+export const setOrderStatus = (orderId: string, status: "expired" | "canceled"): void => {
+  updateOrderStatus.run(status, orderId);
+};
+
+export const setOrderSession = (orderId: string, sessionId: string): void => {
+  updateOrderSession.run(sessionId, orderId);
+};
+
+/** Reserve `delta` bytes against a paid order's budget, atomically. true = within
+ *  budget (reserved); false = would exceed the budget OR the order is not paid. */
+export function consumeOrderBudget(orderId: string, delta: number): boolean {
+  const info = consumeOrderBytes.run(delta, orderId, delta);
+  return Number(info.changes) > 0;
+}
+
+// ── download grants (one download = one grant, not one HTTP request) ──
+//
+// A resumed or many-connection download of a single file issues many range
+// requests; counting them would burn many credits for one logical download. The
+// unit is a GRANT: the first ungranted hit claims one credit and mints a grant, and
+// later requests carrying that grant are the same download and cost nothing.
+
+export interface GrantRow {
+  grantId: string;
+  transferId: string;
+  issuedAt: number;
+  expiresAt: number;
+  bytesServed: number;
+  completed: boolean;
+}
+
+const countGrantsStmt = db.prepare(`SELECT COUNT(*) AS n FROM download_grants WHERE transfer_id = ?`);
+const insertGrant = db.prepare(
+  `INSERT INTO download_grants (grant_id, transfer_id, issued_at, expires_at) VALUES (?, ?, ?, ?)`,
+);
+const selectGrant = db.prepare(`SELECT * FROM download_grants WHERE grant_id = ?`);
+const addGrantBytes = db.prepare(`UPDATE download_grants SET bytes_served = bytes_served + ? WHERE grant_id = ?`);
+
+export const countGrants = (transferId: string): number =>
+  Number((countGrantsStmt.get(transferId) as { n: number }).n);
+
+/** Claim one download against the allowance, atomically. Synchronous by design:
+ *  DatabaseSync is in-process and this counts then inserts with nothing awaited
+ *  between, so two concurrent recipients cannot both take the last credit. Returns
+ *  the new grant id, or null when the allowance is exhausted. */
+export function claimDownloadGrant(
+  transferId: string, downloadsAllowed: number, ttlMs: number,
+): string | null {
+  if (countGrants(transferId) >= downloadsAllowed) return null;
+  const grantId = randomUUID();
+  const now = Date.now();
+  insertGrant.run(grantId, transferId, new Date(now).toISOString(), new Date(now + ttlMs).toISOString());
+  return grantId;
+}
+
+export function getGrant(grantId: string): GrantRow | undefined {
+  const r = selectGrant.get(grantId) as any;
+  if (!r) return undefined;
+  return {
+    grantId: r.grant_id, transferId: r.transfer_id,
+    issuedAt: Date.parse(r.issued_at), expiresAt: Date.parse(r.expires_at),
+    bytesServed: Number(r.bytes_served), completed: !!r.completed,
+  };
+}
+
+export const recordGrantBytes = (grantId: string, bytes: number): void => {
+  addGrantBytes.run(bytes, grantId);
+};

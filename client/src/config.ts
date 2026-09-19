@@ -112,3 +112,70 @@ export const recipientLink = (transferId: string): string => {
   link.searchParams.set("t", transferId);
   return link.toString();
 };
+
+// ───────── payments (pay-per-gig) ─────────
+//
+// A public sender is authorized by PAYMENT, not an access code: quote the price,
+// send them to the provider's hosted checkout, and on their return claim the paid
+// order for a payment-backed upload session. See docs/COMMERCIAL_DELIVERY_PLAN.md.
+
+export type PayGateway = "stripe" | "coinbase";
+
+export interface GatewayQuote {
+  gateway: PayGateway;
+  bytes: number;
+  gb: number;
+  downloads: number;
+  baseCents: number;
+  extraCents: number;
+  feeCents: number;
+  amountCents: number;
+  currency: string;
+}
+export interface QuoteResponse {
+  downloads: number;
+  includedDownloads: number;
+  maxDownloads: number;
+  stripe: GatewayQuote | null;
+  coinbase: GatewayQuote | null;
+}
+export interface CheckoutResponse {
+  orderId: string;
+  url: string;
+  gateway: PayGateway;
+  amountCents: number;
+  downloads: number;
+  expiresAt: number | null;
+}
+export interface PaymentStatus {
+  status: "pending" | "paid" | "expired" | "canceled";
+  gateway?: PayGateway;
+  amountCents?: number;
+  downloads?: number;
+  pricedBytes?: number;
+  expiresAt?: number | null;
+}
+export interface PaymentSession {
+  status: string;
+  authorized: boolean;
+  downloads?: number;
+  pricedBytes?: number;
+}
+
+/** Live price for both gateways. Pure server-side math — no charge is created. */
+export const paymentQuote = (bytes: number, downloads: number): Promise<QuoteResponse> =>
+  gwPost("/payments/quote", { bytes, downloads });
+
+/** Create a hosted checkout and a pending order; the caller redirects to `.url`. */
+export const startCheckout = (
+  gateway: PayGateway, bytes: number, downloads: number,
+): Promise<CheckoutResponse> => gwPost("/payments/checkout", { gateway, bytes, downloads });
+
+/** Where an order stands. Never mints a session. */
+export const getPayment = (orderId: string): Promise<PaymentStatus> =>
+  gwGet(`/payments/${encodeURIComponent(orderId)}`);
+
+/** Claim a PAID order and mint the payment-backed upload session (cookie). Throws
+ *  GatewayError(402, "payment_pending") when the payment has not landed yet. */
+export const claimPaymentSession = (orderId: string): Promise<PaymentSession> =>
+  gwPost(`/payments/${encodeURIComponent(orderId)}/session`, {});
