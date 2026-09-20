@@ -39,7 +39,8 @@ not assume a running worker, a scratch disk, or GMI spend.
   Public senders pay by card (Stripe Checkout) or crypto (Coinbase Commerce); a
   confirmed payment mints a payment-backed upload session and *is* the
   authorization (no access code). Pricing $0.02/decimal GB + per-gateway markup,
-  per-link download allowance (2 included, up to 10, extras at 2% of base). New:
+  per-link download allowance (2 included, up to 10; each extra download = another
+  flat base transfer, no fee). New:
   `gateway/src/pricing.ts`, `gateway/src/payments.ts`, `payment_orders` +
   `download_grants` tables + `transfers.downloads_allowed` (schema **v5**),
   `/payments/*` routes, budget + download-credit enforcement; client pay panel +

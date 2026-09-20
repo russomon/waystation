@@ -6,17 +6,19 @@
 // (bytes / 1e9) to match the metering ledger (gateway/src/metering.ts), so a price
 // and its meter line agree on what "a gigabyte" is.
 //
-// The model, per gateway, on the base transfer cost (size * rate) plus a
-// per-download surcharge for links that allow more than the included downloads:
+// The model: the base transfer (size * rate) carries the included downloads and
+// gets the gateway markup; each ADDITIONAL download costs another whole base
+// transfer, added FLAT — no gateway percentage and no processing fee (the flat
+// card fee is charged once, on the transfer).
 //
 //   base     = (bytes / 1e9) * PRICE_CENTS_PER_GB
-//   extra    = max(0, downloads - INCLUDED_DOWNLOADS) * base * EXTRA_DOWNLOAD_PCT
-//   subtotal = base + extra                                   ("our cost")
-//   Stripe   = ceil( subtotal * (1 + STRIPE_FEE_PCT) + STRIPE_FLAT_FEE_CENTS )
-//   Coinbase = ceil( subtotal * (1 + COINBASE_FEE_PCT) )
+//   extra    = max(0, downloads - INCLUDED_DOWNLOADS) * base   // a full base per extra download
+//   Stripe   = ceil( base * (1 + STRIPE_FEE_PCT) + STRIPE_FLAT_FEE_CENTS + extra )   // floored to the min
+//   Coinbase = ceil( base * (1 + COINBASE_FEE_PCT) + extra )
 //
-// Worked check, 40 GB (base 80c), 2 downloads: Stripe 80*1.03+30 = 112.4 -> 113c
-// ($1.13); Coinbase 80*1.02 = 81.6 -> 82c ($0.82).
+// Worked check, 40 GB (base 80c): 2 dl -> Stripe 80*1.03+30 = 112.4 -> 113c ($1.13),
+// Coinbase 80*1.02 = 81.6 -> 82c ($0.82). Each extra download adds a flat 80c:
+// 4 dl -> $2.73 / $2.42; 10 dl -> $7.53 / $7.22.
 const env = process.env as Record<string, string | undefined>;
 
 /** Non-negative finite env number, else the fallback. Fees and floors may be 0,
@@ -36,10 +38,6 @@ export const PRICE_CENTS_PER_GB = num(env.PRICE_CENTS_PER_GB, 2);
  *  sender may raise the count to from the UI. */
 export const INCLUDED_DOWNLOADS = Math.max(1, Math.trunc(num(env.INCLUDED_DOWNLOADS, 2)));
 export const MAX_DOWNLOADS = Math.max(INCLUDED_DOWNLOADS, Math.trunc(num(env.MAX_DOWNLOADS, 10)));
-
-/** Each download beyond the included ones costs this fraction of the BASE transfer
- *  cost — flat per extra download, and NO processing fee. */
-export const EXTRA_DOWNLOAD_PCT = num(env.EXTRA_DOWNLOAD_PCT, 0.02);
 
 /** Gateway markups. Stripe: a percentage of our cost plus a flat per-transaction
  *  fee. Coinbase: a percentage only, no flat fee. */
@@ -62,12 +60,11 @@ export interface Quote {
   bytes: number;
   gb: number;
   downloads: number;
-  /** Rounded-up breakdown, for display and receipts. `amountCents` is the only
-   *  value we actually charge and is computed from the unrounded subtotal, so the
-   *  parts may each round up independently and need not sum to it exactly. */
+  /** Breakdown for display/receipts, in whole cents that sum to `amountCents`:
+   *  the base transfer, the flat extra-download charge, and the gateway fee.
+   *  `amountCents` is the only value we actually charge. */
   baseCents: number;
   extraCents: number;
-  subtotalCents: number;
   feeCents: number;
   amountCents: number;
   currency: "USD";
@@ -109,25 +106,29 @@ export function quote(bytes: number, downloads: number, gateway: Gateway): Quote
   const gb = bytes / BYTES_PER_GB;
   const base = gb * PRICE_CENTS_PER_GB;
   const extraDownloads = Math.max(0, downloads - INCLUDED_DOWNLOADS);
-  const extra = extraDownloads * base * EXTRA_DOWNLOAD_PCT;
-  const subtotal = base + extra;
+  // Each additional download is another whole base transfer, added FLAT — it
+  // carries neither the gateway percentage nor the flat processing fee.
+  const extra = extraDownloads * base;
 
-  const [markedUp, floor] =
+  const [transferCharge, floor] =
     gateway === "stripe"
-      ? [subtotal * (1 + STRIPE_FEE_PCT) + STRIPE_FLAT_FEE_CENTS, STRIPE_MIN_CHARGE_CENTS]
-      : [subtotal * (1 + COINBASE_FEE_PCT), COINBASE_MIN_CHARGE_CENTS];
+      ? [base * (1 + STRIPE_FEE_PCT) + STRIPE_FLAT_FEE_CENTS, STRIPE_MIN_CHARGE_CENTS]
+      : [base * (1 + COINBASE_FEE_PCT), COINBASE_MIN_CHARGE_CENTS];
 
-  const amountCents = Math.max(floor, ceilCents(markedUp));
-  const subtotalCents = ceilCents(subtotal);
+  const amountCents = Math.max(floor, ceilCents(transferCharge + extra));
+  const baseCents = ceilCents(base);
+  const extraCents = ceilCents(extra);
   return {
     gateway,
     bytes,
     gb,
     downloads,
-    baseCents: ceilCents(base),
-    extraCents: ceilCents(extra),
-    subtotalCents,
-    feeCents: amountCents - subtotalCents,
+    baseCents,
+    extraCents,
+    // The gateway markup on the transfer (the flat fee + percentage), as whatever
+    // is left after the base and the extra-download charge — so the parts sum to
+    // amountCents even under the min-charge floor.
+    feeCents: Math.max(0, amountCents - baseCents - extraCents),
     amountCents,
     currency: "USD",
   };

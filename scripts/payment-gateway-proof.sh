@@ -33,8 +33,8 @@ const { quote } = await import(process.env.PRICING);
 const GB = 1e9;
 const cases = [
   [40 * GB, 2, "stripe", 113], [40 * GB, 2, "coinbase", 82],
-  [40 * GB, 4, "stripe", 116], [40 * GB, 4, "coinbase", 85],
-  [40 * GB, 10, "stripe", 126], [40 * GB, 10, "coinbase", 95],
+  [40 * GB, 4, "stripe", 273], [40 * GB, 4, "coinbase", 242],
+  [40 * GB, 10, "stripe", 753], [40 * GB, 10, "coinbase", 722],
 ];
 let bad = 0;
 for (const c of cases) {

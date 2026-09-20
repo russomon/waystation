@@ -28,10 +28,10 @@ is itself the useful part.
     Stripe minimum); Coinbase `= base*1.02` (no flat fee). GB is **decimal** to
     match `metering.ts` and `format.ts`.
   - **Download allowance**: every link includes **2** downloads; a sender may raise
-    it to **10**. Each download beyond the included 2 costs a flat **2% of the base
-    transfer cost** (no processing fee) and is part of "our cost", so the gateway
-    markup applies to it. 40 GB: 2 dl = $1.13 card / $0.82 crypto; 4 dl = $1.16 /
-    $0.85; 10 dl = $1.26 / $0.95.
+    it to **10**. Each download beyond the included 2 costs another **whole base
+    transfer** (size × $0.02), added **flat** — no gateway percentage and no
+    processing fee (the flat card fee is charged once, on the transfer). 40 GB:
+    2 dl = $1.13 card / $0.82 crypto; 4 dl = $2.73 / $2.42; 10 dl = $7.53 / $7.22.
   - **One charge per checkout**: the whole queued batch is priced on total bytes
     with a single flat fee.
   - **Payment IS the authorization** for a public sender — no access code, no

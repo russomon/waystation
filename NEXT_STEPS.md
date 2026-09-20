@@ -23,7 +23,8 @@ it, because several obvious-looking shortcuts are already ruled out there.
    pays by card (Stripe) or crypto (Coinbase); a confirmed payment mints a
    payment-backed upload session and **is** the authorization — no code, no signup.
    Pricing: $0.02/decimal GB + a per-gateway markup, with a per-link download
-   allowance (2 included, up to 10, extras at 2% of base). Access codes stay for
+   allowance (2 included, up to 10; each extra download = another flat base
+   transfer, no fee). Access codes stay for
    comped/admin free uploads. **Remaining follow-ups**: email the sender their
    capability URL at creation + magic-link recovery (the payer email is captured and
    stored on the order, but no mail is sent yet); a fuller `owners` table (email
