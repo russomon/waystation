@@ -236,6 +236,19 @@
       .admin th { color: var(--mut); font-weight: 500; font-size: 12.5px; }
       .admin td.num { text-align: right; }
       .admin tr.revoked td { color: var(--mut); }
+      .admin-stats { margin: .4rem 0 1.1rem; }
+      .admin-stats-head { display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap; margin-bottom: .55rem; }
+      .admin-window { display: flex; gap: .3rem; }
+      .admin-window .btn-small[aria-pressed="true"] { border-color: var(--blue); background: #302817; color: var(--amber-light); }
+      .stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); gap: .5rem; }
+      .stat-tile { border: 1px solid var(--line); border-radius: 8px; padding: .55rem .7rem; background: var(--bg); }
+      .stat-tile .v { font: 20px/1.15 'IBM Plex Mono', monospace; color: var(--ink); }
+      .stat-tile .l { color: var(--mut); font-size: 11.5px; margin-top: .15rem; }
+      .stat-recent h4 { margin: .9rem 0 .3rem; font-size: 13px; color: var(--ink); }
+      .stat-recent table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      .stat-recent th, .stat-recent td { text-align: left; padding: .32rem .4rem; border-bottom: 1px solid var(--line); }
+      .stat-recent th { color: var(--mut); font-weight: 500; font-size: 11.5px; }
+      .stat-recent td.num { text-align: right; }
       .btn-small { font: inherit; font-size: 13px; min-height: 36px; padding: .3rem .8rem; border: 1px solid var(--line);
                           border-radius: 6px; background: var(--surface2); color: var(--amber-light); cursor: pointer;
                           display: inline-flex; align-items: center; gap: .35rem; }
@@ -304,7 +317,7 @@
         <button type="button" class="btn-small" id="signOut">Sign out</button>
       </p>
       <p class="whoami" id="signInRow" hidden>
-        <button type="button" class="link-btn" id="signIn">Have an access code? Sign in for free transfers</button>
+        <button type="button" class="link-btn" id="signIn">Have an access code?</button>
       </p>
       <div class="mode-switch" role="tablist" aria-label="Waystation service">
         <button type="button" id="modeTransfer" role="tab" aria-selected="true"
@@ -406,7 +419,7 @@
               <option value="5">5 weeks</option>
             </select>
           </div>
-          <p id="weeksHelp" class="field-help">How long the download link stays live (a 1‑week link lasts 8 days). One week is included; each extra week adds 1¢ per GB.</p>
+          <p id="weeksHelp" class="field-help">How long the download link stays live. One week is included; each extra week adds 1¢ per GB.</p>
           <p class="pay-total" id="payTotal">Add a file to see the price.</p>
           <div class="pay-actions">
             <button type="button" class="btn" id="payCard" disabled>Pay with Credit Card</button>
@@ -425,6 +438,18 @@
            keeps it. -->
       <details class="admin card" id="admin" hidden>
         <summary>Manage access codes</summary>
+        <section id="adminStats" class="admin-stats" aria-label="Activity">
+          <div class="admin-stats-head">
+            <strong>Activity</strong>
+            <div class="admin-window" role="group" aria-label="Time window">
+              <button type="button" class="btn-small" data-window="24h">24h</button>
+              <button type="button" class="btn-small" data-window="7d">7 days</button>
+              <button type="button" class="btn-small" data-window="all" aria-pressed="true">All time</button>
+            </div>
+          </div>
+          <div id="statTiles" class="stat-tiles"></div>
+          <div id="statRecent" class="stat-recent"></div>
+        </section>
         <p class="muted">Each client gets their own code to send with. Revoking a code cuts that
           client off immediately. Your own code is the admin code and is managed on the server.</p>
         <div class="add-row">

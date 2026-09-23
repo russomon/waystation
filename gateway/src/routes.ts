@@ -34,6 +34,7 @@ import {
   createAccessCode,
   listAccessCodes,
   revokeAccessCode,
+  adminStats,
   touchAccessCode,
   completedSinceAll,
   capabilityRevoked,
@@ -219,6 +220,15 @@ api.post("/admin/codes/:id/revoke", requireAdmin, enforceOrigin, limiter("admin"
   const revokedAt = revokeAccessCode(c.req.param("id"));
   if (!revokedAt) return c.json({ error: "not found" }, 404);
   return c.json({ ok: true, revokedAt });
+});
+
+// Read-only activity/usage aggregates for the admin dashboard. Windowed by
+// ?window=24h|7d|all (default all); admin-only, like the code routes.
+api.get("/admin/stats", requireAdmin, limiter("admin", 30, 60_000), (c) => {
+  const w = c.req.query("window");
+  const window = w === "24h" || w === "7d" ? w : "all";
+  const sinceMs = window === "24h" ? Date.now() - 86_400_000 : window === "7d" ? Date.now() - 7 * 86_400_000 : 0;
+  return c.json({ window, ...adminStats(new Date(sinceMs).toISOString()) });
 });
 
 // ───────── payments (pay-per-gig checkout) ─────────

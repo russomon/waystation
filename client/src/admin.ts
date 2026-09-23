@@ -7,6 +7,7 @@
 import { Check, Copy, createElement as createIcon } from "lucide";
 import { copyText } from "./clipboard.js";
 import { GatewayError, gwGet, gwPost } from "./config.js";
+import { formatUsd } from "./format.js";
 
 interface CodeRow {
   codeId: string;
@@ -156,6 +157,78 @@ export function mountAdmin(root: HTMLDetailsElement): void {
   add.onclick = () => void create();
   label.onkeydown = custom.onkeydown = (e) => { if (e.key === "Enter") void create(); };
 
+  // ── activity / usage stats ──
+  const statTiles = $("#statTiles");
+  const statRecent = $("#statRecent");
+  const windowBtns = Array.from(root.querySelectorAll<HTMLButtonElement>(".admin-window button"));
+  let statWindow = "all";
+
+  const gb = (n: number): string => `${n < 10 ? n.toFixed(2) : n.toFixed(1)} GB`;
+  const tile = (value: string, lbl: string): HTMLElement => {
+    const d = document.createElement("div");
+    d.className = "stat-tile";
+    const v = document.createElement("div"); v.className = "v"; v.textContent = value;
+    const l = document.createElement("div"); l.className = "l"; l.textContent = lbl;
+    d.append(v, l);
+    return d;
+  };
+  const miniTable = (title: string, head: string[], rows: string[][]): HTMLElement => {
+    const wrap = document.createElement("div");
+    const h = document.createElement("h4"); h.textContent = title; wrap.append(h);
+    if (!rows.length) {
+      const p = document.createElement("p"); p.className = "muted";
+      p.style.cssText = "font-size:12px;margin:0"; p.textContent = "Nothing yet.";
+      wrap.append(p); return wrap;
+    }
+    const t = document.createElement("table");
+    const thead = document.createElement("thead"); const htr = document.createElement("tr");
+    for (const x of head) { const th = document.createElement("th"); th.textContent = x; htr.append(th); }
+    thead.append(htr);
+    const tb = document.createElement("tbody");
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      for (const cell of r) { const td = document.createElement("td"); td.textContent = cell; tr.append(td); }
+      tb.append(tr);
+    }
+    t.append(thead, tb); wrap.append(t);
+    return wrap;
+  };
+
+  const loadStats = async (): Promise<void> => {
+    try {
+      const s = await gwGet(`/admin/stats?window=${statWindow}`);
+      statTiles.replaceChildren(
+        tile(String(s.transfers), "Transfers"),
+        tile(gb(s.gbUploaded), "GB uploaded"),
+        tile(String(s.downloads), "Downloads"),
+        tile(gb(s.gbEgressed), "GB downloaded ~"),
+        tile(formatUsd(s.payments.revenueCents), "Revenue"),
+        tile(String(s.payments.paidOrders), "Paid orders"),
+      );
+      const byGw = Object.entries(s.payments.byGateway ?? {})
+        .map(([g, v]: [string, any]) => `${g} ${v.orders}`).join(" · ");
+      const recentT: string[][] = (s.recentTransfers ?? []).map((r: any) => [
+        when(r.createdAt), gb(r.gb),
+        `${r.downloadsUsed}${r.downloadsAllowed != null ? "/" + r.downloadsAllowed : ""}`,
+        r.owner,
+      ]);
+      const recentO: string[][] = (s.recentOrders ?? []).map((r: any) => [
+        when(r.paidAt), r.gateway, formatUsd(r.amountCents), `${r.downloads} dl · ${r.weeks} wk`, gb(r.gb),
+      ]);
+      statRecent.replaceChildren(
+        miniTable("Recent transfers", ["When", "Size", "Downloads", "Sender"], recentT),
+        miniTable(`Recent paid orders${byGw ? ` — ${byGw}` : ""}`, ["When", "Method", "Amount", "Bought", "Size"], recentO),
+      );
+    } catch (e) { fail(e); }
+  };
+  for (const b of windowBtns) {
+    b.onclick = () => {
+      statWindow = b.dataset.window ?? "all";
+      for (const x of windowBtns) x.setAttribute("aria-pressed", String(x === b));
+      void loadStats();
+    };
+  }
+
   root.hidden = false;
-  root.addEventListener("toggle", () => { if (root.open) void refresh(); }, { once: true });
+  root.addEventListener("toggle", () => { if (root.open) { void refresh(); void loadStats(); } }, { once: true });
 }

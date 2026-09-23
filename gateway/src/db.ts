@@ -735,3 +735,80 @@ export function getGrant(grantId: string): GrantRow | undefined {
 export const recordGrantBytes = (grantId: string, bytes: number): void => {
   addGrantBytes.run(bytes, grantId);
 };
+
+// ── admin activity/usage stats ──
+//
+// Read-only aggregates over the existing ledger, for the operator's dashboard.
+// GB uploaded is exact (metered at complete); download COUNT is exact (one grant
+// per download); GB egressed is the once-per-hour approximation the mediated
+// download records (see routes.ts) — the UI labels it as approximate. `sinceIso`
+// bounds the window; pass a very old timestamp for all-time.
+
+export interface AdminStats {
+  transfers: number;
+  gbUploaded: number;
+  gbEgressed: number;
+  downloads: number;
+  activeUploads: number;
+  payments: {
+    paidOrders: number;
+    revenueCents: number;
+    pendingOrders: number;
+    byGateway: Record<string, { orders: number; cents: number }>;
+  };
+  recentTransfers: {
+    createdAt: string; gb: number; downloadsUsed: number;
+    downloadsAllowed: number | null; owner: string;
+  }[];
+  recentOrders: {
+    paidAt: string | null; gateway: string; amountCents: number;
+    downloads: number; weeks: number; gb: number;
+  }[];
+}
+
+const st = {
+  transfers: db.prepare(`SELECT COUNT(*) n FROM uploads WHERE state='complete' AND created_at >= ?`),
+  meter: db.prepare(`SELECT COALESCE(SUM(units),0) g FROM meter_events WHERE event=? AND ts >= ?`),
+  grants: db.prepare(`SELECT COUNT(*) n FROM download_grants WHERE issued_at >= ?`),
+  active: db.prepare(`SELECT COUNT(*) n FROM uploads WHERE state='active'`),
+  paidByGw: db.prepare(
+    `SELECT gateway, COUNT(*) n, COALESCE(SUM(amount_cents),0) cents FROM payment_orders WHERE status='paid' AND paid_at >= ? GROUP BY gateway`),
+  pending: db.prepare(`SELECT COUNT(*) n FROM payment_orders WHERE status='pending' AND created_at >= ?`),
+  recentT: db.prepare(`
+    SELECT t.created_at, t.downloads_allowed, t.owner_id,
+           COALESCE((SELECT SUM(units) FROM meter_events m WHERE m.transfer_id=t.transfer_id AND m.event='transfer'),0) gb,
+           (SELECT COUNT(*) FROM download_grants g WHERE g.transfer_id=t.transfer_id) used,
+           (SELECT label FROM access_codes a WHERE a.code_id=t.owner_id) owner_label
+    FROM transfers t ORDER BY t.created_at DESC LIMIT 8`),
+  recentO: db.prepare(
+    `SELECT paid_at, gateway, amount_cents, downloads, weeks, priced_bytes FROM payment_orders WHERE status='paid' ORDER BY paid_at DESC LIMIT 8`),
+};
+
+const ownerLabel = (ownerId: string | null, label: string | null): string =>
+  label ?? (ownerId === "admin" ? "admin" : ownerId?.startsWith("pay_") ? "paid link" : "—");
+
+export function adminStats(sinceIso: string): AdminStats {
+  const byGateway: Record<string, { orders: number; cents: number }> = {};
+  let paidOrders = 0, revenueCents = 0;
+  for (const r of st.paidByGw.all(sinceIso) as any[]) {
+    byGateway[r.gateway] = { orders: Number(r.n), cents: Number(r.cents) };
+    paidOrders += Number(r.n);
+    revenueCents += Number(r.cents);
+  }
+  return {
+    transfers: Number((st.transfers.get(sinceIso) as { n: number }).n),
+    gbUploaded: Number((st.meter.get("transfer", sinceIso) as { g: number }).g),
+    gbEgressed: Number((st.meter.get("egress", sinceIso) as { g: number }).g),
+    downloads: Number((st.grants.get(sinceIso) as { n: number }).n),
+    activeUploads: Number((st.active.get() as { n: number }).n),
+    payments: { paidOrders, revenueCents, pendingOrders: Number((st.pending.get(sinceIso) as { n: number }).n), byGateway },
+    recentTransfers: (st.recentT.all() as any[]).map((r) => ({
+      createdAt: r.created_at, gb: Number(r.gb), downloadsUsed: Number(r.used),
+      downloadsAllowed: r.downloads_allowed ?? null, owner: ownerLabel(r.owner_id, r.owner_label),
+    })),
+    recentOrders: (st.recentO.all() as any[]).map((r) => ({
+      paidAt: r.paid_at ?? null, gateway: r.gateway, amountCents: Number(r.amount_cents),
+      downloads: Number(r.downloads), weeks: Number(r.weeks), gb: Number(r.priced_bytes) / 1e9,
+    })),
+  };
+}
