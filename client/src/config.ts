@@ -126,16 +126,21 @@ export interface GatewayQuote {
   bytes: number;
   gb: number;
   downloads: number;
+  weeks: number;
   baseCents: number;
-  extraCents: number;
+  extraDownloadsCents: number;
+  extraWeeksCents: number;
   feeCents: number;
   amountCents: number;
   currency: string;
 }
 export interface QuoteResponse {
   downloads: number;
+  weeks: number;
   includedDownloads: number;
   maxDownloads: number;
+  includedWeeks: number;
+  maxWeeks: number;
   stripe: GatewayQuote | null;
   coinbase: GatewayQuote | null;
 }
@@ -145,6 +150,7 @@ export interface CheckoutResponse {
   gateway: PayGateway;
   amountCents: number;
   downloads: number;
+  weeks: number;
   expiresAt: number | null;
 }
 export interface PaymentStatus {
@@ -163,13 +169,13 @@ export interface PaymentSession {
 }
 
 /** Live price for both gateways. Pure server-side math — no charge is created. */
-export const paymentQuote = (bytes: number, downloads: number): Promise<QuoteResponse> =>
-  gwPost("/payments/quote", { bytes, downloads });
+export const paymentQuote = (bytes: number, downloads: number, weeks: number): Promise<QuoteResponse> =>
+  gwPost("/payments/quote", { bytes, downloads, weeks });
 
 /** Create a hosted checkout and a pending order; the caller redirects to `.url`. */
 export const startCheckout = (
-  gateway: PayGateway, bytes: number, downloads: number,
-): Promise<CheckoutResponse> => gwPost("/payments/checkout", { gateway, bytes, downloads });
+  gateway: PayGateway, bytes: number, downloads: number, weeks: number,
+): Promise<CheckoutResponse> => gwPost("/payments/checkout", { gateway, bytes, downloads, weeks });
 
 /** Where an order stands. Never mints a session. */
 export const getPayment = (orderId: string): Promise<PaymentStatus> =>

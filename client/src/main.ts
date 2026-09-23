@@ -139,6 +139,7 @@ if (tid) {
   // Pay-per-gig UI.
   const payPanel = $("#payPanel");
   const downloadsSelect = $<HTMLSelectElement>("#downloadsAllowed");
+  const weeksSelect = $<HTMLSelectElement>("#weeksAllowed");
   const payTotal = $("#payTotal");
   const payCard = $<HTMLButtonElement>("#payCard");
   const payCrypto = $<HTMLButtonElement>("#payCrypto");
@@ -303,6 +304,7 @@ if (tid) {
       if (count > 0) sendBtn.textContent = "Payment required";
     }
     downloadsSelect.disabled = sending;
+    weeksSelect.disabled = sending;
     void updatePayPanel();
     refreshSidecars();
   };
@@ -320,7 +322,8 @@ if (tid) {
     payPanel.hidden = !show;
     if (!show) { lastQuoteKey = ""; return; }
     const downloads = Number(downloadsSelect.value) || 2;
-    const key = `${totalBytes}:${downloads}`;
+    const weeks = Number(weeksSelect.value) || 1;
+    const key = `${totalBytes}:${downloads}:${weeks}`;
     if (key === lastQuoteKey) return;
     lastQuoteKey = key;
     const token = ++quoteToken;
@@ -328,7 +331,7 @@ if (tid) {
     payCrypto.disabled = true;
     payTotal.textContent = "Calculating price…";
     try {
-      const q = await paymentQuote(totalBytes, downloads);
+      const q = await paymentQuote(totalBytes, downloads, weeks);
       if (token !== quoteToken) return; // a newer request superseded this one
       const parts: string[] = [];
       if (q.stripe) parts.push(`Card ${formatUsd(q.stripe.amountCents)}`);
@@ -337,7 +340,7 @@ if (tid) {
       const strong = document.createElement("strong");
       strong.textContent = parts.join(" · ") || "Payment unavailable";
       payTotal.append(strong, document.createTextNode(
-        ` — ${formatBytes(totalBytes)}, ${downloads} download${downloads === 1 ? "" : "s"}`));
+        ` — ${formatBytes(totalBytes)}, ${downloads} download${downloads === 1 ? "" : "s"}, ${weeks}-week link`));
       payCard.disabled = !q.stripe;
       payCrypto.disabled = !q.coinbase;
     } catch (e) {
@@ -351,18 +354,19 @@ if (tid) {
     const totalBytes = queuedFiles.reduce((sum, f) => sum + f.size, 0);
     if (!totalBytes) return;
     const downloads = Number(downloadsSelect.value) || 2;
+    const weeks = Number(weeksSelect.value) || 1;
     payCard.disabled = true;
     payCrypto.disabled = true;
     payMsg.textContent = "Starting secure checkout…";
     try {
-      const res = await startCheckout(gateway, totalBytes, downloads);
+      const res = await startCheckout(gateway, totalBytes, downloads, weeks);
       // File objects do NOT survive the redirect. Remember what to re-select so
       // the return screen can name the exact files — a convenience, not a gate:
       // the gateway holds the upload to the paid byte budget regardless.
       try {
         sessionStorage.setItem(`ws_pay_${res.orderId}`, JSON.stringify({
           files: queuedFiles.map((f) => ({ name: f.name, size: f.size })),
-          downloads, totalBytes,
+          downloads, weeks, totalBytes,
         }));
       } catch { /* private windows block storage; the descriptor is optional */ }
       location.assign(res.url);
@@ -376,6 +380,7 @@ if (tid) {
   payCard.onclick = () => void beginCheckout("stripe");
   payCrypto.onclick = () => void beginCheckout("coinbase");
   downloadsSelect.onchange = () => void updatePayPanel();
+  weeksSelect.onchange = () => void updatePayPanel();
   signInBtn.onclick = () => showGate();
 
   // Learn from revealSender whether this session pays or is comped, then repaint.

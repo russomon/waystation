@@ -16,6 +16,38 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-21 - Pay-per-gig v2: cheaper extra downloads, paid link weeks, hidden bonus download
+
+- Context: the owner refined the model after the 2026-09-19 launch — extra
+  downloads were too dear (a whole base transfer each), link lifetime wasn't
+  choosable, and there was no goodwill buffer against a wasted pull.
+- Decision (**supersedes the pricing specifics** of the 2026-09-19 entry; the
+  dual-gateway / payment-as-auth / integrity design there still stands):
+  - **Extra downloads now cost a flat 1c/GB** each (was 2c/GB). 40 GB → $0.40 per
+    extra download (10 downloads adds $3.20).
+  - **New link-lifetime dimension**: 1 week included (default), up to 5, each extra
+    week a flat **1c/GB** (40 GB → $0.40/week). Both add-ons stay FLAT — no gateway
+    percentage, no processing fee.
+  - **Link lifetime = weeks × 7 + 1 day** (a 1-week link lasts 8 days; 5 weeks = 36).
+  - **Hidden bonus download**: every paid link is enforced at `chosen + 1`; the
+    sender only sees and pays for the chosen count. Goodwill so a test or failed
+    pull doesn't burn a paid credit.
+  - Paid links now default to an **8-day** life (1 week + 1), replacing the fixed
+    14-day `RECIPIENT_LINK_TTL_DAYS` for PAID transfers; comped/admin keep that
+    deployment default.
+- Where: `gateway/src/pricing.ts` (rates `EXTRA_DOWNLOAD_CENTS_PER_GB=1`,
+  `EXTRA_WEEK_CENTS_PER_GB=1`, `INCLUDED_WEEKS=1`, `MAX_WEEKS=5`, `EXPIRY_EXTRA_DAYS=1`,
+  `FREE_BONUS_DOWNLOADS=1`; a `weeks` input); `payment_orders` gains a `weeks`
+  column (schema **v6**); `routes.ts` copies `enforcedDownloads()` and the
+  weeks-based expiry onto the transfer at complete; the client adds a "Link lasts"
+  selector and re-prices on it.
+- 40 GB card examples: 2 dl / 1 wk $1.13; 3 dl $1.53; 10 dl $4.33; 2 wk $1.53;
+  5 wk $2.73; 4 dl + 3 wk $2.73.
+- Verified: `scripts/payment-gateway-proof.sh` (new price table, v4→v6 migration,
+  `downloads_allowed = chosen+1`, expiry = weeks×7+1, exhaustion at the enforced
+  count); transfer/password/mediated-download proofs green; gateway type-checks,
+  client builds.
+
 ### 2026-09-19 - Pay-per-gig transfer: dual gateway (Stripe + Coinbase), payment as authorization
 
 - Context: the commercial track's Step 1 (`docs/COMMERCIAL_DELIVERY_PLAN.md`) was

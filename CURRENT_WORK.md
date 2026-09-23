@@ -34,6 +34,14 @@ not assume a running worker, a scratch disk, or GMI spend.
 
 ## Recently completed
 
+- **2026-09-21** — **pay-per-gig v2 pricing/options** (`DECISIONS.md` 2026-09-21):
+  extra downloads cut to 1¢/GB; a new "Link lasts" selector (1 week included, up to
+  5, extra weeks 1¢/GB); link life = weeks×7 + 1 day; a hidden +1 bonus download on
+  every paid link. `payment_orders` schema **v6** (adds `weeks`).
+  `scripts/payment-gateway-proof.sh` updated + PASS; regression proofs green; gateway
+  type-checks, client builds. **2026-09-19 backend + front-end are LIVE** (gateway
+  redeployed, OrbitWebsite re-pinned to `ef74d57`); this v2 is **built, not yet
+  deployed**.
 - **2026-09-19** — **pay-per-gig dual-gateway checkout, built in source and proven
   locally, NOT yet deployed** (uncommitted working tree at time of writing).
   Public senders pay by card (Stripe Checkout) or crypto (Coinbase Commerce); a

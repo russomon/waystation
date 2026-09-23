@@ -395,7 +395,18 @@
               <option value="10">10</option>
             </select>
           </div>
-          <p id="downloadsHelp" class="field-help">Two downloads are included — one for your recipient and a spare to test the link or send to a second person. Each additional download costs the same as the transfer itself, with no extra processing fee.</p>
+          <p id="downloadsHelp" class="field-help">Two downloads are included — one for your recipient and a spare to test the link or send to a second person. Each additional download adds 1¢ per GB, no processing fee.</p>
+          <div class="pay-row">
+            <label class="field-label" for="weeksAllowed" style="margin:0">Link lasts</label>
+            <select id="weeksAllowed" aria-describedby="weeksHelp">
+              <option value="1" selected>1 week (included)</option>
+              <option value="2">2 weeks</option>
+              <option value="3">3 weeks</option>
+              <option value="4">4 weeks</option>
+              <option value="5">5 weeks</option>
+            </select>
+          </div>
+          <p id="weeksHelp" class="field-help">How long the download link stays live (a 1‑week link lasts 8 days). One week is included; each extra week adds 1¢ per GB.</p>
           <p class="pay-total" id="payTotal">Add a file to see the price.</p>
           <div class="pay-actions">
             <button type="button" class="btn" id="payCard" disabled>Pay with Credit Card</button>

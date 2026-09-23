@@ -6,19 +6,24 @@
 // (bytes / 1e9) to match the metering ledger (gateway/src/metering.ts), so a price
 // and its meter line agree on what "a gigabyte" is.
 //
-// The model: the base transfer (size * rate) carries the included downloads and
-// gets the gateway markup; each ADDITIONAL download costs another whole base
-// transfer, added FLAT — no gateway percentage and no processing fee (the flat
-// card fee is charged once, on the transfer).
+// The model — a base transfer (which carries the included downloads and the
+// included link week) plus two FLAT add-ons that carry no gateway percentage and no
+// processing fee (the flat card fee is charged once, on the transfer):
 //
-//   base     = (bytes / 1e9) * PRICE_CENTS_PER_GB
-//   extra    = max(0, downloads - INCLUDED_DOWNLOADS) * base   // a full base per extra download
-//   Stripe   = ceil( base * (1 + STRIPE_FEE_PCT) + STRIPE_FLAT_FEE_CENTS + extra )   // floored to the min
-//   Coinbase = ceil( base * (1 + COINBASE_FEE_PCT) + extra )
+//   base       = (bytes / 1e9) * PRICE_CENTS_PER_GB            // includes 2 downloads + 1 week
+//   extraDl    = max(0, downloads - INCLUDED_DOWNLOADS) * gb * EXTRA_DOWNLOAD_CENTS_PER_GB
+//   extraWeeks = max(0, weeks - INCLUDED_WEEKS)         * gb * EXTRA_WEEK_CENTS_PER_GB
+//   Stripe     = ceil( base*(1+STRIPE_FEE_PCT) + STRIPE_FLAT_FEE_CENTS + extraDl + extraWeeks )  // floored to min
+//   Coinbase   = ceil( base*(1+COINBASE_FEE_PCT) + extraDl + extraWeeks )
 //
-// Worked check, 40 GB (base 80c): 2 dl -> Stripe 80*1.03+30 = 112.4 -> 113c ($1.13),
-// Coinbase 80*1.02 = 81.6 -> 82c ($0.82). Each extra download adds a flat 80c:
-// 4 dl -> $2.73 / $2.42; 10 dl -> $7.53 / $7.22.
+// 40 GB (base 80c): 2 dl / 1 wk -> Stripe 80*1.03+30 = 112.4 -> 113c ($1.13). Each
+// extra download and each extra week both add a flat 40c (1c/GB): 3 dl -> $1.53,
+// 10 dl -> $4.33; 2 wk -> $1.53; 5 wk -> $2.73; 4 dl + 3 wk -> $2.73.
+//
+// Two behaviours the price does NOT reflect but the transfer record does:
+//   * a HIDDEN bonus download — the link is enforced at (chosen + FREE_BONUS_DOWNLOADS),
+//     while the sender only sees/pays for the chosen count;
+//   * link lifetime is weeks*7 + EXPIRY_EXTRA_DAYS (a 1-week link lasts 8 days).
 const env = process.env as Record<string, string | undefined>;
 
 /** Non-negative finite env number, else the fallback. Fees and floors may be 0,
@@ -35,12 +40,27 @@ export const BYTES_PER_GB = 1e9;
 export const PRICE_CENTS_PER_GB = num(env.PRICE_CENTS_PER_GB, 2);
 
 /** Downloads every link includes before the surcharge applies, and the ceiling a
- *  sender may raise the count to from the UI. */
+ *  sender may raise the count to from the UI. Each download beyond the included
+ *  ones costs a flat EXTRA_DOWNLOAD_CENTS_PER_GB (1c/GB). */
 export const INCLUDED_DOWNLOADS = Math.max(1, Math.trunc(num(env.INCLUDED_DOWNLOADS, 2)));
 export const MAX_DOWNLOADS = Math.max(INCLUDED_DOWNLOADS, Math.trunc(num(env.MAX_DOWNLOADS, 10)));
+export const EXTRA_DOWNLOAD_CENTS_PER_GB = num(env.EXTRA_DOWNLOAD_CENTS_PER_GB, 1);
 
-/** Gateway markups. Stripe: a percentage of our cost plus a flat per-transaction
- *  fee. Coinbase: a percentage only, no flat fee. */
+/** Link-lifetime weeks: the included week, the ceiling a sender may choose, and
+ *  the flat per-extra-week rate (1c/GB). Lifetime in days is weeks*7 + the extra
+ *  day (a 1-week link lasts 8 days). */
+export const INCLUDED_WEEKS = Math.max(1, Math.trunc(num(env.INCLUDED_WEEKS, 1)));
+export const MAX_WEEKS = Math.max(INCLUDED_WEEKS, Math.trunc(num(env.MAX_WEEKS, 5)));
+export const EXTRA_WEEK_CENTS_PER_GB = num(env.EXTRA_WEEK_CENTS_PER_GB, 1);
+export const EXPIRY_EXTRA_DAYS = Math.trunc(num(env.EXPIRY_EXTRA_DAYS, 1));
+
+/** A silent extra download added to every paid link's enforced allowance — the
+ *  sender neither sees nor pays for it (goodwill so a test/failed pull doesn't
+ *  burn a paid credit). */
+export const FREE_BONUS_DOWNLOADS = Math.trunc(num(env.FREE_BONUS_DOWNLOADS, 1));
+
+/** Gateway markups. Stripe: a percentage of the transfer plus a flat per-
+ *  transaction fee. Coinbase: a percentage only, no flat fee. */
 export const STRIPE_FEE_PCT = num(env.STRIPE_FEE_PCT, 0.03);
 export const STRIPE_FLAT_FEE_CENTS = num(env.STRIPE_FLAT_FEE_CENTS, 30);
 export const COINBASE_FEE_PCT = num(env.COINBASE_FEE_PCT, 0.02);
@@ -60,11 +80,13 @@ export interface Quote {
   bytes: number;
   gb: number;
   downloads: number;
-  /** Breakdown for display/receipts, in whole cents that sum to `amountCents`:
-   *  the base transfer, the flat extra-download charge, and the gateway fee.
-   *  `amountCents` is the only value we actually charge. */
+  weeks: number;
+  /** Breakdown for display/receipts, whole cents that sum to `amountCents`: the
+   *  base transfer, the flat extra-download charge, the flat extra-week charge, and
+   *  the gateway fee. `amountCents` is the only value we actually charge. */
   baseCents: number;
-  extraCents: number;
+  extraDownloadsCents: number;
+  extraWeeksCents: number;
   feeCents: number;
   amountCents: number;
   currency: "USD";
@@ -76,15 +98,24 @@ export interface PriceInvalid {
   status: 400 | 413;
 }
 
-/** Clamp a requested download count into [INCLUDED_DOWNLOADS, MAX_DOWNLOADS].
- *  Out-of-range and non-integer values are corrected rather than rejected, so a
- *  live price preview never fails on a stray select value. Checkout re-clamps
- *  server-side, which is the authoritative bound. */
-export function clampDownloads(raw: unknown): number {
+const clampInt = (raw: unknown, lo: number, hi: number): number => {
   const n = Math.trunc(Number(raw));
-  if (!Number.isFinite(n)) return INCLUDED_DOWNLOADS;
-  return Math.min(MAX_DOWNLOADS, Math.max(INCLUDED_DOWNLOADS, n));
-}
+  if (!Number.isFinite(n)) return lo;
+  return Math.min(hi, Math.max(lo, n));
+};
+
+/** Clamp requested counts into their allowed ranges. Out-of-range / non-integer
+ *  values are corrected rather than rejected, so a live price preview never fails
+ *  on a stray select value; checkout re-clamps server-side (authoritative). */
+export const clampDownloads = (raw: unknown): number => clampInt(raw, INCLUDED_DOWNLOADS, MAX_DOWNLOADS);
+export const clampWeeks = (raw: unknown): number => clampInt(raw, INCLUDED_WEEKS, MAX_WEEKS);
+
+/** The download allowance actually enforced on the link (chosen + the hidden
+ *  bonus). The sender is shown/charged the chosen count. */
+export const enforcedDownloads = (chosen: number): number => chosen + FREE_BONUS_DOWNLOADS;
+
+/** How many days a link of `weeks` weeks lives: weeks*7 plus the extra day. */
+export const linkExpiryDays = (weeks: number): number => weeks * 7 + EXPIRY_EXTRA_DAYS;
 
 /** Round UP to the nearest whole cent, after clearing floating-point noise so a
  *  value that is mathematically an integer (e.g. 51.00000000000001 from 50*1.02)
@@ -100,52 +131,57 @@ export function validatePriceBytes(raw: unknown): PriceInvalid | { bytes: number
   return { bytes };
 }
 
-/** The price for one gateway. `bytes` and `downloads` are assumed already
+/** The price for one gateway. `bytes`, `downloads`, `weeks` are assumed already
  *  validated/clamped by the caller (quoteAll / the checkout route do this). */
-export function quote(bytes: number, downloads: number, gateway: Gateway): Quote {
+export function quote(bytes: number, downloads: number, weeks: number, gateway: Gateway): Quote {
   const gb = bytes / BYTES_PER_GB;
   const base = gb * PRICE_CENTS_PER_GB;
-  const extraDownloads = Math.max(0, downloads - INCLUDED_DOWNLOADS);
-  // Each additional download is another whole base transfer, added FLAT — it
-  // carries neither the gateway percentage nor the flat processing fee.
-  const extra = extraDownloads * base;
+  // Flat add-ons: no gateway percentage, no processing fee.
+  const extraDl = Math.max(0, downloads - INCLUDED_DOWNLOADS) * gb * EXTRA_DOWNLOAD_CENTS_PER_GB;
+  const extraWk = Math.max(0, weeks - INCLUDED_WEEKS) * gb * EXTRA_WEEK_CENTS_PER_GB;
 
   const [transferCharge, floor] =
     gateway === "stripe"
       ? [base * (1 + STRIPE_FEE_PCT) + STRIPE_FLAT_FEE_CENTS, STRIPE_MIN_CHARGE_CENTS]
       : [base * (1 + COINBASE_FEE_PCT), COINBASE_MIN_CHARGE_CENTS];
 
-  const amountCents = Math.max(floor, ceilCents(transferCharge + extra));
+  const amountCents = Math.max(floor, ceilCents(transferCharge + extraDl + extraWk));
   const baseCents = ceilCents(base);
-  const extraCents = ceilCents(extra);
+  const extraDownloadsCents = ceilCents(extraDl);
+  const extraWeeksCents = ceilCents(extraWk);
   return {
     gateway,
     bytes,
     gb,
     downloads,
+    weeks,
     baseCents,
-    extraCents,
-    // The gateway markup on the transfer (the flat fee + percentage), as whatever
-    // is left after the base and the extra-download charge — so the parts sum to
-    // amountCents even under the min-charge floor.
-    feeCents: Math.max(0, amountCents - baseCents - extraCents),
+    extraDownloadsCents,
+    extraWeeksCents,
+    // The gateway markup, as whatever is left after base + the flat extras — so the
+    // parts sum to amountCents even under the min-charge floor.
+    feeCents: Math.max(0, amountCents - baseCents - extraDownloadsCents - extraWeeksCents),
     amountCents,
     currency: "USD",
   };
 }
 
 /** Both gateways at once, for the price preview the UI shows before the sender
- *  commits. Validates bytes and clamps downloads so the preview is authoritative. */
+ *  commits. Validates bytes and clamps downloads/weeks so the preview is
+ *  authoritative. */
 export function quoteAll(
   bytes: unknown,
   downloads: unknown,
-): PriceInvalid | { downloads: number; stripe: Quote; coinbase: Quote } {
+  weeks: unknown,
+): PriceInvalid | { downloads: number; weeks: number; stripe: Quote; coinbase: Quote } {
   const checked = validatePriceBytes(bytes);
   if ("error" in checked) return checked;
   const dl = clampDownloads(downloads);
+  const wk = clampWeeks(weeks);
   return {
     downloads: dl,
-    stripe: quote(checked.bytes, dl, "stripe"),
-    coinbase: quote(checked.bytes, dl, "coinbase"),
+    weeks: wk,
+    stripe: quote(checked.bytes, dl, wk, "stripe"),
+    coinbase: quote(checked.bytes, dl, wk, "coinbase"),
   };
 }

@@ -59,6 +59,7 @@ export interface CheckoutInput {
   amountCents: number;
   gb: number;
   downloads: number;
+  weeks: number;
   successUrl: string;
   cancelUrl: string;
 }
@@ -77,8 +78,8 @@ export interface PaymentEvent {
   email?: string;
 }
 
-const describe = (gb: number, downloads: number): string =>
-  `Waystation transfer — ${gb.toFixed(gb < 10 ? 2 : 1)} GB, ${downloads} download${downloads === 1 ? "" : "s"}`;
+const describe = (gb: number, downloads: number, weeks: number): string =>
+  `Waystation transfer — ${gb.toFixed(gb < 10 ? 2 : 1)} GB, ${downloads} download${downloads === 1 ? "" : "s"}, ${weeks}-week link`;
 
 export async function createCheckout(input: CheckoutInput): Promise<CheckoutResult> {
   if (IS_TEST_PAYMENTS)
@@ -95,7 +96,7 @@ async function createStripeCheckout(input: CheckoutInput): Promise<CheckoutResul
         price_data: {
           currency: "usd",
           unit_amount: input.amountCents,
-          product_data: { name: describe(input.gb, input.downloads) },
+          product_data: { name: describe(input.gb, input.downloads, input.weeks) },
         },
       },
     ],
@@ -132,7 +133,7 @@ async function createCoinbaseCharge(input: CheckoutInput): Promise<CheckoutResul
     method: "POST",
     body: JSON.stringify({
       name: "Waystation transfer",
-      description: describe(input.gb, input.downloads),
+      description: describe(input.gb, input.downloads, input.weeks),
       pricing_type: "fixed_price",
       local_price: { amount: (input.amountCents / 100).toFixed(2), currency: "USD" },
       metadata: { order_id: input.orderId },

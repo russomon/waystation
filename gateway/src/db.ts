@@ -16,7 +16,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 // :memory: is the default so dev and the proof suite stay clean and isolated.
 // Production must set a real path on a persistent volume — and fails closed
@@ -177,6 +177,15 @@ function migrate(): void {
       );
       CREATE INDEX IF NOT EXISTS idx_grants_transfer ON download_grants(transfer_id);
     `);
+  }
+  if (current < 6) {
+    // Link-lifetime weeks a paid order bought (1 included, up to 5). Copied onto
+    // the transfer's expiry at complete as weeks*7 + 1 day. Default 1 so any order
+    // that predates this column reads as the single included week.
+    const cols =
+      (db.prepare(`PRAGMA table_info(payment_orders)`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes("weeks"))
+      db.exec(`ALTER TABLE payment_orders ADD COLUMN weeks INTEGER NOT NULL DEFAULT 1`);
   }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
@@ -562,6 +571,7 @@ export interface PaymentOrderRow {
   status: "pending" | "paid" | "expired" | "canceled";
   pricedBytes: number;
   downloads: number;
+  weeks: number;
   baseCents: number;
   extraCents: number;
   feeCents: number;
@@ -579,9 +589,9 @@ export interface PaymentOrderRow {
 
 const insertOrder = db.prepare(`
   INSERT INTO payment_orders
-    (order_id, gateway, status, priced_bytes, downloads, base_cents, extra_cents,
+    (order_id, gateway, status, priced_bytes, downloads, weeks, base_cents, extra_cents,
      fee_cents, amount_cents, currency, gateway_ref, owner_id, expires_at, created_at)
-  VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 const selectOrder = db.prepare(`SELECT * FROM payment_orders WHERE order_id = ?`);
 const selectOrderByRef = db.prepare(
@@ -608,12 +618,12 @@ const consumeOrderBytes = db.prepare(`
 `);
 
 export function createOrder(o: {
-  orderId: string; gateway: string; pricedBytes: number; downloads: number;
+  orderId: string; gateway: string; pricedBytes: number; downloads: number; weeks: number;
   baseCents: number; extraCents: number; feeCents: number; amountCents: number;
   currency: string; gatewayRef?: string; ownerId?: string; expiresAt?: number;
 }): void {
   insertOrder.run(
-    o.orderId, o.gateway, o.pricedBytes, o.downloads, o.baseCents, o.extraCents,
+    o.orderId, o.gateway, o.pricedBytes, o.downloads, o.weeks, o.baseCents, o.extraCents,
     o.feeCents, o.amountCents, o.currency, o.gatewayRef ?? null, o.ownerId ?? null,
     o.expiresAt ? new Date(o.expiresAt).toISOString() : null,
     new Date().toISOString(),
@@ -624,6 +634,7 @@ function rowToOrder(r: any): PaymentOrderRow {
   return {
     orderId: r.order_id, gateway: r.gateway, status: r.status,
     pricedBytes: Number(r.priced_bytes), downloads: Number(r.downloads),
+    weeks: Number(r.weeks),
     baseCents: Number(r.base_cents), extraCents: Number(r.extra_cents),
     feeCents: Number(r.fee_cents), amountCents: Number(r.amount_cents),
     currency: r.currency, gatewayRef: r.gateway_ref ?? undefined,

@@ -31,18 +31,22 @@ command -v minio >/dev/null || { echo "SKIP - minio not installed"; exit 0; }
 cat > "$WORK/price-check.mjs" <<'JS'
 const { quote } = await import(process.env.PRICING);
 const GB = 1e9;
+// [bytes, downloads, weeks, gateway, expectedCents]
 const cases = [
-  [40 * GB, 2, "stripe", 113], [40 * GB, 2, "coinbase", 82],
-  [40 * GB, 4, "stripe", 273], [40 * GB, 4, "coinbase", 242],
-  [40 * GB, 10, "stripe", 753], [40 * GB, 10, "coinbase", 722],
+  [40 * GB, 2, 1, "stripe", 113], [40 * GB, 2, 1, "coinbase", 82],
+  [40 * GB, 3, 1, "stripe", 153],   // +1 download = +40c (1c/GB)
+  [40 * GB, 10, 1, "stripe", 433],  // +8 downloads = +320c
+  [40 * GB, 2, 2, "stripe", 153],   // +1 week = +40c
+  [40 * GB, 2, 5, "stripe", 273],   // +4 weeks = +160c
+  [40 * GB, 4, 3, "stripe", 273], [40 * GB, 4, 3, "coinbase", 242], // +2 dl +2 wk = +160c
 ];
 let bad = 0;
 for (const c of cases) {
-  const got = quote(c[0], c[1], c[2]).amountCents;
-  if (got !== c[3]) { console.error("FAIL price", c[0], c[1], c[2], "got", got, "want", c[3]); bad++; }
+  const got = quote(c[0], c[1], c[2], c[3]).amountCents;
+  if (got !== c[4]) { console.error("FAIL price", c.slice(0, 4).join("/"), "got", got, "want", c[4]); bad++; }
 }
 if (bad) process.exit(1);
-console.log("  pricing: 40GB is 113c card / 82c crypto (x2); the surcharge scales with downloads");
+console.log("  pricing: 40GB = 113c (2 dl / 1 wk); +40c per extra download and per extra week (1c/GB, flat)");
 JS
 PRICING="$WEB/gateway/src/pricing.ts" npx tsx "$WORK/price-check.mjs" || { echo "FAIL - pricing assertions"; exit 1; }
 
@@ -102,10 +106,12 @@ db = sqlite3.connect(sys.argv[1])
 version = db.execute("PRAGMA user_version").fetchone()[0]
 tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 tcols = {r[1] for r in db.execute("PRAGMA table_info(transfers)")}
-assert version >= 5, version
+ocols = {r[1] for r in db.execute("PRAGMA table_info(payment_orders)")}
+assert version >= 6, version
 assert "payment_orders" in tables and "download_grants" in tables, tables
 assert "downloads_allowed" in tcols, tcols
-print("  schema v4 migrates in place to v5 (payment_orders, download_grants, downloads_allowed)")
+assert "weeks" in ocols, ocols
+print("  schema v4 migrates in place to v6 (payment_orders+weeks, download_grants, downloads_allowed)")
 PY
 
 ORIGIN=https://orbitolive.com
@@ -115,13 +121,13 @@ code(){ curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
 # ── quote route matches the model ──
 Q=$(api -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
-      --data '{"bytes":40000000000,"downloads":2}' http://127.0.0.1:$GW/api/payments/quote)
-[ "$(printf '%s' "$Q" | "$PY" -c 'import json,sys;d=json.load(sys.stdin);print(d["stripe"]["amountCents"],d["coinbase"]["amountCents"],d["maxDownloads"])')" = "113 82 10" ]
-echo "  /payments/quote returns 113c / 82c and a 10-download ceiling"
+      --data '{"bytes":40000000000,"downloads":2,"weeks":1}' http://127.0.0.1:$GW/api/payments/quote)
+[ "$(printf '%s' "$Q" | "$PY" -c 'import json,sys;d=json.load(sys.stdin);print(d["stripe"]["amountCents"],d["coinbase"]["amountCents"],d["maxDownloads"],d["maxWeeks"])')" = "113 82 10 5" ]
+echo "  /payments/quote returns 113c / 82c, a 10-download and a 5-week ceiling"
 
-# ── checkout → pending order; no session before payment ──
+# ── checkout (3 downloads, 2-week link) → pending order; no session before payment ──
 CO=$(api -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
-      --data '{"bytes":6291456,"gateway":"stripe","downloads":3}' http://127.0.0.1:$GW/api/payments/checkout)
+      --data '{"bytes":6291456,"gateway":"stripe","downloads":3,"weeks":2}' http://127.0.0.1:$GW/api/payments/checkout)
 ORDER=$(printf '%s' "$CO" | J orderId)
 AMOUNT=$(printf '%s' "$CO" | J amountCents)
 [ -n "$ORDER" ] && [ -n "$AMOUNT" ]
@@ -183,27 +189,33 @@ OVER=$(code -b "$PAYJAR" -X POST -H "Origin: $ORIGIN" -H 'content-type: applicat
 [ "$OVER" = 402 ]
 echo "  the paid byte budget admits the upload it covers and refuses the byte over it"
 
-# ── downloads_allowed on the transfer equals what was paid (3) ──
+# ── downloads_allowed = chosen 3 + hidden bonus 1 = 4; expiry = weeks(2)*7 + 1 = 15 days ──
 "$PY" - "$WORK/gateway.db" "$PAID_TID" <<'PY'
-import sqlite3, sys
+import sqlite3, sys, datetime
 row = sqlite3.connect(sys.argv[1]).execute(
-  "select downloads_allowed from transfers where transfer_id=?", (sys.argv[2],)).fetchone()
-assert row and row[0] == 3, row
-print("  the transfer records downloads_allowed = 3 (the paid count), not a client-sent value")
+  "select downloads_allowed, created_at, expires_at from transfers where transfer_id=?", (sys.argv[2],)).fetchone()
+assert row, "no transfer row"
+allowed, created, expires = row
+assert allowed == 4, ("downloads_allowed", allowed)          # 3 paid + 1 hidden bonus
+parse = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+days = (parse(expires) - parse(created)).total_seconds() / 86400
+assert abs(days - 15) < 0.05, ("expiry days", days)          # weeks(2)*7 + 1
+print(f"  transfer: downloads_allowed = 4 (3 paid + 1 hidden bonus) and expires in {days:.0f} days (2-week link + 1)")
 PY
 
-# ── the link serves exactly 3 downloads, then refuses; a grant does not re-spend ──
+# ── the link serves 4 downloads (3 paid + 1 hidden bonus), then refuses; a grant never re-spends ──
 orig_json(){ api "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json"; }
-R1=$(orig_json); G1=$(printf '%s' "$R1" | J grant); [ -n "$G1" ]        # download 1 of 3
+R1=$(orig_json); G1=$(printf '%s' "$R1" | J grant); [ -n "$G1" ]        # download 1 of 4
 for _ in 1 2 3; do
   [ "$(code "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json&grant=$G1")" = 200 ]
 done
 echo "  a grant token is one download's continuation — repeated use spends no extra credit"
-orig_json >/dev/null                                                    # download 2 of 3 (fresh, no grant)
-orig_json >/dev/null                                                    # download 3 of 3
-[ "$(code "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json")" = 403 ]   # 4th refused
+orig_json >/dev/null                                                    # download 2 (fresh, no grant)
+orig_json >/dev/null                                                    # download 3
+orig_json >/dev/null                                                    # download 4 (the hidden bonus)
+[ "$(code "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json")" = 403 ]   # 5th refused
 [ "$(code "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json&grant=$G1")" = 200 ]  # grant still valid
-echo "  the link serves its 3 downloads then returns downloads_exhausted; earlier grants still resume"
+echo "  the link serves 4 downloads (3 paid + 1 hidden bonus) then returns downloads_exhausted; earlier grants still resume"
 
 # ── regression: a comped (admin) transfer is uncapped and needs no payment ──
 ADMIN="$WORK/admin.cookie"

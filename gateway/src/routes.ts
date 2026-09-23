@@ -77,9 +77,14 @@ import {
   quote,
   quoteAll,
   clampDownloads,
+  clampWeeks,
+  enforcedDownloads,
+  linkExpiryDays,
   isGateway,
   INCLUDED_DOWNLOADS,
   MAX_DOWNLOADS,
+  INCLUDED_WEEKS,
+  MAX_WEEKS,
   type Gateway,
 } from "./pricing.js";
 import {
@@ -251,12 +256,15 @@ const returnUrls = (c: Context, orderId: string): { successUrl: string; cancelUr
 // gateway is returned as null so the UI shows only what it can actually charge on.
 api.post("/payments/quote", enforceOrigin, limiter("quote", 60, 60_000), async (c) => {
   const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
-  const q = quoteAll(body.bytes, body.downloads);
+  const q = quoteAll(body.bytes, body.downloads, body.weeks);
   if ("error" in q) return c.json({ error: q.error, code: q.code }, q.status);
   return c.json({
     downloads: q.downloads,
+    weeks: q.weeks,
     includedDownloads: INCLUDED_DOWNLOADS,
     maxDownloads: MAX_DOWNLOADS,
+    includedWeeks: INCLUDED_WEEKS,
+    maxWeeks: MAX_WEEKS,
     stripe: gatewayEnabled("stripe") ? q.stripe : null,
     coinbase: gatewayEnabled("coinbase") ? q.coinbase : null,
   });
@@ -279,7 +287,8 @@ api.post("/payments/checkout", enforceOrigin, limiter("checkout", 20, 60_000), a
   if ("error" in verification) return c.json({ error: verification.error, code: verification.code }, verification.status);
 
   const downloads = clampDownloads(body.downloads);
-  const q = quote(sized.size, downloads, body.gateway);
+  const weeks = clampWeeks(body.weeks);
+  const q = quote(sized.size, downloads, weeks, body.gateway);
   const orderId = crypto.randomUUID();
   const ownerId = `pay_${crypto.randomUUID()}`;
 
@@ -288,21 +297,21 @@ api.post("/payments/checkout", enforceOrigin, limiter("checkout", 20, 60_000), a
     const { successUrl, cancelUrl } = returnUrls(c, orderId);
     checkout = await createCheckout({
       orderId, gateway: body.gateway, amountCents: q.amountCents,
-      gb: q.gb, downloads, successUrl, cancelUrl,
+      gb: q.gb, downloads, weeks, successUrl, cancelUrl,
     });
   } catch {
     return c.json({ error: "Could not start checkout. Please try again.", code: "checkout_failed" }, 502);
   }
 
   createOrder({
-    orderId, gateway: body.gateway, pricedBytes: sized.size, downloads,
-    baseCents: q.baseCents, extraCents: q.extraCents, feeCents: q.feeCents,
-    amountCents: q.amountCents, currency: PAY_CURRENCY,
+    orderId, gateway: body.gateway, pricedBytes: sized.size, downloads, weeks,
+    baseCents: q.baseCents, extraCents: q.extraDownloadsCents + q.extraWeeksCents,
+    feeCents: q.feeCents, amountCents: q.amountCents, currency: PAY_CURRENCY,
     gatewayRef: checkout.gatewayRef, ownerId, expiresAt: checkout.expiresAt,
   });
   return c.json({
     orderId, url: checkout.url, gateway: body.gateway,
-    amountCents: q.amountCents, downloads, expiresAt: checkout.expiresAt ?? null,
+    amountCents: q.amountCents, downloads, weeks, expiresAt: checkout.expiresAt ?? null,
   });
 });
 
@@ -582,24 +591,28 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   // record is written so the policy survives a restart and the B2 event path
   // sees the same decision.
   const { options, disabled } = applyServicePolicy(requested, bytes);
-  // Paid links carry the download allowance the sender paid for. The ORDER is the
-  // source of truth — a client cannot request more downloads than it paid for by
-  // sending a larger number here. Comped/admin transfers leave it unset (NULL =
-  // unlimited), which preserves the pre-feature behaviour.
-  const payOrderId = sessionOf(c)?.orderId;
-  const downloadsAllowed = payOrderId ? getOrder(payOrderId)?.downloads : undefined;
+  // Paid links carry what the sender paid for; the ORDER is the source of truth,
+  // so a client cannot inflate either value by sending a larger number here.
+  //   * downloads_allowed = chosen + the hidden bonus download (enforcedDownloads);
+  //     the sender only ever saw/paid for the chosen count.
+  //   * expiry = the weeks they bought, as weeks*7 + 1 day.
+  // Comped/admin transfers leave downloads unset (NULL = unlimited) and keep the
+  // deployment-wide default expiry — the pre-feature behaviour.
+  const payOrder = sessionOf(c)?.orderId ? getOrder(sessionOf(c)!.orderId!) : undefined;
+  const downloadsAllowed = payOrder ? enforcedDownloads(payOrder.downloads) : undefined;
+  const expiresAt = payOrder
+    ? Date.now() + linkExpiryDays(payOrder.weeks) * 86_400_000
+    : RECIPIENT_LINK_TTL_DAYS > 0
+      ? Date.now() + RECIPIENT_LINK_TTL_DAYS * 86_400_000
+      : undefined;
   // Always record — the event path needs `options` even without a hash root.
-  // Recipient links are bearer capabilities, so they carry an expiry from the
-  // moment they exist (RECIPIENT_LINK_TTL_DAYS=0 disables expiry).
   saveTransfer(transferId, {
     key: owned.row.objectKey,
     blake3Root: b.blake3Root,
     verificationMode: owned.row.verificationMode,
     createdAt: Date.now(),
     options,
-    expiresAt: RECIPIENT_LINK_TTL_DAYS > 0
-      ? Date.now() + RECIPIENT_LINK_TTL_DAYS * 86_400_000
-      : undefined,
+    expiresAt,
     passwordHash: recipientPassword ? hashAccessCode(recipientPassword) : undefined,
     ownerId: owned.row.ownerId ?? undefined,
     downloadsAllowed,
