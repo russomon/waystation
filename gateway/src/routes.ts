@@ -94,6 +94,7 @@ import {
   parseCoinbaseEvent,
   lookupPaid,
   gatewayEnabled,
+  stripePublishableKey,
   type PaymentEvent,
 } from "./payments.js";
 
@@ -321,6 +322,10 @@ api.post("/payments/checkout", enforceOrigin, limiter("checkout", 20, 60_000), a
   });
   return c.json({
     orderId, url: checkout.url, gateway: body.gateway,
+    // The in-page Stripe Payment Element mounts against these. Publishable key is
+    // public by design; the client confirms the payment without navigating away.
+    clientSecret: checkout.clientSecret ?? null,
+    publishableKey: body.gateway === "stripe" ? (stripePublishableKey() || null) : null,
     amountCents: q.amountCents, downloads, weeks, expiresAt: checkout.expiresAt ?? null,
   });
 });

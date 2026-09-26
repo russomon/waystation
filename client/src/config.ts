@@ -148,6 +148,10 @@ export interface CheckoutResponse {
   orderId: string;
   url: string;
   gateway: PayGateway;
+  // Stripe Payment Element (in-page card form). `clientSecret` mounts the element;
+  // `publishableKey` is public and identifies the account to Stripe.js.
+  clientSecret: string | null;
+  publishableKey: string | null;
   amountCents: number;
   downloads: number;
   weeks: number;
@@ -172,7 +176,8 @@ export interface PaymentSession {
 export const paymentQuote = (bytes: number, downloads: number, weeks: number): Promise<QuoteResponse> =>
   gwPost("/payments/quote", { bytes, downloads, weeks });
 
-/** Create a hosted checkout and a pending order; the caller redirects to `.url`. */
+/** Create a pending order and a Stripe PaymentIntent; the caller mounts the in-page
+ *  Payment Element against `.clientSecret` and confirms without navigating away. */
 export const startCheckout = (
   gateway: PayGateway, bytes: number, downloads: number, weeks: number,
 ): Promise<CheckoutResponse> => gwPost("/payments/checkout", { gateway, bytes, downloads, weeks });

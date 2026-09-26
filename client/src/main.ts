@@ -1,4 +1,5 @@
 import { Check, Copy, Eye, EyeOff, createElement as createIcon } from "lucide";
+import { loadStripe, type Stripe, type StripeElements } from "@stripe/stripe-js";
 import {
   createSession, endSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink,
   paymentQuote, startCheckout, claimPaymentSession,
@@ -140,9 +141,14 @@ if (tid) {
   const payPanel = $("#payPanel");
   const downloadsSelect = $<HTMLSelectElement>("#downloadsAllowed");
   const weeksSelect = $<HTMLSelectElement>("#weeksAllowed");
+  const rateCard = $("#rateCard");
   const payTotal = $("#payTotal");
+  const payActions = $("#payActions");
   const payCard = $<HTMLButtonElement>("#payCard");
-  const payCrypto = $<HTMLButtonElement>("#payCrypto");
+  const cardForm = $("#cardForm");
+  const cardElement = $("#cardElement");
+  const payConfirm = $<HTMLButtonElement>("#payConfirm");
+  const payCancel = $<HTMLButtonElement>("#payCancel");
   const payMsg = $("#payMsg");
   const paidNote = $("#paidNote");
   const signInRow = $("#signInRow");
@@ -155,6 +161,11 @@ if (tid) {
   let paid = false;     // authorized to upload: comped, or a claimed paid order
   let quoteToken = 0;   // guards against out-of-order price responses
   let lastQuoteKey = ""; // skip re-quoting when nothing priced-relevant changed
+  // In-page Stripe Payment Element state, live only between "Pay with Credit Card"
+  // and a settled (or cancelled) payment.
+  let stripe: Stripe | null = null;
+  let elements: StripeElements | null = null;
+  let payOrderId: string | null = null;
 
   const icon = (node: any, label?: string): SVGElement => createIcon(node, {
     width: "18", height: "18", "stroke-width": "1.8",
@@ -283,7 +294,7 @@ if (tid) {
       ? "Pause"
       : resuming
         ? "Resume send"
-        : count > 1 ? `Send ${count} files` : "Send file";
+        : count > 1 ? `Send ${count} files` : "Send file(s)";
     const previewLocked = mode === "qc" && qcPreview && !sending;
     if (previewLocked) queueNote.textContent = count
       ? "QC uploads aren't open yet. Switch to Transfer to send these files."
@@ -305,6 +316,9 @@ if (tid) {
     }
     downloadsSelect.disabled = sending;
     weeksSelect.disabled = sending;
+    // The rate card stays visible for a paying (public) sender whether or not a
+    // file is queued — so charges are clear up front. Comped/admin never pay.
+    rateCard.hidden = !(mode === "transfer" && !paid && !comped);
     void updatePayPanel();
     refreshSidecars();
   };
@@ -328,21 +342,16 @@ if (tid) {
     lastQuoteKey = key;
     const token = ++quoteToken;
     payCard.disabled = true;
-    payCrypto.disabled = true;
     payTotal.textContent = "Calculating price…";
     try {
       const q = await paymentQuote(totalBytes, downloads, weeks);
       if (token !== quoteToken) return; // a newer request superseded this one
-      const parts: string[] = [];
-      if (q.stripe) parts.push(`Card ${formatUsd(q.stripe.amountCents)}`);
-      if (q.coinbase) parts.push(`Crypto ${formatUsd(q.coinbase.amountCents)}`);
       payTotal.replaceChildren();
       const strong = document.createElement("strong");
-      strong.textContent = parts.join(" · ") || "Payment unavailable";
+      strong.textContent = q.stripe ? formatUsd(q.stripe.amountCents) : "Payment unavailable";
       payTotal.append(strong, document.createTextNode(
         ` — ${formatBytes(totalBytes)}, ${downloads} download${downloads === 1 ? "" : "s"}, ${weeks}-week link`));
       payCard.disabled = !q.stripe;
-      payCrypto.disabled = !q.coinbase;
     } catch (e) {
       if (token !== quoteToken) return;
       lastQuoteKey = ""; // let the next call retry
@@ -350,35 +359,136 @@ if (tid) {
     }
   }
 
-  async function beginCheckout(gateway: "stripe" | "coinbase"): Promise<void> {
+  /** Reveal the in-page Stripe card form. Creating the PaymentIntent locks the
+   *  priced options for this attempt; "Back" (cancelCard) unlocks them again. */
+  async function beginCheckout(): Promise<void> {
     const totalBytes = queuedFiles.reduce((sum, f) => sum + f.size, 0);
     if (!totalBytes) return;
     const downloads = Number(downloadsSelect.value) || 2;
     const weeks = Number(weeksSelect.value) || 1;
     payCard.disabled = true;
-    payCrypto.disabled = true;
-    payMsg.textContent = "Starting secure checkout…";
+    payMsg.textContent = "Preparing secure card form…";
     try {
-      const res = await startCheckout(gateway, totalBytes, downloads, weeks);
-      // File objects do NOT survive the redirect. Remember what to re-select so
-      // the return screen can name the exact files — a convenience, not a gate:
-      // the gateway holds the upload to the paid byte budget regardless.
+      const res = await startCheckout("stripe", totalBytes, downloads, weeks);
+      if (!res.clientSecret || !res.publishableKey)
+        throw new Error("Card payments are not available right now.");
+      payOrderId = res.orderId;
+      // A 3-D Secure challenge is the one case that still redirects; remember what
+      // to re-select so the return screen (handlePaymentReturn) can name the files.
+      // The common no-redirect path keeps the File handles in memory and never uses this.
       try {
         sessionStorage.setItem(`ws_pay_${res.orderId}`, JSON.stringify({
           files: queuedFiles.map((f) => ({ name: f.name, size: f.size })),
           downloads, weeks, totalBytes,
         }));
       } catch { /* private windows block storage; the descriptor is optional */ }
-      location.assign(res.url);
+
+      stripe = await loadStripe(res.publishableKey);
+      if (!stripe) throw new Error("Could not load the payment form. Please try again.");
+      elements = stripe.elements({
+        clientSecret: res.clientSecret,
+        appearance: { theme: "night", variables: { colorPrimary: "#e8b04a" } },
+      });
+      const paymentEl = elements.create("payment");
+      cardElement.replaceChildren();
+      paymentEl.mount(cardElement);
+
+      downloadsSelect.disabled = true;
+      weeksSelect.disabled = true;
+      fileIn.disabled = true;             // lock the queue so the paid amount can't drift
+      pickMaster.classList.add("disabled");
+      payActions.hidden = true;
+      cardForm.hidden = false;
+      payConfirm.disabled = false;
+      payCancel.disabled = false;
+      payConfirm.textContent = `Pay ${formatUsd(res.amountCents)}`;
+      payMsg.textContent = "";
     } catch (e) {
-      payMsg.textContent = e instanceof GatewayError ? e.message : "Could not start checkout. Please try again.";
+      payMsg.textContent = e instanceof GatewayError ? e.message
+        : e instanceof Error ? e.message : "Could not start checkout. Please try again.";
       payCard.disabled = false;
-      payCrypto.disabled = false;
     }
   }
 
-  payCard.onclick = () => void beginCheckout("stripe");
-  payCrypto.onclick = () => void beginCheckout("coinbase");
+  /** Confirm the payment in place. On success the page does NOT navigate, so the
+   *  queued File handles survive and the sender can upload immediately. */
+  async function confirmPayment(): Promise<void> {
+    if (!stripe || !elements || !payOrderId) return;
+    payConfirm.disabled = true;
+    payCancel.disabled = true;
+    payMsg.textContent = "Processing payment…";
+    const returnUrl = `${location.origin}${location.pathname}?order=${encodeURIComponent(payOrderId)}&paid=1`;
+    const { error } = await stripe.confirmPayment({
+      elements,
+      confirmParams: { return_url: returnUrl }, // only used if a 3-D Secure step forces a redirect
+      redirect: "if_required",
+    });
+    if (error) {
+      payMsg.textContent = error.message || "The payment could not be completed. Please try again.";
+      payConfirm.disabled = false;
+      payCancel.disabled = false;
+      return;
+    }
+    // Settled without a redirect. Authorize the upload; files stay in the queue.
+    payMsg.textContent = "Payment received — confirming…";
+    const ok = await authorizePaidUpload(payOrderId);
+    if (!ok) {
+      payMsg.textContent = "Payment received — finalizing. If Send doesn't unlock in a moment, refresh the page.";
+      return;
+    }
+    payPanel.hidden = true;
+    cardForm.hidden = true;
+    elements = null;
+    paidNote.hidden = false;
+    paidNote.textContent = "Payment received — your file(s) are ready to send.";
+    blinkSend();
+    renderQueue();
+  }
+
+  /** Dismiss the card form and restore the priced-options selectors. */
+  function cancelCard(): void {
+    cardForm.hidden = true;
+    payActions.hidden = false;
+    downloadsSelect.disabled = false;
+    weeksSelect.disabled = false;
+    fileIn.disabled = false;
+    pickMaster.classList.remove("disabled");
+    payCard.disabled = false;
+    elements = null;
+    payOrderId = null;
+    cardElement.replaceChildren();
+    payMsg.textContent = "";
+  }
+
+  /** Claim the paid order and mint the upload session, riding out a webhook race
+   *  (the gateway falls back to a direct provider lookup). Shared by the in-page
+   *  flow and the redirect-return path. */
+  async function authorizePaidUpload(orderId: string): Promise<boolean> {
+    let session: Awaited<ReturnType<typeof claimPaymentSession>> | null = null;
+    for (let attempt = 0; attempt < 5 && !session?.authorized; attempt += 1) {
+      try {
+        session = await claimPaymentSession(orderId);
+        if (!session.authorized) await sleep(1500);
+      } catch (e) {
+        if (e instanceof GatewayError && e.status === 402) { await sleep(1500); continue; }
+        return false;
+      }
+    }
+    if (!session?.authorized) return false;
+    paid = true;
+    signInRow.hidden = true;
+    return true;
+  }
+
+  function blinkSend(): void {
+    sendBtn.classList.add("blink");
+    // Clear after the pulses finish so it doesn't linger as a permanent highlight.
+    window.setTimeout(() => sendBtn.classList.remove("blink"), 5000);
+  }
+
+  payCard.onclick = () => void beginCheckout();
+  payConfirm.onclick = () => void confirmPayment();
+  payCancel.onclick = () => cancelCard();
   downloadsSelect.onchange = () => void updatePayPanel();
   weeksSelect.onchange = () => void updatePayPanel();
   signInBtn.onclick = () => showGate();
@@ -498,7 +608,7 @@ if (tid) {
       : "Send mastered media with deterministic and AI-assisted QC.";
     pickTitle.textContent = transfer ? "Choose or drop files" : "Choose or drop master files";
     fname.textContent = transfer
-      ? "Select multiple files, add them one at a time, or drag them here"
+      ? "Select files or drag them here to calculate transfer cost"
       : "Select one or more video or audio masters, or drag them here";
     renderQueue();
   };
@@ -561,7 +671,7 @@ if (tid) {
       upload.value.textContent = progress.upload === "complete"
         ? "Complete"
         : progress.upload === "connecting"
-          ? "Connecting to Backblaze B2"
+          ? "Connecting to OrbiStation"
           : progress.upload === "finalizing"
             ? "Finalizing multipart upload"
             : `${formatBytes(progress.uploadedBytes)} / ${formatBytes(progress.total)}`;
@@ -616,6 +726,7 @@ if (tid) {
   let pausedFiles = new Set<File>();
 
   sendBtn.onclick = async () => {
+    sendBtn.classList.remove("blink"); // the post-payment cue has served its purpose
     if (sendAbort) {                     // running → this click means "pause"
       sendBtn.disabled = true;
       sendBtn.textContent = "Pausing…";

@@ -28,6 +28,10 @@ if (PAYMENTS_MODE !== "live" && PAYMENTS_MODE !== "test")
 
 const STRIPE_SECRET_KEY = (env.STRIPE_SECRET_KEY || "").trim();
 const STRIPE_WEBHOOK_SECRET = (env.STRIPE_WEBHOOK_SECRET || "").trim();
+// Public by design — it identifies the account to Stripe.js in the browser and
+// carries no authority. Safe to serve to the client. (pk_live_… / pk_test_…)
+const STRIPE_PUBLISHABLE_KEY = (env.STRIPE_PUBLISHABLE_KEY || "").trim();
+export const stripePublishableKey = (): string => STRIPE_PUBLISHABLE_KEY;
 const COINBASE_API_KEY = (env.COINBASE_COMMERCE_API_KEY || "").trim();
 const COINBASE_WEBHOOK_SECRET = (env.COINBASE_COMMERCE_WEBHOOK_SECRET || "").trim();
 const COINBASE_API = "https://api.commerce.coinbase.com";
@@ -64,8 +68,9 @@ export interface CheckoutInput {
   cancelUrl: string;
 }
 export interface CheckoutResult {
-  url: string; // hosted payment page the client redirects to
-  gatewayRef: string; // stripe checkout-session id / coinbase charge id
+  url: string; // hosted payment page the client redirects to (empty for the in-page card element)
+  gatewayRef: string; // stripe payment-intent id / coinbase charge id
+  clientSecret?: string; // stripe PaymentIntent secret — mounts the in-page Payment Element
   expiresAt?: number; // ms epoch — Coinbase locks a ~60-minute window
 }
 
@@ -87,30 +92,25 @@ export async function createCheckout(input: CheckoutInput): Promise<CheckoutResu
   return input.gateway === "stripe" ? createStripeCheckout(input) : createCoinbaseCharge(input);
 }
 
+// A PaymentIntent (not a hosted Checkout Session): the client mounts an in-page
+// Stripe Payment Element against `client_secret` and confirms without navigating,
+// so the browser's File handles survive the payment. The signed
+// `payment_intent.succeeded` webhook (or the direct lookup below) authorizes the
+// upload — the browser's word that it paid is never trusted.
 async function createStripeCheckout(input: CheckoutInput): Promise<CheckoutResult> {
-  const session = await stripe().checkout.sessions.create({
-    mode: "payment",
-    line_items: [
-      {
-        quantity: 1,
-        price_data: {
-          currency: "usd",
-          unit_amount: input.amountCents,
-          product_data: { name: describe(input.gb, input.downloads, input.weeks) },
-        },
-      },
-    ],
-    success_url: input.successUrl,
-    cancel_url: input.cancelUrl,
-    client_reference_id: input.orderId,
+  const intent = await stripe().paymentIntents.create({
+    amount: input.amountCents,
+    currency: "usd",
+    description: describe(input.gb, input.downloads, input.weeks),
     metadata: { order_id: input.orderId },
+    // Card only for launch — matches the "Pay with Credit Card" button and keeps
+    // the form predictable. To add Stripe's own crypto (USDC) later, enable it in
+    // the Stripe dashboard and add "crypto" here (or switch to
+    // automatic_payment_methods to let the dashboard drive the list).
+    payment_method_types: ["card"],
   });
-  if (!session.url) throw new Error("Stripe did not return a checkout URL");
-  return {
-    url: session.url,
-    gatewayRef: session.id,
-    expiresAt: session.expires_at ? session.expires_at * 1000 : undefined,
-  };
+  if (!intent.client_secret) throw new Error("Stripe did not return a client secret");
+  return { url: "", gatewayRef: intent.id, clientSecret: intent.client_secret };
 }
 
 async function coinbaseFetch(path: string, init: RequestInit): Promise<any> {
@@ -177,15 +177,31 @@ export function parseStripeEvent(raw: string, signature: string | undefined): Pa
       event = stripe().webhooks.constructEvent(raw, signature, STRIPE_WEBHOOK_SECRET);
     } catch { return null; }
   }
-  if (event?.type !== "checkout.session.completed") return { orderId: undefined, paid: false };
-  const s = event.data?.object ?? {};
-  return {
-    orderId: s.metadata?.order_id ?? s.client_reference_id ?? undefined,
-    paid: s.payment_status === "paid",
-    amountCents: typeof s.amount_total === "number" ? s.amount_total : undefined,
-    currency: typeof s.currency === "string" ? s.currency.toUpperCase() : undefined,
-    email: s.customer_details?.email ?? s.customer_email ?? undefined,
-  };
+  // The in-page Payment Element path settles as a PaymentIntent.
+  if (event?.type === "payment_intent.succeeded") {
+    const pi = event.data?.object ?? {};
+    return {
+      orderId: pi.metadata?.order_id ?? undefined,
+      paid: pi.status === "succeeded",
+      amountCents: typeof pi.amount_received === "number" ? pi.amount_received
+        : typeof pi.amount === "number" ? pi.amount : undefined,
+      currency: typeof pi.currency === "string" ? pi.currency.toUpperCase() : undefined,
+      email: pi.receipt_email ?? undefined,
+    };
+  }
+  // Legacy hosted-checkout events stay honored for any order created before the
+  // switch to the Payment Element.
+  if (event?.type === "checkout.session.completed") {
+    const s = event.data?.object ?? {};
+    return {
+      orderId: s.metadata?.order_id ?? s.client_reference_id ?? undefined,
+      paid: s.payment_status === "paid",
+      amountCents: typeof s.amount_total === "number" ? s.amount_total : undefined,
+      currency: typeof s.currency === "string" ? s.currency.toUpperCase() : undefined,
+      email: s.customer_details?.email ?? s.customer_email ?? undefined,
+    };
+  }
+  return { orderId: undefined, paid: false };
 }
 
 /** Verify + normalize a Coinbase Commerce webhook (X-CC-Webhook-Signature is an
@@ -218,15 +234,28 @@ export async function lookupPaid(gateway: Gateway, gatewayRef: string): Promise<
   return gateway === "stripe" ? lookupStripe(gatewayRef) : lookupCoinbase(gatewayRef);
 }
 
-async function lookupStripe(sessionId: string): Promise<PaymentEvent> {
+async function lookupStripe(ref: string): Promise<PaymentEvent> {
   try {
-    const s = await stripe().checkout.sessions.retrieve(sessionId);
+    // Legacy hosted-checkout orders carry a `cs_` session id; the Payment Element
+    // path carries a `pi_` PaymentIntent id.
+    if (ref.startsWith("cs_")) {
+      const s = await stripe().checkout.sessions.retrieve(ref);
+      return {
+        orderId: s.metadata?.order_id ?? s.client_reference_id ?? undefined,
+        paid: s.payment_status === "paid",
+        amountCents: typeof s.amount_total === "number" ? s.amount_total : undefined,
+        currency: typeof s.currency === "string" ? s.currency.toUpperCase() : undefined,
+        email: s.customer_details?.email ?? undefined,
+      };
+    }
+    const pi = await stripe().paymentIntents.retrieve(ref);
     return {
-      orderId: s.metadata?.order_id ?? s.client_reference_id ?? undefined,
-      paid: s.payment_status === "paid",
-      amountCents: typeof s.amount_total === "number" ? s.amount_total : undefined,
-      currency: typeof s.currency === "string" ? s.currency.toUpperCase() : undefined,
-      email: s.customer_details?.email ?? undefined,
+      orderId: pi.metadata?.order_id ?? undefined,
+      paid: pi.status === "succeeded",
+      amountCents: typeof pi.amount_received === "number" ? pi.amount_received
+        : typeof pi.amount === "number" ? pi.amount : undefined,
+      currency: typeof pi.currency === "string" ? pi.currency.toUpperCase() : undefined,
+      email: pi.receipt_email ?? undefined,
     };
   } catch {
     return { paid: false };

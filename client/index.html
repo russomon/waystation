@@ -202,7 +202,34 @@
       .pay-total strong { color: var(--amber-light); font-size: 15px; }
       .pay-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-top: .8rem; }
       .pay-actions .btn { width: 100%; }
+      #payActions { grid-template-columns: 1fr; }
       @media (max-width: 480px) { .pay-actions { grid-template-columns: 1fr; } }
+      /* Up-front rate card — shown before any file is added, so senders see the
+         charges before committing. */
+      .rate-card { margin: 1rem 0; padding: .8rem .9rem; border: 1px solid var(--line);
+                   border-radius: 7px; background: var(--surface); }
+      .rate-head { font: 600 12px/1 'IBM Plex Mono', monospace; letter-spacing: .06em;
+                   text-transform: uppercase; color: var(--amber-light); margin-bottom: .55rem; }
+      .rate-list { margin: 0; display: grid; gap: .3rem; }
+      .rate-list > div { display: flex; justify-content: space-between; gap: 1rem;
+                         font: 13px/1.5 'IBM Plex Mono', monospace; }
+      .rate-list dt { color: var(--mut); margin: 0; }
+      .rate-list dd { margin: 0; color: var(--ink); font-weight: 600; text-align: right; }
+      .rate-foot { margin: .6rem 0 0; color: var(--mut); font-size: 12px; line-height: 1.45; }
+      /* In-page card form (Stripe Payment Element). */
+      .card-form { margin-top: .9rem; }
+      #cardElement { padding: .4rem 0; }
+      .btn.btn-secondary { background: transparent; color: var(--amber-light); border: 1px solid var(--line); }
+      .btn.btn-secondary:hover { border-color: var(--blue); background: #302817; }
+      /* Draw the eye to Send once payment clears, without being obnoxious. */
+      @keyframes ws-send-pulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(232,176,74,.0); }
+        50% { box-shadow: 0 0 0 4px rgba(232,176,74,.45); }
+      }
+      #send.blink { animation: ws-send-pulse 1.1s ease-in-out 4; background: var(--amber-light); color: var(--black); }
+      @media (prefers-reduced-motion: reduce) {
+        #send.blink { animation: none; outline: 2px solid var(--amber-light); outline-offset: 2px; }
+      }
       .pay-note { margin: 1rem 0; padding: .6rem .8rem; border: 1px solid var(--green); border-radius: 6px;
                   background: #182018; color: var(--ink); font: 13px/1.5 'IBM Plex Mono', monospace; }
       .link-btn { background: none; border: 0; color: var(--amber-light); cursor: pointer; font: inherit;
@@ -330,10 +357,23 @@
         <label class="pick" id="pickMaster" for="file">
           <input id="file" type="file" multiple hidden />
           <strong id="pickTitle">Choose or drop files</strong>
-          <span class="muted" id="fname">Select multiple files, add them one at a time, or drag them here</span>
+          <span class="muted" id="fname">Select files or drag them here to calculate transfer cost</span>
         </label>
         <ul class="queue" id="fileQueue" aria-label="Files ready to send" hidden></ul>
         <p class="queue-note" id="queueNote" aria-live="polite"></p>
+
+        <!-- Charges, shown up front to a paying (public) sender whether or not a
+             file is queued yet. Hidden for comped/admin sessions. -->
+        <div class="rate-card" id="rateCard" hidden>
+          <div class="rate-head">What it costs</div>
+          <dl class="rate-list">
+            <div><dt>Base transfer</dt><dd>2¢ / GB</dd></div>
+            <div><dt>Included</dt><dd>2 downloads &amp; a 1-week link</dd></div>
+            <div><dt>Extra download</dt><dd>1¢ / GB each</dd></div>
+            <div><dt>Extra week</dt><dd>1¢ / GB each</dd></div>
+          </dl>
+          <p class="rate-foot">$0.50 minimum · billed in decimal GB. Add a file and pick your options to see the exact total.</p>
+        </div>
 
         <div class="password-panel">
           <label class="field-label" for="recipientPassword">Download password <span class="muted">(optional)</span></label>
@@ -421,9 +461,17 @@
           </div>
           <p id="weeksHelp" class="field-help">How long the download link stays live. One week is included; each extra week adds 1¢ per GB.</p>
           <p class="pay-total" id="payTotal">Add a file to see the price.</p>
-          <div class="pay-actions">
+          <div class="pay-actions" id="payActions">
             <button type="button" class="btn" id="payCard" disabled>Pay with Credit Card</button>
-            <button type="button" class="btn" id="payCrypto" disabled>Pay with Crypto</button>
+          </div>
+          <!-- In-page Stripe Payment Element: the sender pays here without leaving
+               the page, so the queued files stay loaded for the upload. -->
+          <div class="card-form" id="cardForm" hidden>
+            <div id="cardElement"></div>
+            <div class="pay-actions">
+              <button type="button" class="btn" id="payConfirm">Pay</button>
+              <button type="button" class="btn btn-secondary" id="payCancel">Back</button>
+            </div>
           </div>
           <p id="payMsg" class="field-help" aria-live="polite"></p>
         </div>
