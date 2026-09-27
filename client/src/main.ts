@@ -591,6 +591,14 @@ if (tid) {
   emailTo.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipientFromInput(); }
   });
+  // Chrome autofill was mirroring "Your email" into Send-to and Subject. Browsers
+  // don't autofill readonly inputs, so these start readonly and unlock on the
+  // first real interaction — defeating the autofill without blocking typing.
+  for (const el of [emailTo, emailSubject]) {
+    const unlock = () => el.removeAttribute("readonly");
+    el.addEventListener("focus", unlock);
+    el.addEventListener("pointerdown", unlock);
+  }
 
   /** The manual "Email the link" button only works once the upload has produced
    *  links; before then it is disabled with a hint that matches the checkbox. */
@@ -801,6 +809,21 @@ if (tid) {
     };
   }
 
+  // A small "activity" indicator so a status that sits still for a while (e.g.
+  // the gap between "Integrity check complete" and the first upload part) still
+  // looks alive. Three dots pulse in sequence; CSS handles the animation.
+  const workingDots = (): HTMLSpanElement => {
+    const s = document.createElement("span");
+    s.className = "working-dots";
+    s.setAttribute("aria-hidden", "true");
+    for (let i = 0; i < 3; i += 1) {
+      const d = document.createElement("i");
+      d.textContent = "•";
+      s.append(d);
+    }
+    return s;
+  };
+
   const resultRow = (file: File): {
     row: HTMLDivElement;
     status: HTMLSpanElement;
@@ -851,7 +874,10 @@ if (tid) {
           : progress.upload === "finalizing"
             ? "Finalizing multipart upload"
             : `${formatBytes(progress.uploadedBytes)} / ${formatBytes(progress.total)}`;
-      status.textContent = progress.message;
+      // Show the message with a live activity indicator while work is ongoing;
+      // terminal states elsewhere set status.textContent directly (no dots).
+      status.replaceChildren(document.createTextNode(progress.message));
+      if (progress.upload !== "complete") status.append(workingDots());
     };
     row.append(name, tracks, status);
     logEl.append(row);

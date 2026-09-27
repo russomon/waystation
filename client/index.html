@@ -238,9 +238,17 @@
         color: var(--ink); font: 14px/1.4 'IBM Plex Mono', monospace; }
       .email-form textarea { resize: vertical; }
       .email-form .field-label { display: block; margin-top: .5rem; }
-      .email-auto { display: flex; align-items: flex-start; gap: .5rem; margin: .7rem 0 .2rem;
-        font-size: 13px; color: var(--ink); cursor: pointer; }
-      .email-auto input { margin-top: .15rem; }
+      .email-auto { display: flex; align-items: center; justify-content: flex-start; gap: .6rem;
+        margin: .85rem 0 .3rem; font-size: 15px; text-align: left; color: var(--ink); cursor: pointer; }
+      .email-auto input { width: 20px; height: 20px; margin: 0; flex: 0 0 auto; cursor: pointer; accent-color: var(--amber-light); }
+      /* Live activity indicator for a status that pauses (e.g. between integrity
+         check and the first upload part). */
+      .working-dots { display: inline-block; margin-left: .3rem; letter-spacing: .1em; }
+      .working-dots i { font-style: normal; opacity: .25; animation: ws-dot 1.2s infinite; }
+      .working-dots i:nth-child(2) { animation-delay: .2s; }
+      .working-dots i:nth-child(3) { animation-delay: .4s; }
+      @keyframes ws-dot { 0%, 70%, 100% { opacity: .25; } 35% { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { .working-dots i { animation: none; opacity: .6; } }
       .chips { display: flex; flex-wrap: wrap; gap: .35rem; margin: .2rem 0; }
       .chips:empty { margin: 0; }
       .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .2rem .5rem; border-radius: 999px;
@@ -521,9 +529,9 @@
           <label class="field-label" for="emailTo">Send to <span class="muted" id="emailCap"></span></label>
           <div class="chips" id="emailChips"></div>
           <input id="emailTo" type="text" inputmode="email" autocomplete="off" autocapitalize="off" spellcheck="false"
-                 data-1p-ignore data-lpignore="true" placeholder="recipient@example.com — press Enter to add" />
+                 readonly data-1p-ignore data-lpignore="true" placeholder="recipient@example.com — press Enter to add" />
           <label class="field-label" for="emailSubject">Subject</label>
-          <input id="emailSubject" type="text" maxlength="200" autocomplete="off" data-1p-ignore data-lpignore="true" />
+          <input id="emailSubject" type="text" maxlength="200" autocomplete="off" readonly data-1p-ignore data-lpignore="true" />
           <label class="field-label" for="emailBody">Message <span class="muted">(optional, but you might want to include the password)</span></label>
           <textarea id="emailBody" maxlength="2000" rows="3" placeholder="Add a note for your recipient"></textarea>
           <p class="field-help" id="emailPwNote" hidden>Your recipient will need the download password — include it in the message above, or share it separately.</p>
