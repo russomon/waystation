@@ -17,9 +17,9 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-TARGET="/Users/Shared/Orbit/Code/OrbitWebsite/orbitolive/public/waystation"
+TARGET="/Users/Shared/Orbit/Code/OrbitWebsite/orbitolive/public/orbistation"
 API_BASE="https://api.orbitolive.com/api"
-PUBLIC_BASE="/waystation/"
+PUBLIC_BASE="/orbistation/"
 # All-cloud hosted deployment: pin compute while leaving the disabled,
 # checked route visible in the client.
 FORCE_COMPUTE="cloud"

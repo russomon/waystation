@@ -84,7 +84,7 @@ export interface PaymentEvent {
 }
 
 const describe = (gb: number, downloads: number, weeks: number): string =>
-  `Waystation transfer — ${gb.toFixed(gb < 10 ? 2 : 1)} GB, ${downloads} download${downloads === 1 ? "" : "s"}, ${weeks}-week link`;
+  `OrbiStation transfer — ${gb.toFixed(gb < 10 ? 2 : 1)} GB, ${downloads} download${downloads === 1 ? "" : "s"}, ${weeks}-week link`;
 
 export async function createCheckout(input: CheckoutInput): Promise<CheckoutResult> {
   if (IS_TEST_PAYMENTS)
@@ -132,7 +132,7 @@ async function createCoinbaseCharge(input: CheckoutInput): Promise<CheckoutResul
   const body = await coinbaseFetch("/charges", {
     method: "POST",
     body: JSON.stringify({
-      name: "Waystation transfer",
+      name: "OrbiStation transfer",
       description: describe(input.gb, input.downloads, input.weeks),
       pricing_type: "fixed_price",
       local_price: { amount: (input.amountCents / 100).toFixed(2), currency: "USD" },

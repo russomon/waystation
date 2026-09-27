@@ -454,7 +454,7 @@ api.post("/transfers/email", requireSession, enforceOrigin, limiter("email", 20,
   if (to.length > cap)
     return c.json({ error: `This transfer can be emailed to at most ${cap} recipient${cap === 1 ? "" : "s"}.`, code: "too_many_recipients", cap }, 400);
 
-  const subject = subjectRaw || `${fromEmail} sent you ${links.length === 1 ? "a file" : "files"} via Waystation`;
+  const subject = subjectRaw || `${fromEmail} sent you ${links.length === 1 ? "a file" : "files"} via OrbiStation`;
   try {
     // BCC the sender so they keep a copy (and a durable record of the link).
     await sendLinkEmail({ to, bcc: [fromEmail], replyTo: fromEmail, subject, message, links, hasPassword });
@@ -748,7 +748,7 @@ const recipientGate = (c: Context, id: string): Response | undefined => {
 // session the moment the upload completes. The sender sets the password there;
 // nothing ever asks them to enter it, so this route must keep recognising the
 // originating session or a protected QC transfer would show its own sender
-// "waiting for Waystation services" forever. Transfer-only deployments never
+// "waiting for OrbiStation services" forever. Transfer-only deployments never
 // open the stream, which is exactly why this exemption stays explicit here
 // rather than being inherited by the delivery routes above.
 const progressGate = (c: Context, id: string): Response | undefined => {

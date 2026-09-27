@@ -11,7 +11,7 @@ import { defineConfig } from "vite";
 // Applied to BUILDS ONLY. In dev the app stays at http://localhost:5173/ —
 // scripts/dev-up.sh, live-run.sh and live-event-run.sh gate on `curl` against
 // that root, and a dev base would 404 it and hang those readiness loops.
-const publicBase = process.env.WAYSTATION_PUBLIC_BASE || "/waystation/";
+const publicBase = process.env.WAYSTATION_PUBLIC_BASE || "/orbistation/";
 
 export default defineConfig(({ command }) => ({
   base: command === "build" ? publicBase : "/",

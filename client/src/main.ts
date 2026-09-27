@@ -594,7 +594,7 @@ if (tid) {
     emailCapN = Math.max(1, opts.downloads);
     emailAutoSend = opts.autoSend;
     emailCap.textContent = `(up to ${emailCapN} recipient${emailCapN === 1 ? "" : "s"})`;
-    if (!emailSubject.value.trim()) emailSubject.value = "A file has been sent to you via Waystation";
+    if (!emailSubject.value.trim()) emailSubject.value = "A file has been sent to you via OrbiStation";
     emailPwNote.hidden = !(opts.hasPassword ?? recipientPassword.value.trim().length > 0);
     emailIntro.textContent = opts.autoSend
       ? "Enter recipients and we'll email the link automatically when your upload finishes. You can also just copy the link above."
@@ -942,7 +942,7 @@ if (tid) {
           continue;
         }
 
-        status.textContent = "Uploaded · waiting for Waystation services";
+        status.textContent = "Uploaded · waiting for OrbiStation services";
         const es = gwEventSource(`/progress/${transferId}`);
         let where = "";
         es.onmessage = (event) => {
@@ -959,9 +959,9 @@ if (tid) {
             where = ` @ ${ev.compute}${fallback}`;
           }
           const stage = ev.stage ? " · " + String(ev.stage).replaceAll("_", " ") : "";
-          status.textContent = `Waystation${where}: ${ev.type}${ev.step ? " · " + ev.step : ""}${stage}`;
+          status.textContent = `OrbiStation${where}: ${ev.type}${ev.step ? " · " + ev.step : ""}${stage}`;
           if (ev.type === "pipeline_complete") {
-            status.textContent = `Waystation${where} complete · open the share link`;
+            status.textContent = `OrbiStation${where} complete · open the share link`;
             es.close();
           }
         };

@@ -5,12 +5,12 @@
 // or sees the key. We send from a verified domain — noreply@orbitolive.com — with
 // the sender's own address as Reply-To, because a provider cannot send *as* the
 // sender's domain (their SPF/DKIM don't authorize us). This From/Reply-To shape is
-// the standard, deliverable one: the recipient sees it's from Waystation on behalf
+// the standard, deliverable one: the recipient sees it's from OrbiStation on behalf
 // of the sender, and a reply reaches the sender directly.
 const env = process.env as Record<string, string | undefined>;
 
 const RESEND_API_KEY = (env.RESEND_API_KEY || "").trim();
-const EMAIL_FROM = (env.WAYSTATION_EMAIL_FROM || "Waystation <noreply@orbitolive.com>").trim();
+const EMAIL_FROM = (env.WAYSTATION_EMAIL_FROM || "OrbiStation <noreply@orbitolive.com>").trim();
 
 /** Offerable only when the key is present — the route returns 503 otherwise. */
 export const emailEnabled = (): boolean => !!RESEND_API_KEY;
@@ -47,7 +47,7 @@ function render(input: SendLinkEmailInput): { html: string; text: string } {
     : "";
   const text =
     (message ? `${message}\n\n` : "") +
-    `${replyTo} has sent you ${links.length === 1 ? "a file" : "files"} via Waystation:\n\n` +
+    `${replyTo} has sent you ${links.length === 1 ? "a file" : "files"} via OrbiStation:\n\n` +
     `${linkLines}\n` +
     pwLine +
     `\n\nOpen the link to download. Reply to this email to reach the sender directly.`;
@@ -61,7 +61,7 @@ function render(input: SendLinkEmailInput): { html: string; text: string } {
   const html =
     `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;margin:auto;color:#1a1a1a">` +
     (message ? `<p style="white-space:pre-wrap">${esc(message)}</p>` : "") +
-    `<p><strong>${esc(replyTo)}</strong> has sent you ${links.length === 1 ? "a file" : "files"} via Waystation:</p>` +
+    `<p><strong>${esc(replyTo)}</strong> has sent you ${links.length === 1 ? "a file" : "files"} via OrbiStation:</p>` +
     `<ul style="list-style:none;padding:0">${linkHtml}</ul>` +
     pwHtml +
     `<p style="color:#6b6257;font-size:13px">Open the link to download. Reply to this email to reach the sender directly.</p>` +
