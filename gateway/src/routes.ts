@@ -97,6 +97,7 @@ import {
   stripePublishableKey,
   type PaymentEvent,
 } from "./payments.js";
+import { emailEnabled, isEmail, sendLinkEmail } from "./email.js";
 
 const env = process.env as Record<string, string>;
 export const api = new Hono();
@@ -401,6 +402,66 @@ api.get("/payments/:orderId", limiter("pay-status", 60, 60_000), (c) => {
     status: order.status, gateway: order.gateway, amountCents: order.amountCents,
     downloads: order.downloads, pricedBytes: order.pricedBytes, expiresAt: order.expiresAt ?? null,
   });
+});
+
+// ───────── email a completed transfer's link(s) ─────────
+//
+// The sender names recipients; the gateway builds the canonical link from the
+// transfer id (never a client-supplied URL), verifies the transfer belongs to
+// THIS session, caps recipients at the downloads the sender bought, and sends via
+// Resend. The API key stays server-side; a browser's word is never trusted for
+// who owns a transfer or how many people it may reach. A download password is
+// never included — the note tells the recipient to expect it separately.
+const COMPED_RECIPIENT_CAP = 25; // comped/admin transfers have no purchased count
+api.post("/transfers/email", requireSession, enforceOrigin, limiter("email", 20, 60_000, true), async (c) => {
+  if (!emailEnabled()) return c.json({ error: "Email delivery isn't configured.", code: "email_disabled" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, any>);
+  const entries: { id: string; name: string }[] = Array.isArray(b.transfers)
+    ? b.transfers
+        .map((x: any) => ({ id: String(x?.id ?? "").trim(), name: String(x?.name ?? "your file").slice(0, 200) }))
+        .filter((x: { id: string }) => x.id)
+    : [];
+  const to: string[] = Array.isArray(b.to)
+    ? [...new Set((b.to as unknown[]).map((x) => String(x).trim().toLowerCase()).filter((s) => s.length > 0))]
+    : [];
+  const fromEmail = String(b.fromEmail ?? "").trim();
+  const subjectRaw = typeof b.subject === "string" ? b.subject.trim().slice(0, 200) : "";
+  const message = typeof b.message === "string" ? b.message.slice(0, 2000) : "";
+
+  if (!entries.length) return c.json({ error: "No transfer to send.", code: "no_transfer" }, 400);
+  if (!to.length) return c.json({ error: "Add at least one recipient.", code: "no_recipients" }, 400);
+  if (!isEmail(fromEmail)) return c.json({ error: "Enter a valid email in “Your email”.", code: "bad_from" }, 400);
+  const badTo = to.find((e) => !isEmail(e));
+  if (badTo) return c.json({ error: `Not a valid email address: ${badTo}`, code: "bad_recipient" }, 400);
+
+  const session = sessionOf(c);
+  const base = new URL(publicBaseUrl(c));
+  const links: { name: string; url: string }[] = [];
+  let hasPassword = false;
+  let cap = Infinity;
+  for (const { id, name } of entries) {
+    const t = getTransfer(id);
+    if (!t) return c.json({ error: "That transfer no longer exists.", code: "transfer_gone" }, 404);
+    const ownerOk = session?.admin || (!!session?.ownerId && t.ownerId === session.ownerId);
+    if (!ownerOk) return c.json({ error: "That transfer isn’t yours to send.", code: "not_owner" }, 403);
+    if (t.revoked) return c.json({ error: "That transfer has been revoked.", code: "revoked" }, 409);
+    if (t.passwordHash) hasPassword = true;
+    cap = Math.min(cap, t.downloadsAllowed ?? COMPED_RECIPIENT_CAP);
+    const u = new URL(base.toString());
+    u.searchParams.set("t", id);
+    links.push({ name, url: u.toString() });
+  }
+  if (to.length > cap)
+    return c.json({ error: `This transfer can be emailed to at most ${cap} recipient${cap === 1 ? "" : "s"}.`, code: "too_many_recipients", cap }, 400);
+
+  const subject = subjectRaw || `${fromEmail} sent you ${links.length === 1 ? "a file" : "files"} via Waystation`;
+  try {
+    // BCC the sender so they keep a copy (and a durable record of the link).
+    await sendLinkEmail({ to, bcc: [fromEmail], replyTo: fromEmail, subject, message, links, hasPassword });
+  } catch {
+    return c.json({ error: "Could not send the email. Try again, or copy the link and share it yourself.", code: "send_failed" }, 502);
+  }
+  return c.json({ ok: true, sent: to.length });
 });
 
 // ───────── upload (control plane) ─────────

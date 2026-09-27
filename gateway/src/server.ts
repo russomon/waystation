@@ -7,6 +7,7 @@ import { activeAccessCodeCount } from "./db.js";
 import { dbPathLabel } from "./db.js";
 import { policyBanner } from "./limits.js";
 import { paymentsBanner } from "./payments.js";
+import { emailBanner } from "./email.js";
 import { api } from "./routes.js";
 
 const app = new Hono();
@@ -54,5 +55,6 @@ serve({ fetch: app.fetch, port }, () => {
   console.log(`  state: ${dbPathLabel}`);
   console.log(`  ${policyBanner()}`);
   console.log(`  ${paymentsBanner()}`);
+  console.log(`  ${emailBanner()}`);
   if (!authEnabled) console.log("  WARNING: sender authentication is OFF (development mode)");
 });

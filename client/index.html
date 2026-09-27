@@ -227,6 +227,33 @@
         50% { box-shadow: 0 0 0 4px rgba(232,176,74,.45); }
       }
       #send.blink { animation: ws-send-pulse 1.1s ease-in-out 4; background: var(--amber-light); color: var(--black); }
+      /* Armed "no password — send anyway?" state. */
+      #send.confirm { background: #7a2e2e; color: #fff; }
+      #send.confirm:hover { background: #8f3636; }
+      /* Email-the-link form. */
+      .email-form { margin-top: 1rem; padding: 1rem; border: 1px solid var(--blue); border-radius: 8px; background: #242012; }
+      .email-head { font-weight: 600; color: var(--amber-light); margin-bottom: .3rem; }
+      .email-form input, .email-form textarea { width: 100%; box-sizing: border-box; margin: .15rem 0 .2rem;
+        padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--surface2);
+        color: var(--ink); font: 14px/1.4 'IBM Plex Mono', monospace; }
+      .email-form textarea { resize: vertical; }
+      .email-form .field-label { display: block; margin-top: .5rem; }
+      .chips { display: flex; flex-wrap: wrap; gap: .35rem; margin: .2rem 0; }
+      .chips:empty { margin: 0; }
+      .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .2rem .5rem; border-radius: 999px;
+        border: 1px solid var(--line); background: var(--surface2); color: var(--ink); font-size: 12.5px; }
+      .chip button { background: none; border: 0; color: var(--mut); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+      .chip button:hover { color: var(--amber-light); }
+      #emailStatus.bad { color: #e08a8a; }
+      #emailStatus.good { color: var(--green); }
+      /* Recent-transfers list (per-browser link memory). */
+      .recent { margin-top: 1rem; border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; background: var(--surface); }
+      .recent > summary { cursor: pointer; font-weight: 600; }
+      .recent-list { list-style: none; margin: .6rem 0; padding: 0; display: grid; gap: .5rem; }
+      .recent-list li { display: flex; align-items: center; gap: .6rem; justify-content: space-between;
+                        border: 1px solid var(--line); border-radius: 6px; padding: .45rem .6rem; }
+      .recent-list .rt-name { font: 13px/1.4 'IBM Plex Mono', monospace; color: var(--ink); overflow-wrap: anywhere; }
+      .recent-list .rt-when { color: var(--mut); font-size: 11.5px; }
       @media (prefers-reduced-motion: reduce) {
         #send.blink { animation: none; outline: 2px solid var(--amber-light); outline-offset: 2px; }
       }
@@ -479,6 +506,38 @@
 
         <button id="send" class="btn" disabled>Send</button>
         <div id="log" aria-live="polite"></div>
+
+        <!-- Email the link(s). Shown after payment (so the sender can fill it while
+             the upload runs) and auto-sends when the upload completes; also usable
+             manually. Optional — "copy the link" above always works. -->
+        <div class="email-form" id="emailForm" hidden>
+          <div class="email-head">Email the download link</div>
+          <p class="field-help" id="emailIntro">Enter recipients and we'll email the link when your upload finishes. You can also just copy the link above.</p>
+          <label class="field-label" for="emailFrom">Your email</label>
+          <input id="emailFrom" type="email" autocomplete="email" placeholder="you@example.com" />
+          <label class="field-label" for="emailTo">Send to <span class="muted" id="emailCap"></span></label>
+          <div class="chips" id="emailChips"></div>
+          <input id="emailTo" type="email" placeholder="recipient@example.com — press Enter to add" />
+          <label class="field-label" for="emailSubject">Subject</label>
+          <input id="emailSubject" type="text" maxlength="200" />
+          <label class="field-label" for="emailBody">Message <span class="muted">(optional)</span></label>
+          <textarea id="emailBody" maxlength="2000" rows="3" placeholder="Add a note for your recipient"></textarea>
+          <p class="field-help" id="emailPwNote" hidden>Your download password isn't included in the email — share it with your recipient separately.</p>
+          <div class="pay-actions">
+            <button type="button" class="btn" id="emailSend">Email the link</button>
+            <button type="button" class="btn btn-secondary" id="emailSkip">Not now</button>
+          </div>
+          <p id="emailStatus" class="field-help" aria-live="polite"></p>
+        </div>
+
+        <!-- Per-browser memory of links made on this device (localStorage), so a
+             link isn't lost on navigation. Populated by recentTransfers.ts. -->
+        <details class="recent" id="recentTransfers" hidden>
+          <summary>Your recent transfers <span class="muted" id="recentCount"></span></summary>
+          <p class="field-help">Links made in this browser. They expire on their own; this is a convenience, not a record — the emailed copy is the durable one.</p>
+          <ul id="recentList" class="recent-list"></ul>
+          <button type="button" class="btn-small" id="recentClear">Clear this list</button>
+        </details>
         </div>
       </div>
       <!-- Shown only when the gateway reports this session is the admin. The

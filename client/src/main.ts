@@ -2,7 +2,7 @@ import { Check, Copy, Eye, EyeOff, createElement as createIcon } from "lucide";
 import { loadStripe, type Stripe, type StripeElements } from "@stripe/stripe-js";
 import {
   createSession, endSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink,
-  paymentQuote, startCheckout, claimPaymentSession,
+  paymentQuote, startCheckout, claimPaymentSession, sendTransferEmail,
 } from "./config.js";
 import { copyText } from "./clipboard.js";
 import { appendUniqueFiles, fileIdentity } from "./fileQueue.js";
@@ -10,6 +10,7 @@ import { formatBytes, formatUsd } from "./format.js";
 import { uploadFile, type Progress, type ServiceOptions } from "./uploader.js";
 import { renderDelivery } from "./delivery.js";
 import { mountAdmin } from "./admin.js";
+import { rememberTransfer, recentTransfers, clearRecentTransfers } from "./recentTransfers.js";
 
 const tid = new URLSearchParams(location.search).get("t");
 const deliveryEl = document.querySelector<HTMLDivElement>("#delivery")!;
@@ -153,6 +154,22 @@ if (tid) {
   const paidNote = $("#paidNote");
   const signInRow = $("#signInRow");
   const signInBtn = $<HTMLButtonElement>("#signIn");
+  const recentDetails = $<HTMLDetailsElement>("#recentTransfers");
+  const recentList = $<HTMLUListElement>("#recentList");
+  const recentCount = $("#recentCount");
+  const recentClear = $<HTMLButtonElement>("#recentClear");
+  const emailForm = $("#emailForm");
+  const emailIntro = $("#emailIntro");
+  const emailFrom = $<HTMLInputElement>("#emailFrom");
+  const emailTo = $<HTMLInputElement>("#emailTo");
+  const emailChips = $("#emailChips");
+  const emailCap = $("#emailCap");
+  const emailSubject = $<HTMLInputElement>("#emailSubject");
+  const emailBody = $<HTMLTextAreaElement>("#emailBody");
+  const emailPwNote = $("#emailPwNote");
+  const emailSendBtn = $<HTMLButtonElement>("#emailSend");
+  const emailSkipBtn = $<HTMLButtonElement>("#emailSkip");
+  const emailStatus = $("#emailStatus");
   type SenderMode = "transfer" | "qc";
   let mode: SenderMode = "transfer";
   let queuedFiles: File[] = [];
@@ -166,6 +183,13 @@ if (tid) {
   let stripe: Stripe | null = null;
   let elements: StripeElements | null = null;
   let payOrderId: string | null = null;
+  // Email-the-link state.
+  let emailRecipients: string[] = [];
+  let emailCapN = 25;             // max recipients — the downloads bought (comped: a generous default)
+  let paidDownloads = 2;          // downloads chosen at checkout, drives the recipient cap
+  let sentTransfers: { id: string; name: string }[] = []; // links produced by the last completed send
+  let emailAutoSend = false;      // paid form filled during upload → send automatically when it completes
+  let lastSendHadPassword = false; // captured before the field is cleared, for the email note
 
   const icon = (node: any, label?: string): SVGElement => createIcon(node, {
     width: "18", height: "18", "stroke-width": "1.8",
@@ -366,6 +390,7 @@ if (tid) {
     if (!totalBytes) return;
     const downloads = Number(downloadsSelect.value) || 2;
     const weeks = Number(weeksSelect.value) || 1;
+    paidDownloads = downloads;   // the recipient cap for the email-the-link form
     payCard.disabled = true;
     payMsg.textContent = "Preparing secure card form…";
     try {
@@ -442,6 +467,9 @@ if (tid) {
     paidNote.hidden = false;
     paidNote.textContent = "Payment received — your file(s) are ready to send.";
     blinkSend();
+    // Let the sender fill the email form now, while the upload will run; it sends
+    // automatically the moment the upload completes.
+    revealEmailForm({ downloads: paidDownloads, autoSend: true });
     renderQueue();
   }
 
@@ -484,6 +512,129 @@ if (tid) {
     sendBtn.classList.add("blink");
     // Clear after the pulses finish so it doesn't linger as a permanent highlight.
     window.setTimeout(() => sendBtn.classList.remove("blink"), 5000);
+  }
+
+  // ── recent transfers (per-browser link memory) ──
+  const relWhen = (ms: number): string => {
+    const s = Math.max(1, Math.round((Date.now() - ms) / 1000));
+    if (s < 60) return "just now";
+    const m = Math.round(s / 60); if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60); if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  };
+  function renderRecent(): void {
+    const items = recentTransfers();
+    recentDetails.hidden = items.length === 0;
+    recentCount.textContent = items.length ? `(${items.length})` : "";
+    recentList.replaceChildren();
+    for (const it of items) {
+      const li = document.createElement("li");
+      const left = document.createElement("div");
+      const name = document.createElement("div"); name.className = "rt-name"; name.textContent = it.name;
+      const when = document.createElement("div"); when.className = "rt-when"; when.textContent = relWhen(it.savedAt);
+      left.append(name, when);
+      const copy = document.createElement("button");
+      copy.type = "button"; copy.className = "btn-small";
+      copy.append(icon(Copy), document.createTextNode(" Copy link"));
+      copy.onclick = async () => {
+        try {
+          await copyText(it.link);
+          copy.replaceChildren(icon(Check), document.createTextNode(" Copied"));
+          window.setTimeout(() => copy.replaceChildren(icon(Copy), document.createTextNode(" Copy link")), 2000);
+        } catch { /* clipboard blocked — the link is still shown on the delivery page */ }
+      };
+      li.append(left, copy);
+      recentList.append(li);
+    }
+  }
+  recentClear.onclick = () => { clearRecentTransfers(); renderRecent(); };
+
+  // ── email the link(s) ──
+  const isEmailLike = (s: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+  const setEmailStatus = (text: string, kind: "" | "good" | "bad" = ""): void => {
+    emailStatus.textContent = text;
+    emailStatus.classList.toggle("good", kind === "good");
+    emailStatus.classList.toggle("bad", kind === "bad");
+  };
+  function renderEmailChips(): void {
+    emailChips.replaceChildren();
+    for (const addr of emailRecipients) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.append(document.createTextNode(addr));
+      const x = document.createElement("button");
+      x.type = "button"; x.setAttribute("aria-label", `Remove ${addr}`); x.textContent = "×";
+      x.onclick = () => { emailRecipients = emailRecipients.filter((a) => a !== addr); renderEmailChips(); };
+      chip.append(x);
+      emailChips.append(chip);
+    }
+  }
+  function addRecipientFromInput(): void {
+    const raw = emailTo.value.trim().replace(/,$/, "").toLowerCase();
+    if (!raw) return;
+    if (!isEmailLike(raw)) { setEmailStatus(`Not a valid email: ${raw}`, "bad"); return; }
+    if (emailRecipients.includes(raw)) { emailTo.value = ""; return; }
+    if (emailRecipients.length >= emailCapN) {
+      setEmailStatus(`You can email up to ${emailCapN} recipient${emailCapN === 1 ? "" : "s"} for this transfer.`, "bad");
+      return;
+    }
+    emailRecipients.push(raw);
+    emailTo.value = "";
+    setEmailStatus("");
+    renderEmailChips();
+  }
+  emailTo.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipientFromInput(); }
+  });
+  emailTo.addEventListener("blur", () => addRecipientFromInput());
+
+  /** Show the email form. `downloads` sets the recipient cap; when `autoSend` the
+   *  link(s) are emailed automatically once the upload completes. */
+  function revealEmailForm(opts: { downloads: number; autoSend: boolean; hasPassword?: boolean }): void {
+    emailCapN = Math.max(1, opts.downloads);
+    emailAutoSend = opts.autoSend;
+    emailCap.textContent = `(up to ${emailCapN} recipient${emailCapN === 1 ? "" : "s"})`;
+    if (!emailSubject.value.trim()) emailSubject.value = "A file has been sent to you via Waystation";
+    emailPwNote.hidden = !(opts.hasPassword ?? recipientPassword.value.trim().length > 0);
+    emailIntro.textContent = opts.autoSend
+      ? "Enter recipients and we'll email the link automatically when your upload finishes. You can also just copy the link above."
+      : "Enter recipients to email the link. You can also just copy the link above.";
+    emailForm.hidden = false;
+  }
+
+  async function sendEmailNow(): Promise<void> {
+    if (!sentTransfers.length) { setEmailStatus("The link isn't ready yet — it sends when your upload finishes.", "bad"); return; }
+    addRecipientFromInput(); // fold in anything typed but not yet added
+    const fromEmail = emailFrom.value.trim();
+    if (!isEmailLike(fromEmail)) { setEmailStatus("Enter a valid address in “Your email”.", "bad"); emailFrom.focus(); return; }
+    if (!emailRecipients.length) { setEmailStatus("Add at least one recipient.", "bad"); emailTo.focus(); return; }
+    emailSendBtn.disabled = true;
+    setEmailStatus("Sending…");
+    try {
+      const res = await sendTransferEmail({
+        transfers: sentTransfers, to: emailRecipients, fromEmail,
+        subject: emailSubject.value.trim(), message: emailBody.value,
+      });
+      setEmailStatus(`Sent to ${res.sent} recipient${res.sent === 1 ? "" : "s"}. A copy is in your inbox.`, "good");
+      emailAutoSend = false; // don't also auto-fire
+    } catch (e) {
+      setEmailStatus(e instanceof GatewayError ? e.message : "Could not send the email. You can still copy the link above.", "bad");
+      emailSendBtn.disabled = false;
+    }
+  }
+  emailSendBtn.onclick = () => void sendEmailNow();
+  emailSkipBtn.onclick = () => { emailForm.hidden = true; emailAutoSend = false; };
+
+  /** After a batch finishes: auto-send if the sender pre-filled the form, else
+   *  reveal it so they can email the freshly-created link(s) by hand. */
+  function afterSendEmail(): void {
+    if (!sentTransfers.length) return;
+    if (emailForm.hidden) revealEmailForm({ downloads: comped ? 25 : paidDownloads, autoSend: false, hasPassword: lastSendHadPassword });
+    if (emailAutoSend && emailRecipients.length && isEmailLike(emailFrom.value.trim())) {
+      void sendEmailNow();
+    } else if (emailAutoSend) {
+      setEmailStatus("Your link is ready — add recipients above and press “Email the link”.");
+    }
   }
 
   payCard.onclick = () => void beginCheckout();
@@ -724,6 +875,12 @@ if (tid) {
   // Files a paused batch left behind, held by identity so that removing them
   // or queueing different ones returns the button to "Send file".
   let pausedFiles = new Set<File>();
+  // A no-password send is easy to do by accident and the password is the only
+  // thing gating the link, so the first click arms a confirm and the second sends.
+  let pwConfirmArmed = false;
+  recipientPassword.addEventListener("input", () => {
+    if (pwConfirmArmed) { pwConfirmArmed = false; renderQueue(); }
+  });
 
   sendBtn.onclick = async () => {
     sendBtn.classList.remove("blink"); // the post-payment cue has served its purpose
@@ -734,6 +891,19 @@ if (tid) {
       return;
     }
     if (!queuedFiles.length || sending) return;
+    // No download password set? Confirm before sending — the recipient link is
+    // otherwise unprotected. First click arms; a click anywhere else disarms.
+    if (mode === "transfer" && !recipientPassword.value.trim() && !pwConfirmArmed) {
+      pwConfirmArmed = true;
+      sendBtn.textContent = "No password set — send anyway?";
+      sendBtn.classList.add("confirm");
+      window.setTimeout(() => document.addEventListener("click", () => {
+        if (pwConfirmArmed) { pwConfirmArmed = false; sendBtn.classList.remove("confirm"); renderQueue(); }
+      }, { once: true }), 0);
+      return;
+    }
+    pwConfirmArmed = false;
+    sendBtn.classList.remove("confirm");
     sending = true;
     sendAbort = new AbortController();
     const files = [...queuedFiles];
@@ -743,8 +913,10 @@ if (tid) {
     const captions = singleQcMaster ? capIn.files?.[0] ?? null : null;
     const genManifest = singleQcMaster ? genIn.files?.[0] ?? null : null;
     const password = recipientPassword.value;
+    lastSendHadPassword = password.trim().length > 0;
     const failed: File[] = [];
     const paused: File[] = [];
+    const emailBatch: { id: string; name: string }[] = [];
     logEl.replaceChildren();
     renderQueue();
 
@@ -761,6 +933,9 @@ if (tid) {
 
         const link = recipientLink(transferId);
         appendShareLink(row, link);
+        rememberTransfer({ name: file.name, link });
+        renderRecent();
+        emailBatch.push({ id: transferId, name: file.name });
 
         if (!serviceRequested(options)) {
           status.textContent = "Uploaded · ready to share · no QC requested";
@@ -831,9 +1006,12 @@ if (tid) {
     sending = false;
     sendAbort = null;
     sendBtn.disabled = false;
+    // Links now exist — email them (auto if the form was pre-filled, else prompt).
+    if (emailBatch.length) { sentTransfers = emailBatch; afterSendEmail(); }
     renderQueue();
   };
 
   setMode("transfer");
+  renderRecent();
   void handlePaymentReturn();
 }

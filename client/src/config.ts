@@ -190,3 +190,13 @@ export const getPayment = (orderId: string): Promise<PaymentStatus> =>
  *  GatewayError(402, "payment_pending") when the payment has not landed yet. */
 export const claimPaymentSession = (orderId: string): Promise<PaymentSession> =>
   gwPost(`/payments/${encodeURIComponent(orderId)}/session`, {});
+
+/** Email a completed transfer's link(s). The gateway builds the canonical link
+ *  from each id, caps recipients at what was purchased, and sends via Resend. */
+export const sendTransferEmail = (body: {
+  transfers: { id: string; name: string }[];
+  to: string[];
+  fromEmail: string;
+  subject: string;
+  message: string;
+}): Promise<{ ok: boolean; sent: number }> => gwPost("/transfers/email", body);
