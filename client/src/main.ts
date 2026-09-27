@@ -169,6 +169,7 @@ if (tid) {
   const emailPwNote = $("#emailPwNote");
   const emailSendBtn = $<HTMLButtonElement>("#emailSend");
   const emailSkipBtn = $<HTMLButtonElement>("#emailSkip");
+  const emailAuto = $<HTMLInputElement>("#emailAuto");
   const emailStatus = $("#emailStatus");
   type SenderMode = "transfer" | "qc";
   let mode: SenderMode = "transfer";
@@ -188,7 +189,7 @@ if (tid) {
   let emailCapN = 25;             // max recipients — the downloads bought (comped: a generous default)
   let paidDownloads = 2;          // downloads chosen at checkout, drives the recipient cap
   let sentTransfers: { id: string; name: string }[] = []; // links produced by the last completed send
-  let emailAutoSend = false;      // paid form filled during upload → send automatically when it completes
+  let emailSent = false;          // guard so a manual click can't re-send after an auto-send
   let lastSendHadPassword = false; // captured before the field is cleared, for the email note
 
   const icon = (node: any, label?: string): SVGElement => createIcon(node, {
@@ -467,9 +468,10 @@ if (tid) {
     paidNote.hidden = false;
     paidNote.textContent = "Payment received — your file(s) are ready to send.";
     blinkSend();
-    // Let the sender fill the email form now, while the upload will run; it sends
-    // automatically the moment the upload completes.
-    revealEmailForm({ downloads: paidDownloads, autoSend: true });
+    // Let the sender fill the email form now, while the upload will run; with the
+    // "automatically send" checkbox on (default) it sends when the upload completes.
+    emailSent = false;
+    revealEmailForm({ downloads: paidDownloads });
     renderQueue();
   }
 
@@ -583,23 +585,41 @@ if (tid) {
     setEmailStatus("");
     renderEmailChips();
   }
+  // Recipients are added only on Enter/comma — never on blur — so autofill or a
+  // half-typed address can't silently become a chip. Anything still in the input
+  // at send time is folded in by addRecipientFromInput() inside the send paths.
   emailTo.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipientFromInput(); }
   });
-  emailTo.addEventListener("blur", () => addRecipientFromInput());
 
-  /** Show the email form. `downloads` sets the recipient cap; when `autoSend` the
-   *  link(s) are emailed automatically once the upload completes. */
-  function revealEmailForm(opts: { downloads: number; autoSend: boolean; hasPassword?: boolean }): void {
+  /** The manual "Email the link" button only works once the upload has produced
+   *  links; before then it is disabled with a hint that matches the checkbox. */
+  function emailControlsUpdate(): void {
+    const ready = sentTransfers.length > 0;
+    emailSendBtn.disabled = !ready || emailSent;
+    if (emailSent) return; // the result is already on screen
+    if (!ready) {
+      setEmailStatus(emailAuto.checked
+        ? "This sends automatically once your upload finishes."
+        : "You'll send this yourself once your upload finishes.");
+    } else if (!emailAuto.checked) {
+      setEmailStatus("Your link is ready — press “Email the link” to send.");
+    } else {
+      setEmailStatus("");
+    }
+  }
+  emailAuto.addEventListener("change", () => emailControlsUpdate());
+
+  /** Show the email form. `downloads` sets the recipient cap. Auto-send vs manual
+   *  is governed by the #emailAuto checkbox, not this call. */
+  function revealEmailForm(opts: { downloads: number; hasPassword?: boolean }): void {
     emailCapN = Math.max(1, opts.downloads);
-    emailAutoSend = opts.autoSend;
     emailCap.textContent = `(up to ${emailCapN} recipient${emailCapN === 1 ? "" : "s"})`;
-    if (!emailSubject.value.trim()) emailSubject.value = "A file has been sent to you via OrbiStation";
+    if (!emailSubject.value.trim()) emailSubject.value = "Your file(s) are ready for download";
     emailPwNote.hidden = !(opts.hasPassword ?? recipientPassword.value.trim().length > 0);
-    emailIntro.textContent = opts.autoSend
-      ? "Enter recipients and we'll email the link automatically when your upload finishes. You can also just copy the link above."
-      : "Enter recipients to email the link. You can also just copy the link above.";
+    emailIntro.textContent = "Enter recipients to email the download link. You can also just copy the link above.";
     emailForm.hidden = false;
+    emailControlsUpdate();
   }
 
   async function sendEmailNow(): Promise<void> {
@@ -615,25 +635,30 @@ if (tid) {
         transfers: sentTransfers, to: emailRecipients, fromEmail,
         subject: emailSubject.value.trim(), message: emailBody.value,
       });
+      emailSent = true; // guard against a double send (manual click after auto-send)
       setEmailStatus(`Sent to ${res.sent} recipient${res.sent === 1 ? "" : "s"}. A copy is in your inbox.`, "good");
-      emailAutoSend = false; // don't also auto-fire
     } catch (e) {
       setEmailStatus(e instanceof GatewayError ? e.message : "Could not send the email. You can still copy the link above.", "bad");
       emailSendBtn.disabled = false;
     }
   }
   emailSendBtn.onclick = () => void sendEmailNow();
-  emailSkipBtn.onclick = () => { emailForm.hidden = true; emailAutoSend = false; };
+  emailSkipBtn.onclick = () => { emailForm.hidden = true; };
 
-  /** After a batch finishes: auto-send if the sender pre-filled the form, else
-   *  reveal it so they can email the freshly-created link(s) by hand. */
+  /** After a batch finishes and links exist: enable the manual button, and
+   *  auto-send when the checkbox is on and the form is filled. */
   function afterSendEmail(): void {
     if (!sentTransfers.length) return;
-    if (emailForm.hidden) revealEmailForm({ downloads: comped ? 25 : paidDownloads, autoSend: false, hasPassword: lastSendHadPassword });
-    if (emailAutoSend && emailRecipients.length && isEmailLike(emailFrom.value.trim())) {
+    if (emailForm.hidden) revealEmailForm({ downloads: comped ? 25 : paidDownloads, hasPassword: lastSendHadPassword });
+    if (emailSent) { emailSendBtn.disabled = true; return; }
+    emailSendBtn.disabled = false; // links exist now
+    addRecipientFromInput(); // capture a typed-but-unadded recipient
+    if (emailAuto.checked && emailRecipients.length && isEmailLike(emailFrom.value.trim())) {
       void sendEmailNow();
-    } else if (emailAutoSend) {
-      setEmailStatus("Your link is ready — add recipients above and press “Email the link”.");
+    } else if (emailAuto.checked) {
+      setEmailStatus("Your link is ready — add your email and a recipient, then press “Email the link”.");
+    } else {
+      setEmailStatus("Your link is ready — press “Email the link” to send.");
     }
   }
 
@@ -914,6 +939,7 @@ if (tid) {
     const genManifest = singleQcMaster ? genIn.files?.[0] ?? null : null;
     const password = recipientPassword.value;
     lastSendHadPassword = password.trim().length > 0;
+    emailSent = false; // a fresh batch → a fresh email opportunity
     const failed: File[] = [];
     const paused: File[] = [];
     const emailBatch: { id: string; name: string }[] = [];
