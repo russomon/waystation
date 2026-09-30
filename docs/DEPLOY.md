@@ -743,8 +743,18 @@ The full-QC host was spun down. Production now runs the **transfer-only** stack.
   verified by listing object versions that each now has 0, and the 7 live or
   in-grace transfers are untouched.
 - CSP Report-Only on page load flagged one source: the Cloudflare Web Analytics
-  beacon (`static.cloudflareinsights.com`). Decide whether to allow it or turn
-  Web Analytics off for OrbiStation before enforcing the CSP.
+  beacon. Owner chose to remove it from OrbiStation: `Cache-Control: …,
+  no-transform` on `/orbistation/` stops Cloudflare injecting it (OrbitWebsite
+  `d33f47f`); the rest of the site keeps analytics.
+- Live Report-Only test, no violations: page load, password-protected upload
+  and download (owner's browser), checkout to the Stripe card form (not paid;
+  one pending order left). Test transfer `ad2e47c3…` revoked afterwards (purges
+  7 days later).
+- CSP **enforced** (OrbitWebsite `f807b70`). Verified on a never-cached load:
+  gateway reachable, wasm compiles, UI renders, a disallowed origin is blocked.
+  Browsers holding a cached copy may briefly still log the old Report-Only
+  header too; harmless. Not yet exercised under enforcement: Stripe 3-D Secure,
+  the Firefox/Safari download fallback, Coinbase (off).
 
 ### Download-renewal gateway release — 2026-09-30
 

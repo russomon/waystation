@@ -19,7 +19,7 @@ narrative to `docs/PROJECT_HISTORY.md`.
 | Live stack | `docker-compose.transfer.yml` — gateway + cloudflared only |
 | Host | Vultr Los Angeles, 1 vCPU / 1 GB / 25 GB, no block volume |
 | Gateway source | `81e07c1` — pulled and rebuilt in place 2026-09-30 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v7; storage purge **on** (7-day grace) |
-| Portal | OrbitWebsite `a5435d5`, client pinned to `7f520bd`, at `https://orbitolive.com/orbistation/` (`/waystation/` 301-redirects); CSP Report-Only |
+| Portal | OrbitWebsite `f807b70`, client pinned to `7f520bd`, at `https://orbitolive.com/orbistation/` (`/waystation/` 301-redirects); CSP enforced; no Cloudflare Web Analytics on OrbiStation |
 | API | `https://api.orbitolive.com` behind an outbound-only Cloudflare Tunnel |
 | QC ceiling | `MAX_QC_BYTES: "1"` — every pipeline service forced off; `WAYSTATION_QC_MODE: "preview"` — clients see the QC tab, only the admin may start a QC upload |
 | Upload ceilings | `MAX_ACTIVE_UPLOADS_PER_SESSION=3` (24 h window), jobs/session 10, jobs/day 20 (global) |
@@ -43,9 +43,9 @@ not assume a running worker, a scratch disk, or GMI spend.
   `storage-renewal`, `access`, `transfer-mode` proofs extended; all listed
   download/access/payment proofs PASS (`access-codes` still fails on its stale
   schema-v4 assertion — pre-existing). **Deployed 2026-09-30**; purge turned on
-  after dry-run review (6 expired transfers purged). **Remaining:** decide on the
-  Cloudflare Web Analytics beacon, run a live upload/download/checkout with the
-  console open, then enforce the CSP; replace the over-broad B2 key.
+  after dry-run review (6 expired transfers purged); Web Analytics removed from
+  OrbiStation; CSP enforced after a clean live upload/download/checkout.
+  **Remaining:** replace the over-broad B2 key (owner, in Backblaze).
 - **2026-09-30** — **downloads survive the 1-hour storage URL** (`DECISIONS.md`
   2026-09-30): the delivery page renews its storage URL before expiry and on a
   refusal (single-flight, `client/src/storageSource.ts`), and egress is metered
