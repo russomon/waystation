@@ -16,7 +16,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 // :memory: is the default so dev and the proof suite stay clean and isolated.
 // Production must set a real path on a persistent volume — and fails closed
@@ -187,6 +187,17 @@ function migrate(): void {
     if (!cols.includes("weeks"))
       db.exec(`ALTER TABLE payment_orders ADD COLUMN weeks INTEGER NOT NULL DEFAULT 1`);
   }
+  if (current < 7) {
+    // Storage purge (purge.ts). revoked_at dates a revocation so the grace
+    // period can run from it; purged_at records that a transfer's objects —
+    // every version — are gone. Rows revoked before this column existed get the
+    // migration time, which only ever delays their purge, never hastens it.
+    const cols = (db.prepare(`PRAGMA table_info(transfers)`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols.includes("revoked_at")) db.exec(`ALTER TABLE transfers ADD COLUMN revoked_at TEXT`);
+    if (!cols.includes("purged_at")) db.exec(`ALTER TABLE transfers ADD COLUMN purged_at TEXT`);
+    db.prepare(`UPDATE transfers SET revoked_at = ? WHERE revoked = 1 AND revoked_at IS NULL`)
+      .run(new Date().toISOString());
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 migrate();
@@ -242,7 +253,11 @@ export function saveTransfer(transferId: string, meta: TransferRow): void {
 }
 
 const updateRecipientState = db.prepare(
-  `UPDATE transfers SET expires_at = ?, revoked = ? WHERE transfer_id = ?`,
+  // revoked_at is stamped on the FIRST revocation and cleared on un-revoke, so
+  // the purge grace period always runs from when the link was actually killed.
+  `UPDATE transfers SET expires_at = ?1, revoked = ?2,
+     revoked_at = CASE WHEN ?2 = 1 THEN COALESCE(revoked_at, ?4) ELSE NULL END
+   WHERE transfer_id = ?3`,
 );
 
 /** Recipient links are bearer capabilities: anyone holding the URL can open the
@@ -263,8 +278,29 @@ export function setRecipientState(
         : new Date(opts.expiresAt).toISOString(),
     opts.revoked === undefined ? (current?.revoked ? 1 : 0) : opts.revoked ? 1 : 0,
     transferId,
+    new Date().toISOString(),
   );
 }
+
+// ── storage purge candidates (purge.ts) ──
+
+/** Transfers whose link died at least `graceMs` ago — expired or revoked — and
+ *  whose objects have not been purged yet. Oldest first, bounded per pass. */
+const selectPurgeable = db.prepare(`
+  SELECT transfer_id FROM transfers
+  WHERE purged_at IS NULL
+    AND ((revoked = 1 AND revoked_at IS NOT NULL AND revoked_at <= ?)
+      OR (expires_at IS NOT NULL AND expires_at <= ?))
+  ORDER BY COALESCE(revoked_at, expires_at) LIMIT ?`);
+export const purgeableTransfers = (graceMs: number, limit: number): string[] => {
+  const cutoff = new Date(Date.now() - graceMs).toISOString();
+  return (selectPurgeable.all(cutoff, cutoff, limit) as { transfer_id: string }[]).map((r) => r.transfer_id);
+};
+
+const updatePurged = db.prepare(`UPDATE transfers SET purged_at = ? WHERE transfer_id = ?`);
+export const markPurged = (transferId: string): void => {
+  updatePurged.run(new Date().toISOString(), transferId);
+};
 
 /** A capability is usable only while the record says so. Unknown transfers are
  *  NOT treated as revoked — objects can predate the control-plane database, and

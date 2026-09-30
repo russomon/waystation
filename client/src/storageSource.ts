@@ -62,6 +62,12 @@ export async function resolveStorageUrl(url: string, continuation?: string): Pro
   u.searchParams.set("format", "json");
   if (continuation) u.searchParams.set("cont", continuation);
   const res = await fetch(u.toString(), { credentials: "include" });
+  // A password-protected transfer is authorized only by this browser's unlock
+  // cookie, which slides forward on every renewal. It lapses only if the
+  // download sat idle past its life (a long sleep) — then the password is needed
+  // again, and retrying without it would just be refused again.
+  if (res.status === 401)
+    throw Object.assign(new Error("Enter the download password again to continue."), { code: "recipient_password_required" });
   if (res.status === 403) {
     const body = await res.json().catch(() => null);
     if (body?.code === "downloads_exhausted")
@@ -122,9 +128,11 @@ export async function openStorageSource(
   try {
     await refresh();
   } catch (e) {
-    // A spent download limit is terminal — surface it rather than falling through
-    // to a raw fetch of the mediated url, which would only 403 again less clearly.
-    if ((e as { code?: string })?.code === "downloads_exhausted") throw e;
+    // A spent download limit or a lapsed unlock is terminal — surface it rather
+    // than falling through to a raw fetch of the mediated url, which would only
+    // be refused again, less clearly.
+    const code = (e as { code?: string })?.code;
+    if (code === "downloads_exhausted" || code === "recipient_password_required") throw e;
   }
 
   return {

@@ -128,7 +128,7 @@ export async function uploadFile(
     emit({
       uploadedBytes: Math.min(uploaded, file.size),
       upload: "uploading",
-      message: "Uploading encrypted file(s) to OrbiStation. Download link will be provided when upload is complete",
+      message: "Uploading over an encrypted connection to OrbiStation. The download link appears when the upload is complete",
     });
   });
 

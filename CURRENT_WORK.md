@@ -34,6 +34,17 @@ not assume a running worker, a scratch disk, or GMI spend.
 
 ## Recently completed
 
+- **2026-09-30** — **security hardening** (`DECISIONS.md` 2026-09-30):
+  password-bound download links (tickets removed), storage purge (schema **v7**,
+  dry-run by default), 4-char minimum + per-link/deployment unlock caps,
+  owner-only usage ledger, API security headers; OrbitWebsite `_headers` (HSTS,
+  framing denied, CSP Report-Only) and accurate "in transit and at rest" copy.
+  New `scripts/purge-proof.sh`; `recipient-password`, `mediated-download`,
+  `storage-renewal`, `access`, `transfer-mode` proofs extended; all listed
+  download/access/payment proofs PASS (`access-codes` still fails on its stale
+  schema-v4 assertion — pre-existing). **Built, not deployed.** After deploy:
+  review the purge dry-run log, then set `WAYSTATION_PURGE_MODE=on`; check the
+  live console for CSP reports, then enforce the CSP; replace the over-broad B2 key.
 - **2026-09-30** — **downloads survive the 1-hour storage URL** (`DECISIONS.md`
   2026-09-30): the delivery page renews its storage URL before expiry and on a
   refusal (single-flight, `client/src/storageSource.ts`), and egress is metered

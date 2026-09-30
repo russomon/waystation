@@ -76,6 +76,12 @@ services:
       ALLOW_EXPENSIVE_REFERENCE_QC: "false"  # reference VMAF ~1x duration
       ALLOW_AI_INTERPRETIVE: "false"         # explicit paid Genblaze/GMI run; release gate
       RECIPIENT_LINK_TTL_DAYS: "14"
+      # Storage purge (gateway/src/purge.ts): permanently delete every version of
+      # a transfer's objects 7 days after its link expired or was revoked.
+      # IRREVERSIBLE. Ships as dry-run: the boot log and hourly passes list what
+      # WOULD be deleted ("purge: DRY RUN — …"). Review that, then set "on".
+      WAYSTATION_PURGE_MODE: "dry-run"
+      WAYSTATION_PURGE_GRACE_DAYS: "7"
       # All-cloud: gateway and worker share this host, so there is no second
       # machine to route to. The client hides its selector; this makes the API
       # authoritative, because hiding a control is never the enforcement.

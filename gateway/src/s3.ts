@@ -3,7 +3,7 @@
 import {
   S3Client, CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand,
   CompleteMultipartUploadCommand, AbortMultipartUploadCommand, PutObjectCommand,
-  GetObjectCommand, ListObjectsV2Command,
+  GetObjectCommand, ListObjectsV2Command, ListObjectVersionsCommand, DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createHmac, randomUUID } from "node:crypto";
@@ -139,3 +139,35 @@ export function downloadUrl(key: string, ttlSec = 3600) {
     expiresAt: exp * 1000,
   };
 }
+
+// ── permanent deletion (purge.ts) ──
+//
+// The bucket is VERSIONED, so an ordinary delete only hides an object behind a
+// delete marker and every byte stays stored and billable. Purging therefore
+// lists every version AND every delete marker under a prefix and deletes each
+// one by VersionId, which is what actually removes data.
+
+export interface ObjectVersion { key: string; versionId: string; }
+
+export async function listVersions(prefix: string): Promise<ObjectVersion[]> {
+  const out: ObjectVersion[] = [];
+  let keyMarker: string | undefined;
+  let versionMarker: string | undefined;
+  do {
+    const r = await s3.send(new ListObjectVersionsCommand({
+      Bucket: BUCKET, Prefix: prefix, KeyMarker: keyMarker, VersionIdMarker: versionMarker,
+    }));
+    for (const v of [...(r.Versions ?? []), ...(r.DeleteMarkers ?? [])])
+      if (v.Key && v.VersionId) out.push({ key: v.Key, versionId: v.VersionId });
+    keyMarker = r.IsTruncated ? r.NextKeyMarker : undefined;
+    versionMarker = r.IsTruncated ? r.NextVersionIdMarker : undefined;
+  } while (keyMarker || versionMarker);
+  return out;
+}
+
+// One DeleteObject per version rather than DeleteObjects: the batch call needs a
+// body checksum, and newer AWS SDKs send checksum headers that S3-compatible
+// stores do not all accept. A transfer holds a handful of objects, so the extra
+// round trips cost nothing that matters.
+export const deleteVersion = (v: ObjectVersion) =>
+  s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: v.key, VersionId: v.versionId }));

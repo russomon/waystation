@@ -18,7 +18,11 @@ grep -Fq 'id="qcOptions" hidden' "$HTML"
 ! grep -Fq 'id="transferOnly"' "$HTML"
 grep -Fq 'id="recipientPassword"' "$HTML"
 grep -Fq 'maxlength="128"' "$HTML"
-grep -Fq '1–128 characters. Applied to every file in this send.' "$HTML"
+grep -Fq '4–128 characters. Applied to every file in this send.' "$HTML"
+grep -Fq 'minlength="4"' "$HTML"
+# The sender page refuses a 1-3 character password before any upload starts,
+# rather than letting the gateway refuse it after the bytes have landed.
+grep -Fq 'recipientPassword.value.length < 4' "$WEB/client/src/main.ts"
 grep -Fq 'addEventListener("drop"' "$MAIN"
 grep -Fq 'setMode("transfer")' "$MAIN"
 grep -Fq 'selectedMode === "transfer"' "$MAIN"

@@ -137,6 +137,8 @@ if (tid) {
   const reviewBrief = $<HTMLTextAreaElement>("#review_brief");
   const reviewBriefRow = $("#reviewBriefRow");
   const recipientPassword = $<HTMLInputElement>("#recipientPassword");
+  const passwordHelp = $("#passwordHelp");
+  const PASSWORD_HELP = passwordHelp.textContent ?? "";
   const togglePassword = $<HTMLButtonElement>("#togglePassword");
   // Pay-per-gig UI.
   const payPanel = $("#payPanel");
@@ -931,6 +933,7 @@ if (tid) {
   let pwConfirmArmed = false;
   recipientPassword.addEventListener("input", () => {
     if (pwConfirmArmed) { pwConfirmArmed = false; renderQueue(); }
+    passwordHelp.textContent = PASSWORD_HELP;
   });
 
   sendBtn.onclick = async () => {
@@ -942,6 +945,13 @@ if (tid) {
       return;
     }
     if (!queuedFiles.length || sending) return;
+    // The gateway refuses a password shorter than 4 characters for a new
+    // transfer — say so here, before any upload starts, not after the bytes land.
+    if (recipientPassword.value.length > 0 && recipientPassword.value.length < 4) {
+      passwordHelp.textContent = "Use at least 4 characters, or leave it blank for no password.";
+      recipientPassword.focus();
+      return;
+    }
     // No download password set? Confirm before sending — the recipient link is
     // otherwise unprotected. First click arms; a click anywhere else disarms.
     if (mode === "transfer" && !recipientPassword.value.trim() && !pwConfirmArmed) {

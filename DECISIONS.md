@@ -16,6 +16,54 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-30 - Hardening: password-bound downloads, storage purge, guess limits, headers
+
+- Context: with E2E shelved (entry below), the current model was hardened
+  against the gaps a security review found.
+- Decisions:
+  - **Download tickets removed.** A protected transfer's `/original` link
+    carried a signed ticket that authorized it alone until the transfer expired,
+    so a link copied out of the page bypassed the password. Now only the
+    transfer-scoped unlock cookie authorizes a protected transfer; every
+    authorized request slides it (1 h), so long downloads renewing their storage
+    URL stay unlocked. Accepted cost: a protected transfer cannot be fetched by
+    curl/aria2c or another machine — send those recipients an unprotected link.
+  - **Storage purge.** Expired/revoked transfers are permanently deleted (every
+    version and delete marker — the bucket is versioned) **7 days** after the
+    link died; `schema v7` adds `revoked_at`/`purged_at`. Irreversible, so it
+    ships **dry-run by default** and only UUID-shaped ids become prefixes.
+  - **Guessing bounds.** New transfers need a password of **at least 4
+    characters** (owner's choice; older links keep theirs). Unlock is capped at
+    10/min per address, 60/min deployment-wide, and 20 wrong answers per link per
+    hour from any number of addresses.
+  - **Usage ledger is owner-only** (was any signed-in sender).
+  - **Headers.** API: HSTS, nosniff, `X-Frame-Options: DENY`, `no-referrer`,
+    deny-all CSP. Portal (`OrbitWebsite/orbitolive/public/_headers`): HSTS site-
+    wide; on `/orbistation/*` framing denied and a full CSP shipped
+    **Report-Only** until a live upload, download and checkout run clean.
+  - **Claims.** "Encrypted in transit and at rest" — verified 2026-09-30 that
+    the bucket's default SSE-B2 (AES256) is on. Not end-to-end.
+- Also found: the production B2 application key is bucket-restricted but far
+  broader than needed (writeBuckets, writeBucketEncryption, bypassGovernance,
+  retention/replication writes…). Recommended: a replacement key limited to
+  listBuckets, listFiles, readFiles, writeFiles, deleteFiles on the one bucket.
+
+### 2026-09-30 - End-to-end encryption shelved; harden the current model instead
+
+- Context: a security review found OrbiStation is encrypted in transit (and at
+  rest only if the bucket's SSE-B2 default is on), not end-to-end, while site
+  and app copy said "encrypted". E2E was designed in full — fragment-carried key,
+  chunked AES-GCM, encrypted header (`docs/E2E_ENCRYPTION_PLAN.md`).
+- Decision: **not implementing E2E.** The owner requires vanilla-browser
+  delivery with no service worker, no decrypt tool and no local staging copy
+  (recipients may save to an external disk). Under those constraints only desktop
+  Chromium can stream decrypted bytes to a chosen location; Firefox, Safari and
+  mobile would be limited to small in-memory files. That trade was declined.
+- Direction: make the current server-readable model as secure as possible, and
+  keep marketing claims to what it actually provides.
+- Revisit only if a constraint changes (service worker acceptable, or
+  Chromium-only large encrypted downloads acceptable).
+
 ### 2026-09-30 - Browser downloads renew their storage URL; renewals are never re-metered
 
 - Context: the mediated route's presigned storage URL lives one hour. Storage

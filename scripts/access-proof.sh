@@ -264,6 +264,42 @@ curl -s -c "$WORK/s.ck" -X POST -H "Origin: $ORIGIN" -H 'content-type: applicati
 need "$(code_of -b "$WORK/s.ck" "http://localhost:$GW/api/transfers/$TID/usage")" 200 \
   "sender with a session should read usage"
 echo "  Q: usage ledger is sender-only (401 without a session, 200 with) ✓"
+# Q3) ...and OWNER-only: another signed-in sender gets the same neutral 404 an
+#     unknown id would, until the transfer is theirs.
+NAMED=$(curl -s -b "$WORK/s.ck" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+  --data '{"label":"usage-proof"}' http://localhost:$GW/api/admin/codes)
+NAMED_CODE=$(printf '%s' "$NAMED" | "$PY" -c 'import json,sys;print(json.load(sys.stdin)["code"])')
+NAMED_ID=$(printf '%s' "$NAMED" | "$PY" -c 'import json,sys;print(json.load(sys.stdin)["codeId"])')
+curl -s -c "$WORK/n.ck" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+  --data "{\"code\":\"$NAMED_CODE\"}" http://localhost:$GW/api/session >/dev/null
+need "$(code_of -b "$WORK/n.ck" "http://localhost:$GW/api/transfers/$TID/usage")" 404 \
+  "a different sender must not read another sender's usage ledger"
+"$PY" - "$WORK/gw-access-code.db" "$TID" "$NAMED_ID" <<'PY'
+import sqlite3,sys
+db=sqlite3.connect(sys.argv[1]); tid, owner = sys.argv[2], sys.argv[3]
+# The transfer was uploaded under the dev-mode gateway's database; give this one a row.
+db.execute("insert or ignore into transfers (transfer_id, object_key, created_at) values (?, ?, datetime('now'))",
+           (tid, f"transfers/{tid}/master.mp4"))
+db.execute("update transfers set owner_id=? where transfer_id=?", (owner, tid)); db.commit()
+PY
+need "$(code_of -b "$WORK/n.ck" "http://localhost:$GW/api/transfers/$TID/usage")" 200 \
+  "the owning sender should read its own usage ledger"
+echo "  Q3: usage ledger is owner-only (another sender 404, the owner 200, admin 200) ✓"
+# Q4) every API response carries the security headers — checked on a JSON
+#     route, the unauthenticated health probe, and a CORS preflight.
+for probe in "/healthz" "/api/session"; do
+  H=$(curl -s -D - -o /dev/null "http://localhost:$GW$probe")
+  for want in "strict-transport-security: max-age=31536000" "x-content-type-options: nosniff" \
+              "x-frame-options: DENY" "referrer-policy: no-referrer" \
+              "content-security-policy: default-src 'none'; frame-ancestors 'none'"; do
+    printf '%s' "$H" | tr -d '\r' | grep -qi "^$want\$" || { echo "  FAIL: $probe lacks '$want'"; ok=0; }
+  done
+done
+PRE=$(curl -s -D - -o /dev/null -X OPTIONS -H "Origin: $ORIGIN" -H "Access-Control-Request-Method: POST" \
+  "http://localhost:$GW/api/uploads" | tr -d '\r')
+printf '%s' "$PRE" | grep -qi "^x-frame-options: DENY$" || { echo "  FAIL: preflight lacks security headers"; ok=0; }
+printf '%s' "$PRE" | grep -qi "^access-control-allow-origin: $ORIGIN$" || { echo "  FAIL: headers middleware broke the CORS preflight"; ok=0; }
+echo "  Q4: HSTS, nosniff, DENY framing, no-referrer and a deny-all CSP on every API response; CORS intact ✓"
 grep -q "transfers/\${id}/usage" "$WEB/client/src/delivery.ts" \
   && { echo "  FAIL: recipient page still requests the usage ledger"; ok=0; } \
   || echo "  Q2: recipient page no longer requests the billing ledger ✓"

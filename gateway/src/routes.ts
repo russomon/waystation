@@ -8,12 +8,13 @@ import {
   generateAccessCode,
   globalLimiter,
   enforceOrigin,
+  failureLocked,
   hasRecipientUnlock,
   hashAccessCode,
   issueContinuation,
-  issueDownloadTicket,
   issueSession,
   limiter,
+  noteFailure,
   requireAdmin,
   requireSession,
   sessionIdOf,
@@ -24,7 +25,6 @@ import {
   setDownloadGrantCookie,
   verifyAccessCode,
   verifyContinuation,
-  verifyDownloadTicket,
 } from "./auth.js";
 import {
   activeAccessCodes,
@@ -421,7 +421,8 @@ api.get("/payments/:orderId", limiter("pay-status", 60, 60_000), (c) => {
 // Resend. The API key stays server-side; a browser's word is never trusted for
 // who owns a transfer or how many people it may reach. A download password is
 // never included — the note tells the recipient to expect it separately.
-const COMPED_RECIPIENT_CAP = 25; // comped/admin transfers have no purchased count
+const COMPED_RECIPIENT_CAP = 25;
+const MIN_RECIPIENT_PASSWORD = 4; // comped/admin transfers have no purchased count
 api.post("/transfers/email", requireSession, enforceOrigin, limiter("email", 20, 60_000, true), async (c) => {
   if (!emailEnabled()) return c.json({ error: "Email delivery isn't configured.", code: "email_disabled" }, 503);
   const b = await c.req.json().catch(() => ({}) as Record<string, any>);
@@ -657,6 +658,13 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
     return c.json({ error: "Password must be text.", code: "bad_password" }, 400);
   if (typeof b.recipientPassword === "string" && b.recipientPassword.length > 128)
     return c.json({ error: "Password must be 128 characters or fewer.", code: "bad_password" }, 400);
+  // New transfers only: a password, when set, is at least MIN_RECIPIENT_PASSWORD
+  // characters. Existing transfers keep whatever they were created with — unlock
+  // deliberately does not apply this, or older links would stop opening.
+  if (typeof b.recipientPassword === "string" && b.recipientPassword.length > 0
+      && b.recipientPassword.length < MIN_RECIPIENT_PASSWORD)
+    return c.json(
+      { error: `Password must be at least ${MIN_RECIPIENT_PASSWORD} characters.`, code: "bad_password" }, 400);
   const recipientPassword = typeof b.recipientPassword === "string" && b.recipientPassword.length > 0
     ? b.recipientPassword
     : undefined;
@@ -743,10 +751,17 @@ const belongsToTransfer = (key: string, id: string): boolean =>
 //
 // The one place the sender session still counts is the progress stream; see
 // progressGate below.
+//
+// The unlock cookie is the ONLY proof accepted, and every request it authorizes
+// slides it forward, so a browser that keeps downloading (renewing its storage
+// URL every hour) stays unlocked, while a copied link is useless anywhere else.
 const recipientGate = (c: Context, id: string): Response | undefined => {
   const transfer = getTransfer(id);
   if (!transfer?.passwordHash) return undefined;
-  if (hasRecipientUnlock(c, id)) return undefined;
+  if (hasRecipientUnlock(c, id)) {
+    setRecipientUnlockCookie(c, id);
+    return undefined;
+  }
   return c.json(
     { error: "Password required.", code: "recipient_password_required", passwordRequired: true },
     401,
@@ -766,16 +781,31 @@ const progressGate = (c: Context, id: string): Response | undefined => {
   return recipientGate(c, id);
 };
 
-api.post("/transfers/:id/unlock", enforceOrigin, limiter("recipient-unlock", 10, 60_000), async (c) => {
+// Three bounds on guessing, because a download password may be as short as four
+// characters: 10/min per source address, 60/min across the whole deployment (a
+// distributed guesser), and UNLOCK_FAILURE_LIMIT wrong answers per transfer per
+// UNLOCK_FAILURE_WINDOW_MS no matter where they come from. A locked link says so
+// honestly — the recipient can wait — and the lock is checked BEFORE the scrypt,
+// so a locked-out guesser cannot even spend the gateway's CPU.
+const UNLOCK_FAILURE_LIMIT = 20;
+const UNLOCK_FAILURE_WINDOW_MS = 60 * 60_000;
+api.post("/transfers/:id/unlock", enforceOrigin, limiter("recipient-unlock", 10, 60_000),
+  globalLimiter("recipient-unlock", 60, 60_000), async (c) => {
   const id = c.req.param("id");
   if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
   const transfer = getTransfer(id);
   if (!transfer) return c.json({ error: "not found" }, 404);
   if (!transfer.passwordHash) return c.json({ ok: true, passwordRequired: false });
+  const failKey = `unlock:${id}`;
+  if (failureLocked(failKey, UNLOCK_FAILURE_LIMIT))
+    return c.json(
+      { error: "Too many wrong passwords for this link. Try again in an hour.", code: "unlock_locked" }, 429);
   const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
   const password = typeof body.password === "string" ? body.password : "";
-  if (password.length < 1 || password.length > 128 || !verifyAccessCode(password, transfer.passwordHash))
+  if (password.length < 1 || password.length > 128 || !verifyAccessCode(password, transfer.passwordHash)) {
+    noteFailure(failKey, UNLOCK_FAILURE_WINDOW_MS);
     return c.json({ error: "That password was not accepted.", code: "bad_recipient_password" }, 401);
+  }
   const expiresAt = setRecipientUnlockCookie(c, id);
   return c.json({ ok: true, passwordRequired: true, expiresAt });
 });
@@ -828,15 +858,12 @@ api.get("/transfers/:id/original", async (c) => {
   // unknown id is answered identically so a link never reveals it once existed.
   if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
 
-  // Either proof of authorization is accepted: a ticket in the query string, or
-  // the recipient unlock cookie for a page that already unlocked in this
-  // browser. recipientGate() returns a Response only when the transfer is
-  // password-protected AND no unlocked recipient is asking, so an unprotected
-  // transfer needs no ticket at all.
-  if (!verifyDownloadTicket(c.req.query("ticket"), id)) {
-    const locked = recipientGate(c, id);
-    if (locked) return locked;
-  }
+  // A password-protected transfer needs the unlock cookie, and nothing else is
+  // accepted: the link on its own must never be enough, or copying it out of
+  // the page would bypass the password (see auth.ts, "no download tickets").
+  // An unprotected transfer's id is itself the capability, as on every route.
+  const locked = recipientGate(c, id);
+  if (locked) return locked;
 
   // Resolved exactly as the delivery page resolves it — see
   // classifyTransferObjects. Reading the uploads table here instead would 404
@@ -951,11 +978,9 @@ const classifyTransferObjects = (all: { key: string; size: number }[]) => ({
  *  deliberately empty in transfer-only mode), and appending to the incoming
  *  path preserves whatever prefix the deployment uses.
  *
- *  The ticket outlives the hour a presigned URL gets, because it does not carry
- *  its own authority — the route re-checks revocation and expiry on every use.
- *  It is still bounded as defence in depth: to the transfer's own expiry when
- *  one is set, else 30 days. */
-const mediatedDownloadUrl = (c: Context, id: string, expiresAt?: number): string => {
+ *  It carries NO credential. For a protected transfer the unlock cookie of the
+ *  browser that entered the password is what authorizes it. */
+const mediatedDownloadUrl = (c: Context, id: string): string => {
   const u = new URL(c.req.url);
   // ⚠ The scheme and host of c.req.url describe the connection this process
   // received, NOT the one the browser made. Behind the tunnel that connection
@@ -982,7 +1007,6 @@ const mediatedDownloadUrl = (c: Context, id: string, expiresAt?: number): string
   }
   u.search = "";
   u.pathname = `${u.pathname.replace(/\/$/, "")}/original`;
-  u.searchParams.set("ticket", issueDownloadTicket(id, expiresAt ?? Date.now() + 30 * 86_400_000));
   return u.toString();
 };
 
@@ -1025,7 +1049,7 @@ api.get("/transfers/:id", async (c) => {
       // the master — see GET /transfers/:id/original above. Built from the
       // incoming request so it needs no configured public base and stays
       // correct behind the tunnel, a vite proxy, or plain localhost.
-      url: mediatedDownloadUrl(c, id, transfer?.expiresAt),
+      url: mediatedDownloadUrl(c, id),
       mime: mimeOf(orig.key),
       size: orig.size,
       filename: orig.key.split("/").pop(),
@@ -1100,4 +1124,15 @@ api.post("/internal/progress", async (c) => {
 // by anyone holding a recipient link, and the delivery page rendered it. A
 // recipient is a third party — often the customer's own client — and has no
 // business seeing what the sender is charged.
-api.get("/transfers/:id/usage", requireSession, (c) => c.json(usageFor(c.req.param("id"))));
+//
+// Scoped to the transfer's OWNER (or the admin). A session alone is not enough:
+// any sender could otherwise read another sender's ledger by knowing its id.
+// The same neutral 404 answers "not yours" and "does not exist".
+api.get("/transfers/:id/usage", requireSession, (c) => {
+  const id = c.req.param("id");
+  const session = sessionOf(c);
+  const owner = getTransfer(id)?.ownerId;
+  const mine = !authEnabled || session?.admin || (!!owner && owner === session?.ownerId);
+  if (!mine) return c.json({ error: "not found" }, 404);
+  return c.json(usageFor(id));
+});

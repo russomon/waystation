@@ -902,6 +902,26 @@ bearer capability and `session_id` is a live session. The 2026-08-31 backup was
 safe to store in the clear only because every capability in it had already
 expired or been revoked — 9 expired, 1 revoked, 0 live.
 
+## Storage purge — enabling deletion
+
+`WAYSTATION_PURGE_MODE` ships as `dry-run` in both production compose files.
+Deletion is permanent (every version, both prefixes), so turn it on only after
+reading what it would do:
+
+```bash
+docker compose -f docker-compose.transfer.yml logs gateway | grep 'purge:'
+```
+
+The first pass runs about a minute after boot, then hourly. Each line names an
+8-character transfer-id prefix and a version count. When the list is what you
+expect, set `WAYSTATION_PURGE_MODE: "on"` in the compose file and recreate the
+gateway only (`up -d --no-deps gateway`). Take a `VACUUM INTO` backup first as
+always; purged rows stay in the database with `purged_at` set.
+
+The B2 key must hold `deleteFiles` (the 2026-09-30 key does). Objects protected
+by COMPLIANCE Object Lock (QC manifests) cannot be deleted; such a transfer is
+logged and retried each pass rather than marked purged.
+
 ## Transfer-only mode (parked / low-cost deployment)
 
 When QC is not needed — a paused project that still moves files — the worker can

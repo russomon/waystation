@@ -8,9 +8,26 @@ import { dbPathLabel } from "./db.js";
 import { policyBanner } from "./limits.js";
 import { paymentsBanner } from "./payments.js";
 import { emailBanner } from "./email.js";
+import { purgeBanner, startPurgeLoop } from "./purge.js";
 import { api } from "./routes.js";
 
 const app = new Hono();
+
+// Security headers on every response, preflights included. The API serves JSON,
+// an SSE stream and redirects — never a page — so the policy can be total:
+// nothing may load, nothing may frame it, and no Referer leaves it (the paths
+// carry transfer ids, which are bearer capabilities). HSTS without
+// includeSubDomains or preload: it pins this host only, and is safe because the
+// only way in is the Cloudflare tunnel, which is HTTPS-only.
+app.use("*", async (c, next) => {
+  await next();
+  const h = c.res.headers;
+  h.set("Strict-Transport-Security", "max-age=31536000");
+  h.set("X-Content-Type-Options", "nosniff");
+  h.set("X-Frame-Options", "DENY");
+  h.set("Referrer-Policy", "no-referrer");
+  h.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+});
 
 // CORS is registered BEFORE the API routes on purpose. Hono's cors() answers an
 // OPTIONS preflight with 204 and returns WITHOUT calling next(), so a preflight
@@ -56,5 +73,7 @@ serve({ fetch: app.fetch, port }, () => {
   console.log(`  ${policyBanner()}`);
   console.log(`  ${paymentsBanner()}`);
   console.log(`  ${emailBanner()}`);
+  console.log(`  ${purgeBanner()}`);
   if (!authEnabled) console.log("  WARNING: sender authentication is OFF (development mode)");
 });
+startPurgeLoop();

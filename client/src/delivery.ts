@@ -784,6 +784,9 @@ export async function renderDelivery(id: string, root: HTMLElement) {
         const salvageable = durable && committed.length > 0;
         const paused = controller?.signal.aborted === true;
         const noSpace = isOutOfSpace(e);
+        // A lapsed unlock (see storageSource.ts): Resume in this page would only
+        // be refused again, so send the recipient back through the password.
+        const relock = (e as { code?: string })?.code === "recipient_password_required";
         if (salvageable) {
           await saveDownloadResume({
             transferId: t.transferId, size: total, filename: t.original.filename,
@@ -797,6 +800,9 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           elTime.textContent = noSpace
             ? `ran out of space on the destination disk at ${pct}% — free some up, ` +
               "then click Resume; what downloaded is kept"
+            : relock
+              ? `stopped at ${pct}% — reload this page and enter the password again ` +
+                "to resume; what downloaded is kept"
             : paused
               ? `paused at ${pct}% — the file is INCOMPLETE until you resume`
               : `stopped at ${pct}% — the file is INCOMPLETE; click to carry on from here`;
@@ -805,6 +811,8 @@ export async function renderDelivery(id: string, root: HTMLElement) {
           dl.textContent = paused ? "Download original…" : "✗ " + (e as Error).message;
           elTime.textContent = noSpace
             ? "the destination disk is full — free space and start again"
+            : relock
+              ? "reload this page and enter the password again to download"
             : paused
               ? "paused before anything was saved — nothing to resume"
               : "download failed — the partial file was discarded";

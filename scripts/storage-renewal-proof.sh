@@ -102,7 +102,7 @@ TID=$(upload open.bin 'null')
 URL=$(curl -fsS http://127.0.0.1:$GW/api/transfers/$TID | jqv original.url)
 
 # 1 ── the JSON answer says how long its URL lives, and carries a continuation.
-J1=$(curl -fsS "$URL&format=json")
+J1=$(curl -fsS "$URL?format=json")
 [ "$(printf '%s' "$J1" | jqv expiresIn)" = "$TTL" ] || { echo "FAIL - expiresIn missing or wrong: $J1"; exit 1; }
 CONT=$(printf '%s' "$J1" | jqv continuation)
 [ -n "$CONT" ] || { echo "FAIL - no continuation token for an unlimited transfer"; exit 1; }
@@ -118,27 +118,28 @@ echo "  a range started after expiry is refused by storage (403)"
 # 3 ── billing: a renewal carrying the continuation is never metered again.
 [ "$(egress "$TID")" = 1 ] || { echo "FAIL - first resolution not metered once"; exit 1; }
 new_hour "$TID"
-curl -fsS "$URL&format=json&cont=$CONT" >/dev/null
+curl -fsS "$URL?format=json&cont=$CONT" >/dev/null
 [ "$(egress "$TID")" = 0 ] || { echo "FAIL - a renewal in a later hour re-metered the download"; exit 1; }
-curl -fsS "$URL&format=json" >/dev/null
+curl -fsS "$URL?format=json" >/dev/null
 [ "$(egress "$TID")" = 1 ] || { echo "FAIL - a genuinely new download was not metered"; exit 1; }
-new_hour "$TID"; curl -fsS "$URL&format=json&cont=${CONT}x" >/dev/null
+new_hour "$TID"; curl -fsS "$URL?format=json&cont=${CONT}x" >/dev/null
 [ "$(egress "$TID")" = 1 ] || { echo "FAIL - a tampered continuation suppressed metering"; exit 1; }
 echo "  a renewal an hour later records no egress; a new download and a tampered token still do"
 
-# 4 ── domain separation: a continuation is never an authorization, and a
-#      ticket is never a continuation.
-PROT=$(upload protected.bin '"x"')
+# 4 ── domain separation: a continuation is never an authorization, and an
+#      unlock cookie is never a continuation.
+PROT=$(upload protected.bin '"open-sesame"')
 curl -fsS -c "$RECIPIENT" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
-  --data '{"password":"x"}' http://127.0.0.1:$GW/api/transfers/$PROT/unlock >/dev/null
+  --data '{"password":"open-sesame"}' http://127.0.0.1:$GW/api/transfers/$PROT/unlock >/dev/null
 PURL=$(curl -fsS -b "$RECIPIENT" http://127.0.0.1:$GW/api/transfers/$PROT | jqv original.url)
-PCONT=$(curl -fsS "$PURL&format=json" | jqv continuation)
-[ "$(code "http://127.0.0.1:$GW/api/transfers/$PROT/original?ticket=$PCONT")" = 401 ] \
+PCONT=$(curl -fsS -b "$RECIPIENT" "$PURL?format=json" | jqv continuation)
+[ "$(code "$PURL?format=json&cont=$PCONT")" = 401 ] \
   || { echo "FAIL - a continuation token opened a password-protected transfer"; exit 1; }
-PTICKET="${PURL#*ticket=}"
-new_hour "$PROT"; curl -fsS "$PURL&format=json&cont=$PTICKET" >/dev/null
-[ "$(egress "$PROT")" = 1 ] || { echo "FAIL - a ticket passed as a continuation and suppressed metering"; exit 1; }
-echo "  a continuation cannot open a protected transfer, and a ticket cannot pose as a continuation"
+UNLOCK=$(awk '$6 ~ /^ws_r_/ {print $7}' "$RECIPIENT" | tail -1)
+[ -n "$UNLOCK" ] || { echo "FAIL - no unlock cookie in the jar"; exit 1; }
+new_hour "$PROT"; curl -fsS -b "$RECIPIENT" "$PURL?format=json&cont=$UNLOCK" >/dev/null
+[ "$(egress "$PROT")" = 1 ] || { echo "FAIL - an unlock cookie passed as a continuation and suppressed metering"; exit 1; }
+echo "  a continuation cannot open a protected transfer, and an unlock cookie cannot pose as a continuation"
 
 # 5 ── the client: proactive and reactive renewal, single-flight, revocation.
 ( cd "$WEB/client" && URL="$URL" SIZE="$SIZE" TTL="$TTL" FILE="$WORK/file.bin" \

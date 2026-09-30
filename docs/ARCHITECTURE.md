@@ -149,19 +149,30 @@ publishes `pipeline_skipped` and **no job is dispatched at all**.
 **Delivery.** The recipient opens `/transfers/:id`, unlocks with a password if
 one was set — the sender's own session is not a key; only the progress stream
 exempts it — and downloads through `GET /transfers/:id/original` — a **mediated**
-link that never expires on its own. The gateway re-checks revocation and expiry
-on every request, records the egress, then 302s to a freshly minted, short-lived
-presigned URL. The master's storage URL is never disclosed to the recipient, so
+link that never expires on its own and carries no credential: for a protected
+transfer only the unlock cookie of the browser that entered the password opens
+it, and every authorized request slides that cookie forward. The gateway
+re-checks revocation and expiry on every request, records the egress, then 302s
+to a freshly minted, short-lived presigned URL. The master's storage URL is never disclosed to the recipient, so
 revocation takes effect on the next request rather than whenever a signature
 happens to lapse. The gateway still never touches file bytes: it redirects,
 storage serves.
 
 ## Persistence and state
 
-SQLite in the `control` Docker volume at `/data`. Four tables — `transfers`,
-`uploads`, `meter_events`, `access_codes` — at **schema v4**, migrated in place
-via `PRAGMA user_version` (`gateway/src/db.ts`). `transfers.owner_id` and
-`uploads.owner_id` name the sender code that created the row.
+SQLite in the `control` Docker volume at `/data`. Tables `transfers`,
+`uploads`, `meter_events`, `access_codes`, `payment_orders` and
+`download_grants`, at **schema v7**, migrated in place via `PRAGMA user_version`
+(`gateway/src/db.ts`). `transfers.owner_id` and `uploads.owner_id` name the
+sender code that created the row; `transfers.revoked_at` / `purged_at` drive the
+storage purge.
+
+**Storage purge** (`purge.ts`): hourly, every version and delete marker under
+`transfers/<id>/` and `derivatives/<id>/` is permanently deleted once the link
+has been expired or revoked for `WAYSTATION_PURGE_GRACE_DAYS` (7). Only
+UUID-shaped ids ever become a prefix; a transfer is marked purged only when
+every deletion succeeded; the row is kept. `WAYSTATION_PURGE_MODE` is
+`off | dry-run | on` and defaults to dry-run.
 
 It runs in **WAL mode**, which has bitten this project: `cp waystation.db`
 yields a nearly empty file that still passes `integrity_check`. Always back up

@@ -4,7 +4,9 @@
 # The property under test: the recipient is never handed a storage URL for the
 # master, so authorization is LIVE rather than frozen at signing time. A
 # presigned URL cannot be recalled once minted — revoking a transfer leaves it
-# working until it expires. A mediated link is re-checked on every request.
+# working until it expires. A mediated link is re-checked on every request, and
+# it carries no credential of its own: for a password-protected transfer only
+# the unlock cookie of the browser that entered the password opens it.
 set -euo pipefail
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -83,14 +85,12 @@ META=$(curl -fsS http://127.0.0.1:$GW/api/transfers/$TID)
 URL=$(printf '%s' "$META" | jqv original.url)
 
 # 1 ── the recipient is handed a gateway URL, never a storage URL.
-case "$URL" in
-  *"127.0.0.1:$GW/api/transfers/$TID/original?ticket="*) ;;
-  *) echo "FAIL - original.url is not mediated: $URL"; exit 1;;
-esac
+[ "$URL" = "http://127.0.0.1:$GW/api/transfers/$TID/original" ] \
+  || { echo "FAIL - original.url is not the bare mediated link: $URL"; exit 1; }
 if printf '%s' "$META" | grep -q "X-Amz-Signature"; then
   echo "FAIL - metadata still leaks a presigned URL"; exit 1
 fi
-echo "  the master is delivered as a mediated gateway link, with no presigned URL in the payload"
+echo "  the master is delivered as a bare mediated gateway link — no presigned URL, no credential in it"
 
 # 1b -- the link must carry the scheme and host the BROWSER used, not the ones
 #       this process was reached on. Behind a TLS-terminating proxy those differ,
@@ -98,10 +98,8 @@ echo "  the master is delivered as a mediated gateway link, with no presigned UR
 #       any request is sent — a "Failed to fetch" with nothing in the network log.
 FWD=$(curl -fsS -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: api.example.test" \
   "http://127.0.0.1:$GW/api/transfers/$TID" | jqv original.url)
-case "$FWD" in
-  https://api.example.test/api/transfers/$TID/original?ticket=*) ;;
-  *) echo "FAIL - forwarded scheme/host ignored; got: $FWD"; exit 1;;
-esac
+[ "$FWD" = "https://api.example.test/api/transfers/$TID/original" ] \
+  || { echo "FAIL - forwarded scheme/host ignored; got: $FWD"; exit 1; }
 echo "  the link honours X-Forwarded-Proto/Host, so it is https behind a TLS proxy"
 
 # 2 ── it redirects to storage, and the bytes that arrive are the bytes sent.
@@ -116,7 +114,7 @@ echo "  it redirects to storage and delivers byte-identical content ($SIZE bytes
 #       A browser cannot fetch() the redirect: a cross-origin redirected CORS
 #       request carries Origin: null, which B2 refuses. So script asks for JSON
 #       and goes to storage itself.
-JSON=$(curl -fsS "$URL&format=json")
+JSON=$(curl -fsS "$URL?format=json")
 JURL=$(printf '%s' "$JSON" | jqv url)
 case "$JURL" in
   *"127.0.0.1:$MIN"*) ;;
@@ -135,30 +133,34 @@ cmp -s <(head -c 1024 "$WORK/file.bin") "$WORK/part.bin" \
   || { echo "FAIL - ranged bytes differ"; exit 1; }
 echo "  Range survives the redirect and returns the correct slice"
 
-# 4 ── ticket authority, tested where authority actually applies.
-#      An UNPROTECTED transfer needs no ticket at all: the transfer id in the
-#      link is itself the capability, so anyone holding it may download. A
-#      ticket only carries weight for a password-protected transfer, so that is
-#      where scope and tampering have to be proven.
-PROT=$(upload protected.bin '"x"')
+# 4 ── authority for a protected transfer is the unlock cookie, and only that.
+#      An UNPROTECTED transfer needs nothing: its id is the capability. A
+#      protected one must refuse the download link on its own — otherwise copying
+#      it out of the page (Firefox/Safari render it as a plain link) would bypass
+#      the password for the rest of the transfer's life.
+PROT=$(upload protected.bin '"open-sesame"')
+PROT2=$(upload protected2.bin '"other-pass"')
 [ "$(code "http://127.0.0.1:$GW/api/transfers/$PROT/original")" = 401 ] \
   || { echo "FAIL - protected transfer served without authorization"; exit 1; }
-TICKET="${URL#*ticket=}"
-[ "$(code "http://127.0.0.1:$GW/api/transfers/$PROT/original?ticket=$TICKET")" = 401 ] \
-  || { echo "FAIL - another transfer's ticket authorized a protected transfer"; exit 1; }
 [ "$(code "http://127.0.0.1:$GW/api/transfers/$PROT/original?format=json")" = 401 ] \
   || { echo "FAIL - format=json bypassed the password gate"; exit 1; }
-echo "  a protected transfer refuses both an unticketed request and another transfer's ticket, in either shape"
+echo "  a protected transfer refuses an unauthenticated request, in either shape"
 
 curl -fsS -c "$RECIPIENT" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
-  --data '{"password":"x"}' http://127.0.0.1:$GW/api/transfers/$PROT/unlock >/dev/null
+  --data '{"password":"open-sesame"}' http://127.0.0.1:$GW/api/transfers/$PROT/unlock >/dev/null
 PURL=$(curl -fsS -b "$RECIPIENT" http://127.0.0.1:$GW/api/transfers/$PROT | jqv original.url)
-PTICKET="${PURL#*ticket=}"
-[ "$(code "$PURL")" = 302 ] || { echo "FAIL - a valid ticket did not authorize its own transfer"; exit 1; }
-if [ "$(code "http://127.0.0.1:$GW/api/transfers/$PROT/original?ticket=${PTICKET}x")" = 302 ]; then
-  echo "FAIL - a tampered ticket was accepted"; exit 1
-fi
-echo "  its own ticket authorizes it, and a tampered ticket is refused"
+[ "$(code -b "$RECIPIENT" "$PURL")" = 302 ] || { echo "FAIL - the unlocked browser cannot download"; exit 1; }
+[ "$(code "$PURL")" = 401 ] || { echo "FAIL - the link copied out of an unlocked page opens WITHOUT the password"; exit 1; }
+[ "$(code "$PURL?format=json")" = 401 ] || { echo "FAIL - the copied link opens in JSON mode without the password"; exit 1; }
+[ "$(code -b "$RECIPIENT" "http://127.0.0.1:$GW/api/transfers/$PROT2/original")" = 401 ] \
+  || { echo "FAIL - one transfer's unlock opened a different protected transfer"; exit 1; }
+echo "  the unlocked browser downloads; the same link copied elsewhere is refused (401); an unlock is per-transfer"
+
+# The unlock SLIDES: each authorized request re-issues the cookie, so a browser
+# that keeps renewing its storage URL through a long download stays unlocked.
+curl -s -o /dev/null -D "$WORK/hdr" -b "$RECIPIENT" "$PURL?format=json"
+grep -qi "^set-cookie: ws_r_" "$WORK/hdr" || { echo "FAIL - an authorized download did not extend the unlock"; exit 1; }
+echo "  every authorized request extends the unlock, so a long download never loses it"
 
 # 5 ── THE POINT OF THE FEATURE: revocation takes effect on the next request.
 #      A presigned URL handed out earlier would keep serving until it expired.
@@ -167,12 +169,12 @@ import sqlite3,sys
 db=sqlite3.connect(sys.argv[1]); db.execute("update transfers set revoked=1 where transfer_id=?",(sys.argv[2],)); db.commit()
 PY
 [ "$(code "$URL")" = 404 ] || { echo "FAIL - a revoked transfer still redirected"; exit 1; }
-[ "$(code "$URL&format=json")" = 404 ] || { echo "FAIL - format=json still served a revoked transfer"; exit 1; }
+[ "$(code "$URL?format=json")" = 404 ] || { echo "FAIL - format=json still served a revoked transfer"; exit 1; }
 echo "  revocation is immediate — the same link 404s on the very next request"
 
 # 6 ── egress is metered, and the many requests of ONE download collapse into a
 #      single line item rather than billing once per range.
-for _ in 1 2 3 4 5; do curl -s -o /dev/null "$PURL"; done
+for _ in 1 2 3 4 5; do curl -s -o /dev/null -b "$RECIPIENT" "$PURL"; done
 "$PY" - "$WORK/gateway.db" "$PROT" "$SIZE" <<'PY'
 import sqlite3,sys
 db=sqlite3.connect(sys.argv[1])
@@ -183,4 +185,4 @@ assert rows[0][1] == "gb" and abs(rows[0][0] - round(int(sys.argv[3])/1e9, 6)) <
 print(f"  egress metered once for six requests ({rows[0][0]} gb) — ranges do not bill separately")
 PY
 
-echo "PASS - mediated downloads: no storage URL disclosed, live revocation, scoped tickets, metered egress"
+echo "PASS - mediated downloads: no storage URL disclosed, password-bound links, live revocation, metered egress"

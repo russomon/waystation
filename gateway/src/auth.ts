@@ -260,9 +260,10 @@ export function setRecipientUnlockCookie(c: Context, transferId: string): number
   return expiresAt;
 }
 
-/** Shared verification for every transfer-scoped bearer token this module mints
- *  — the unlock cookie and the download ticket below. Both carry the same
- *  `{tid, exp}` payload under the same HMAC, so they must not drift apart. */
+/** Shared verification for every transfer-scoped token this module mints — the
+ *  unlock cookie and the download continuation below. Both carry the same
+ *  `{tid, exp}` payload; `domain` is mixed into the MAC so one kind can never
+ *  pass as the other. */
 function verifyRecipientToken(token: string | undefined, transferId: string, domain = ""): boolean {
   if (!token) return false;
   const [payload, mac] = token.split(".");
@@ -306,32 +307,15 @@ export function setDownloadGrantCookie(
   });
 }
 
-// ── download tickets ──
+// ── no download tickets ──
 //
-// A ticket authorizes one transfer's original for whoever holds it — but unlike
-// a presigned storage URL it is NOT self-sufficient. It names the transfer and
-// nothing else; the gateway re-checks revocation and expiry (and, later,
-// download credits) on every single use. That is the entire point. A presigned
-// URL cannot be recalled once minted, so a short life is the only bound
-// available to it. A ticket can be long-lived precisely because the gateway
-// stays in the loop and can refuse at any moment.
-//
-// It rides in the query string rather than a cookie for two reasons:
-//
-//   1. The request carrying it is redirected cross-origin to object storage. A
-//      *credentialed* fetch that follows a redirect requires the FINAL response
-//      to send Access-Control-Allow-Credentials, which B2 does not — so a
-//      cookie-authenticated download would fail CORS the moment it redirected.
-//   2. Non-browser clients (curl, aria2c) can then use the same link, which is
-//      what makes multi-connection downloading possible without handing anyone
-//      a raw storage URL.
-export const issueDownloadTicket = (transferId: string, expiresAt: number): string => {
-  const payload = b64url(Buffer.from(JSON.stringify({ tid: transferId, exp: expiresAt })));
-  return `${payload}.${recipientSign(payload)}`;
-};
-
-export const verifyDownloadTicket = (ticket: string | undefined, transferId: string): boolean =>
-  verifyRecipientToken(ticket, transferId);
+// A mediated download link used to carry a signed ticket that authorized the
+// download ON ITS OWN until the transfer expired. For a password-protected
+// transfer that made the link a password bypass: copy it out of the page, paste
+// it anywhere, and anyone could download without the password. Removed
+// 2026-09-30 (DECISIONS.md). A protected transfer's download now requires the
+// transfer-scoped unlock cookie, which exists only in the browser that entered
+// the password and slides forward while that browser keeps using it.
 
 // ── download continuations (metering only — never authorization) ──
 //
@@ -342,9 +326,9 @@ export const verifyDownloadTicket = (ticket: string | undefined, transferId: str
 // browser presents it on every renewal. A request carrying a valid one is not
 // metered again — without it, a five-hour download would be billed five times.
 //
-// It is signed under a SEPARATE domain from tickets and unlock cookies ("cont."
-// is mixed into the MAC input), so a continuation can never pass as a ticket and
-// open a password-protected transfer, and a ticket can never suppress metering.
+// It is signed under a SEPARATE domain from the unlock cookie ("cont." is mixed
+// into the MAC input), so a continuation can never pass as an unlock and open a
+// password-protected transfer, and an unlock cookie can never suppress metering.
 const CONTINUATION_DOMAIN = "cont.";
 
 export const issueContinuation = (transferId: string, expiresAt: number): string => {
@@ -444,6 +428,26 @@ export function rateLimit(key: string, limit: number, windowMs: number): boolean
   return true;
 }
 
+/** Failure counter, separate from the request buckets above: it counts only
+ *  WRONG answers, so a recipient who unlocks on the first try spends nothing.
+ *  Keyed per transfer, it caps guessing against one link no matter how many
+ *  addresses the guesses come from. In memory, like the limiter; a restart
+ *  resets it, which is acceptable for a window measured in minutes. */
+const failures = new Map<string, { count: number; resetAt: number }>();
+
+export function failureLocked(key: string, limit: number): boolean {
+  const f = failures.get(key);
+  if (!f || Date.now() > f.resetAt) return false;
+  return f.count >= limit;
+}
+
+export function noteFailure(key: string, windowMs: number): void {
+  const now = Date.now();
+  const f = failures.get(key);
+  if (!f || now > f.resetAt) failures.set(key, { count: 1, resetAt: now + windowMs });
+  else f.count += 1;
+}
+
 export const clientKey = (c: Context): string =>
   c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "local";
 
@@ -454,7 +458,7 @@ export const globalLimiter =
   (name: string, limit: number, windowMs: number): MiddlewareHandler =>
   async (c: Context, next: Next) => {
     if (!rateLimit(`${name}:*`, limit, windowMs))
-      return c.json({ error: "Too many sign-in attempts right now — try again in a minute.", code: "rate_limited" }, 429);
+      return c.json({ error: "Too many attempts right now — try again in a minute.", code: "rate_limited" }, 429);
     return next();
   };
 

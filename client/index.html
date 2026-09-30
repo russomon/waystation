@@ -416,11 +416,11 @@
         <div class="password-panel">
           <label class="field-label" for="recipientPassword">Download password <span class="muted">(optional)</span></label>
           <div class="password-wrap">
-            <input id="recipientPassword" type="password" maxlength="128" autocomplete="new-password"
+            <input id="recipientPassword" type="password" minlength="4" maxlength="128" autocomplete="new-password"
                    aria-describedby="passwordHelp" placeholder="Leave blank for no password" />
             <button id="togglePassword" class="icon-button" type="button" title="Show password" aria-label="Show password"></button>
           </div>
-          <p id="passwordHelp" class="field-help">1–128 characters. Applied to every file in this send.</p>
+          <p id="passwordHelp" class="field-help">4–128 characters. Applied to every file in this send.</p>
         </div>
 
         <div id="qcOptions" hidden>
