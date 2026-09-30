@@ -77,14 +77,26 @@ db.execute("PRAGMA user_version = 3")
 db.commit()
 PY
 start_gateway
-"$PY" - "$WORK/gateway.db" <<'PY'
+# The target is whatever db.ts currently declares, not a number frozen here: a v3
+# database must climb through EVERY later migration in one start, so this proof
+# keeps meaning something as the schema grows (it once asserted "== 4" and went
+# stale at v5).
+SCHEMA=$(sed -n 's/^const SCHEMA_VERSION = \([0-9][0-9]*\);.*/\1/p' "$WEB/gateway/src/db.ts")
+[ -n "$SCHEMA" ] && [ "$SCHEMA" -gt 3 ] || { echo "FAIL - could not read SCHEMA_VERSION from db.ts"; exit 1; }
+"$PY" - "$WORK/gateway.db" "$SCHEMA" <<'PY'
 import sqlite3,sys
-db=sqlite3.connect(sys.argv[1])
-assert db.execute("PRAGMA user_version").fetchone()[0] == 4
-tables={r[0] for r in db.execute("select name from sqlite_master where type='table'")}
-assert "access_codes" in tables
-assert db.execute("select owner_id from transfers where transfer_id='legacy'").fetchone()[0] is None
-print("  schema v3 migrates in place to v4; pre-identity rows keep a NULL owner")
+db, want = sqlite3.connect(sys.argv[1]), int(sys.argv[2])
+got = db.execute("PRAGMA user_version").fetchone()[0]
+assert got == want, f"a v3 database migrated to v{got}, expected the current v{want}"
+tables = {r[0] for r in db.execute("select name from sqlite_master where type='table'")}
+assert "access_codes" in tables, f"access_codes table missing after migration: {sorted(tables)}"
+for table in ("transfers", "uploads"):
+    cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+    assert "owner_id" in cols, f"{table}.owner_id not restored by the migration"
+owner = db.execute("select owner_id from transfers where transfer_id='legacy'").fetchone()
+assert owner is not None, "the pre-existing 'legacy' transfer row was lost in migration"
+assert owner[0] is None, f"a pre-identity row was given an owner: {owner[0]!r}"
+print(f"  schema v3 migrates in place to the current v{want}; pre-identity rows keep a NULL owner")
 PY
 grep -q "senderCodes=0" /tmp/codes-gateway.log || { echo "FAIL - boot banner does not report the code count"; exit 1; }
 
@@ -197,7 +209,7 @@ curl -fsS -H "Cookie: ws_session=$OLD" http://127.0.0.1:$GW/api/session | grep -
   || { echo "FAIL - an ownerless pre-change cookie was accepted"; exit 1; }
 echo "  a correctly signed cookie without an owner is rejected (one re-login after deploy)"
 
-# 7. admin-chosen codes: memorable, case-insensitive, never colliding
+# 7. admin-chosen codes: memorable, case-sensitive (kept exactly as written), never colliding
 [ "$(code -b "$ADMIN" -X POST -H "Origin: $ORIGIN" -H "$J" --data '{"label":"Short","code":"abc1234"}' http://127.0.0.1:$GW/api/admin/codes)" = 400 ]
 R=$(curl -s -b "$ADMIN" -X POST -H "Origin: $ORIGIN" -H "$J" --data "{\"label\":\"Admin dup\",\"code\":\"$CODE\"}" -w '\n%{http_code}' http://127.0.0.1:$GW/api/admin/codes)
 [ "$(printf '%s' "$R" | tail -1)" = 409 ] || { echo "FAIL - a custom code equal to the admin code was accepted"; exit 1; }

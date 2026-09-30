@@ -41,8 +41,8 @@ not assume a running worker, a scratch disk, or GMI spend.
   framing denied, CSP Report-Only) and accurate "in transit and at rest" copy.
   New `scripts/purge-proof.sh`; `recipient-password`, `mediated-download`,
   `storage-renewal`, `access`, `transfer-mode` proofs extended; all listed
-  download/access/payment proofs PASS (`access-codes` still fails on its stale
-  schema-v4 assertion — pre-existing). **Deployed 2026-09-30**; purge turned on
+  download/access/payment proofs PASS. `access-codes-proof.sh` fixed the same day:
+  it asserted schema v4 and now reads the target version from `db.ts` (PASS). **Deployed 2026-09-30**; purge turned on
   after dry-run review (6 expired transfers purged); Web Analytics removed from
   OrbiStation; CSP enforced after a clean live upload/download/checkout.
   B2 key narrowed to five capabilities (`orbistation-gateway-min`); old keys

@@ -116,7 +116,7 @@ handoff:
 | `scripts/transfer-mode-proof.sh` | sender contract: transfer-first mode, additive multi-file queue, drag/drop, optional recipient passwords, honest concurrent progress, copyable share URLs |
 | `scripts/recipient-password-proof.sh` | optional recipient password over the real gateway + MinIO multipart path: hashed and persistent, 4-character minimum for new transfers (older links still open), 20 wrong guesses lock a link from any number of addresses, a deployment-wide 60/min unlock cap |
 | `scripts/qc-preview-proof.sh` | QC preview: `WAYSTATION_QC_MODE=preview` refuses a client's QC initiate (403, no row) before spend, admin stays live, `/session` reports the mode per viewer, default live |
-| `scripts/access-codes-proof.sh` | named sender access codes: v3→v4 migration, admin-issued or admin-chosen (case-sensitive, no collisions), shown once, hash-only storage, neutral 404 for non-admins, owner_id recorded, live revocation, ownerless cookies rejected, deployment-wide login cap |
+| `scripts/access-codes-proof.sh` | named sender access codes: v3 → current-schema migration (target read from `db.ts`), admin-issued or admin-chosen (case-sensitive, no collisions), shown once, hash-only storage, neutral 404 for non-admins, owner_id recorded, live revocation, ownerless cookies rejected, deployment-wide login cap |
 | `scripts/authority-boundary-proof.sh` | deterministic delivery authority + advisory PSE (no network or media I/O) |
 | `scripts/triage-proof.sh` | cost-aware AI triage: the router changes spend decisions only, never verdicts |
 | `scripts/ai-thumbnail-proof.sh` | AI poster selection against an SDK-shaped mock; no network or spend |
