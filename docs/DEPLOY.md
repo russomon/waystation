@@ -722,6 +722,30 @@ The full-QC host was spun down. Production now runs the **transfer-only** stack.
 | Gateway image | `1c3c81e18b4e` — **restored from B2**, not rebuilt |
 | Measured at idle | 523 MB of 955 used · gateway 94 MiB, cloudflared 16 MiB · CPU 0.36% |
 
+### Hardening gateway release + purge enabled — 2026-09-30
+
+- Source `7f520bd` (hardening), then `81e07c1` (purge `on`), on
+  `codex/hosted-waystation-mvp`. Portal: OrbitWebsite `a5435d5` (`_headers`,
+  "in transit and at rest" copy, client pinned to `7f520bd`), live ~60 s after push.
+- Gateway only, `up -d --no-deps gateway` (rebuilt for `7f520bd`, recreated for
+  the env change); healthy within 30 s; cloudflared untouched (`7d107bc6d419`).
+- Backups (WAL-safe, mode 600, live capabilities — keep on host):
+  `/home/waystation/control-pre-7f520bd.db` (94,208 bytes, schema v6, integrity
+  ok) and `/home/waystation/control-pre-purge-on.db` (schema v7, integrity ok).
+- Schema v6 → v7 in place; rows preserved (13 transfers, 15 uploads, 31 meter
+  events, 9 grants, 4 access codes). Public checks: `/healthz` 200,
+  unauthenticated upload 401, unknown transfer 404, API security headers
+  present, CORS preflight intact. Site: HSTS, `X-Frame-Options: DENY`, CSP
+  enforced for framing and Report-Only for content.
+- Purge: dry-run listed 6 transfers expired ≥ 7 days (7 object versions; 2 of
+  the 6 already had nothing in storage). Owner approved; turned on. First live
+  pass deleted exactly those (0, 0, 2, 1, 2, 2 versions), all 6 marked purged;
+  verified by listing object versions that each now has 0, and the 7 live or
+  in-grace transfers are untouched.
+- CSP Report-Only on page load flagged one source: the Cloudflare Web Analytics
+  beacon (`static.cloudflareinsights.com`). Decide whether to allow it or turn
+  Web Analytics off for OrbiStation before enforcing the CSP.
+
 ### Download-renewal gateway release — 2026-09-30
 
 - Source `c141016` on `codex/hosted-waystation-mvp` (from `5d47d6d`; the two
