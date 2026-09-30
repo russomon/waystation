@@ -16,6 +16,43 @@ and where useful the rejected alternative and how the decision was verified.
 Superseded entries are kept and marked, not deleted — the history of a reversal
 is itself the useful part.
 
+### 2026-09-30 - Browser downloads renew their storage URL; renewals are never re-metered
+
+- Context: the mediated route's presigned storage URL lives one hour. Storage
+  checks expiry when a request STARTS, so ranges in flight finish — but the
+  delivery page resolved the URL once and kept starting new ranges on it, so any
+  download longer than an hour stopped at the hour mark and waited for the
+  recipient to click Resume. Separately, every hit on `/original` metered a full
+  file of egress once per transfer per hour, so each renewal/resume in a new hour
+  billed the download again (a 5-hour download = 5× the file).
+- Decision:
+  - **Keep the 1-hour TTL** (now `WAYSTATION_STORAGE_URL_TTL_SECONDS`, default
+    3600, overridable for proofs). Lengthening it was rejected: it would undo the
+    point of mediation — a leaked storage URL would outlive revocation.
+  - **Client renews** through the mediated route (`client/src/storageSource.ts`):
+    proactively 5 min before expiry, and reactively once on a storage 401/403
+    (covers a laptop that slept past expiry). Renewal is **single-flight** — the
+    12 workers share one gateway round trip. `format=json` now returns a relative
+    `expiresIn` (clock-skew safe).
+  - Renewal re-checks revocation, so revocation now stops a running download at
+    the next renewal (≤ 1 h) instead of only at Resume.
+  - **Metering keys on the download, not the hour.** A request carrying a live
+    grant (paid) or a valid `continuation` token (unlimited) is never metered; a
+    newly claimed grant meters once under `egress:grant:<id>`; only requests with
+    neither (an unlimited transfer's first hit, curl/aria2c) keep the per-hour key.
+  - The continuation token is HMAC-signed under a **separate domain** (`cont.`
+    mixed into the MAC input) from tickets/unlock cookies, so it can never open a
+    password-protected transfer and a ticket can never suppress metering. It is
+    metering-only, never authorization.
+- Rejected: per-range gateway resolution (hundreds of extra round trips for no
+  security gain); streaming through the CDN worker (new infrastructure, and its
+  `cacheEverything` would cache private objects) — revisit only if the design is
+  outgrown.
+- Verified: `scripts/storage-renewal-proof.sh` (2-second TTL against MinIO:
+  proactive renewal with zero refusals, 12 simultaneous refusals sharing one
+  renewal, revocation mid-download, no re-meter an "hour" later, domain
+  separation); `payment-gateway-proof.sh` extended for per-grant metering.
+
 ### 2026-09-21 - Pay-per-gig v2: cheaper extra downloads, paid link weeks, hidden bonus download
 
 - Context: the owner refined the model after the 2026-09-19 launch — extra

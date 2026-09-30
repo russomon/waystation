@@ -32,7 +32,9 @@ it, because several obvious-looking shortcuts are already ruled out there.
 2. ~~**Gateway-mediated download + egress metering.**~~ **DONE 2026-09-05.**
    `GET /transfers/:id/original` redirects to a freshly minted presigned URL
    after re-checking revocation and expiry, and meters egress once per transfer
-   per hour rather than once per range. Proven by
+   per hour rather than once per range. *(2026-09-30: now once per download —
+   grant or continuation token — and browser downloads renew the 1-hour storage
+   URL instead of stalling; `DECISIONS.md` 2026-09-30.)* Proven by
    `scripts/mediated-download-proof.sh`. Credits and grant issuance hang off
    this endpoint next.
 3. **Download credits.** ~~Grants, default 2 per link (up to 10), count-by-grant

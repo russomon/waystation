@@ -10,6 +10,7 @@ import {
   enforceOrigin,
   hasRecipientUnlock,
   hashAccessCode,
+  issueContinuation,
   issueDownloadTicket,
   issueSession,
   limiter,
@@ -22,6 +23,7 @@ import {
   getDownloadGrantCookie,
   setDownloadGrantCookie,
   verifyAccessCode,
+  verifyContinuation,
   verifyDownloadTicket,
 } from "./auth.js";
 import {
@@ -108,6 +110,13 @@ export const api = new Hono();
 const GRANT_TTL_DAYS = Number(env.WAYSTATION_DOWNLOAD_GRANT_TTL_DAYS ?? 7);
 const GRANT_TTL_MS = GRANT_TTL_DAYS * 86_400_000;
 const GRANT_TTL_SECONDS = GRANT_TTL_DAYS * 86_400;
+
+// Life of the presigned storage URL the mediated route hands out. Kept short on
+// purpose: once minted it cannot be recalled. A browser download that outlasts
+// it renews through the mediated route (client/src/storageSource.ts), which is
+// told this value as `expiresIn`. Overridable only so a proof can watch a URL
+// expire in seconds rather than an hour.
+const STORAGE_URL_TTL_SECONDS = Number(env.WAYSTATION_STORAGE_URL_TTL_SECONDS ?? 3600);
 
 // ───────── sender session ─────────
 // The access code is exchanged ONCE for a signed, short-lived, opaque cookie;
@@ -841,7 +850,13 @@ api.get("/transfers/:id/original", async (c) => {
   // grant for this transfer is one download's continuation (a resume, or the many
   // range requests of a parallel download) and never re-consumes; the first
   // ungranted hit either claims one credit or is refused when they are all spent.
+  //
+  // `continuing` records that this request is provably part of a download that
+  // was already metered — a live grant, or for an unlimited transfer a signed
+  // continuation token — so the egress below is not recorded a second time.
   let grant: string | undefined;
+  let continuation: string | undefined;
+  let continuing = false;
   const transfer = getTransfer(id);
   const allowed = transfer?.downloadsAllowed;
   if (typeof allowed === "number") {
@@ -849,6 +864,7 @@ api.get("/transfers/:id/original", async (c) => {
     const held = presented ? getGrant(presented) : undefined;
     if (held && held.transferId === id && Date.now() <= held.expiresAt) {
       grant = presented!;
+      continuing = true;
     } else {
       const claimed = claimDownloadGrant(id, allowed, GRANT_TTL_MS);
       if (!claimed)
@@ -856,28 +872,36 @@ api.get("/transfers/:id/original", async (c) => {
       setDownloadGrantCookie(c, id, claimed, GRANT_TTL_SECONDS);
       grant = claimed;
     }
+  } else {
+    const presented = c.req.query("cont");
+    continuing = verifyContinuation(presented, id);
+    continuation = continuing ? presented : issueContinuation(id, Date.now() + GRANT_TTL_MS);
   }
 
   // Egress metering. Honest about what it can and cannot see: because this is a
   // redirect, the gateway learns that a download STARTED but never how many
   // bytes actually moved — the transfer happens between the recipient and B2.
   //
-  // So one event is recorded per transfer per hour, using an explicit
-  // idempotency key. That collapses the many range requests of a single
-  // resumed or parallel download into one line item instead of billing sixteen
-  // times for one file, while still counting a genuine second download the next
-  // day. It is an approximation, and it is replaced by the grant ledger in step
-  // 3 of the commercial plan, which knows exactly when a download began and how
-  // many bytes it was entitled to.
-  if (original.size > 0) {
+  // A request that proves it continues an already-metered download (see
+  // `continuing` above) records nothing: a browser renewing its storage URL
+  // every hour of a long download is still one download.
+  //
+  // Otherwise one event is recorded per download. A newly claimed grant IS one
+  // download, so it keys the event exactly. Without a grant (an unlimited
+  // transfer's first request, or curl/aria2c, which carry no continuation) the
+  // gateway cannot tell one download's connections apart from separate
+  // downloads, so it falls back to one event per transfer per hour. That
+  // collapses the many range requests of a parallel download into one line
+  // item while still counting a genuine second download the next day.
+  if (original.size > 0 && !continuing) {
     const hourBucket = Math.floor(Date.now() / 3_600_000);
     meter(
       { transferId: id, event: "egress", units: Number((original.size / 1e9).toFixed(6)), unit: "gb", ref: key },
-      `egress:${id}:${hourBucket}`,
+      grant ? `egress:grant:${grant}` : `egress:${id}:${hourBucket}`,
     );
   }
 
-  const storage = await g.presignGet(key, 3600, key.split("/").pop());
+  const storage = await g.presignGet(key, STORAGE_URL_TTL_SECONDS, key.split("/").pop());
 
   // Two shapes, one gate. Everything above — revocation, expiry, the password,
   // scope, metering — has already run either way.
@@ -894,7 +918,11 @@ api.get("/transfers/:id/original", async (c) => {
   // the contexts where it genuinely works — a top-level `<a href>` navigation
   // is not a CORS request at all, and curl/aria2c have no CORS to satisfy —
   // which is what makes this a stable link for multi-connection tools.
-  if (c.req.query("format") === "json") return c.json({ url: storage, grant });
+  //
+  // `expiresIn` is RELATIVE, not a timestamp, so a recipient whose clock is
+  // wrong still renews on time; `continuation` is presented back on renewal.
+  if (c.req.query("format") === "json")
+    return c.json({ url: storage, grant, continuation, expiresIn: STORAGE_URL_TTL_SECONDS });
   return c.redirect(storage, 302);
 });
 

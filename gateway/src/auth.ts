@@ -263,11 +263,11 @@ export function setRecipientUnlockCookie(c: Context, transferId: string): number
 /** Shared verification for every transfer-scoped bearer token this module mints
  *  — the unlock cookie and the download ticket below. Both carry the same
  *  `{tid, exp}` payload under the same HMAC, so they must not drift apart. */
-function verifyRecipientToken(token: string | undefined, transferId: string): boolean {
+function verifyRecipientToken(token: string | undefined, transferId: string, domain = ""): boolean {
   if (!token) return false;
   const [payload, mac] = token.split(".");
   if (!payload || !mac) return false;
-  const expected = Buffer.from(recipientSign(payload));
+  const expected = Buffer.from(recipientSign(domain + payload));
   const supplied = Buffer.from(mac);
   if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return false;
   try {
@@ -332,6 +332,28 @@ export const issueDownloadTicket = (transferId: string, expiresAt: number): stri
 
 export const verifyDownloadTicket = (ticket: string | undefined, transferId: string): boolean =>
   verifyRecipientToken(ticket, transferId);
+
+// ── download continuations (metering only — never authorization) ──
+//
+// A browser download renews its storage URL before the hour runs out, which
+// means asking the mediated route again. For a paid transfer the grant already
+// proves "this is the same download"; an unlimited transfer has no grant, so the
+// gateway hands the browser this token with its first storage URL and the
+// browser presents it on every renewal. A request carrying a valid one is not
+// metered again — without it, a five-hour download would be billed five times.
+//
+// It is signed under a SEPARATE domain from tickets and unlock cookies ("cont."
+// is mixed into the MAC input), so a continuation can never pass as a ticket and
+// open a password-protected transfer, and a ticket can never suppress metering.
+const CONTINUATION_DOMAIN = "cont.";
+
+export const issueContinuation = (transferId: string, expiresAt: number): string => {
+  const payload = b64url(Buffer.from(JSON.stringify({ tid: transferId, exp: expiresAt })));
+  return `${payload}.${recipientSign(CONTINUATION_DOMAIN + payload)}`;
+};
+
+export const verifyContinuation = (token: string | undefined, transferId: string): boolean =>
+  verifyRecipientToken(token, transferId, CONTINUATION_DOMAIN);
 
 /** Gate for expensive / state-changing sender routes. Registered AFTER the CORS
  *  middleware so an OPTIONS preflight is answered by cors() and never reaches

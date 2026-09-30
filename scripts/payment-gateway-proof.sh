@@ -210,12 +210,34 @@ for _ in 1 2 3; do
   [ "$(code "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json&grant=$G1")" = 200 ]
 done
 echo "  a grant token is one download's continuation — repeated use spends no extra credit"
+"$PY" - "$WORK/gateway.db" "$PAID_TID" <<'PY'
+import sqlite3,sys
+db=sqlite3.connect(sys.argv[1])
+n=lambda: db.execute("select count(*) from meter_events where transfer_id=? and event='egress'",(sys.argv[2],)).fetchone()[0]
+assert n() == 1, ("one download, one egress event", n())
+# An hour later the old hour-bucket key would be free again; a renewal that
+# presents its grant must STILL not re-meter.
+db.execute("delete from meter_events where transfer_id=? and event='egress'",(sys.argv[2],)); db.commit()
+PY
+[ "$(code "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json&grant=$G1")" = 200 ]
+"$PY" - "$WORK/gateway.db" "$PAID_TID" <<'PY'
+import sqlite3,sys
+n=sqlite3.connect(sys.argv[1]).execute("select count(*) from meter_events where transfer_id=? and event='egress'",(sys.argv[2],)).fetchone()[0]
+assert n == 0, ("a grant-carrying renewal re-metered egress", n)
+PY
+echo "  egress is metered once per grant — a renewal carrying the grant, even hours later, records nothing"
 orig_json >/dev/null                                                    # download 2 (fresh, no grant)
 orig_json >/dev/null                                                    # download 3
 orig_json >/dev/null                                                    # download 4 (the hidden bonus)
 [ "$(code "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json")" = 403 ]   # 5th refused
 [ "$(code "http://127.0.0.1:$GW/api/transfers/$PAID_TID/original?format=json&grant=$G1")" = 200 ]  # grant still valid
 echo "  the link serves 4 downloads (3 paid + 1 hidden bonus) then returns downloads_exhausted; earlier grants still resume"
+"$PY" - "$WORK/gateway.db" "$PAID_TID" <<'PY'
+import sqlite3,sys
+n=sqlite3.connect(sys.argv[1]).execute("select count(*) from meter_events where transfer_id=? and event='egress'",(sys.argv[2],)).fetchone()[0]
+assert n == 3, ("downloads 2-4 are three new grants, three egress events", n)
+PY
+echo "  each new download (grant) is its own egress event, even within the same hour"
 
 # ── regression: a comped (admin) transfer is uncapped and needs no payment ──
 ADMIN="$WORK/admin.cookie"

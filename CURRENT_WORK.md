@@ -1,7 +1,7 @@
 # Current Work
 
 Repo: waystation
-Updated: 2026-09-19
+Updated: 2026-09-30
 Branch: `codex/hosted-waystation-mvp` (the trunk — `main` is fast-forwarded to
 follow it, and the two should always be equal)
 
@@ -34,6 +34,17 @@ not assume a running worker, a scratch disk, or GMI spend.
 
 ## Recently completed
 
+- **2026-09-30** — **downloads survive the 1-hour storage URL** (`DECISIONS.md`
+  2026-09-30): the delivery page renews its storage URL before expiry and on a
+  refusal (single-flight, `client/src/storageSource.ts`), and egress is metered
+  once per download (grant / continuation token) instead of once per hour.
+  New `scripts/storage-renewal-proof.sh` PASS; `payment-gateway`,
+  `parallel-download` (static checks updated for the new module),
+  `mediated-download`, `resumable-download`, `access`, `recipient-password`,
+  `delivery`, `transfer-mode` proofs PASS; gateway type-checks, client builds.
+  **Built, not deployed** — needs a gateway redeploy AND a client re-pin into
+  OrbitWebsite (the client needs the gateway's `expiresIn`, but falls back
+  safely without it).
 - **2026-09-21** — **pay-per-gig v2 pricing/options** (`DECISIONS.md` 2026-09-21):
   extra downloads cut to 1¢/GB; a new "Link lasts" selector (1 week included, up to
   5, extra weeks 1¢/GB); link life = weeks×7 + 1 day; a hidden +1 bonus download on

@@ -81,10 +81,13 @@ Vite + TypeScript. `main.ts` is the sender, `delivery.ts` the recipient page.
 Uploads run through `uploader.ts` (resumable multipart, concurrency 6) with
 `resumeStore.ts` persisting resume state; the server's `ListParts` is the
 source of truth on resume. Downloads live in `delivery.ts`: it resolves the
-storage URL once through the mediated route, then fetches `planRanges()` chunks
+storage URL through the mediated route, then fetches `planRanges()` chunks
 over **twelve** connections and writes each at its own offset into one
 `FileSystemWritableFileStream`, because B2 throttles per connection rather than
-per client. Resume is Range requests plus bookkeeping in IndexedDB
+per client. The storage URL lives an hour, so `storageSource.ts` renews it
+through the mediated route shortly before expiry and once after any refusal,
+single-flight across the workers; renewals carry the grant or a continuation
+token and are never re-metered. Resume is Range requests plus bookkeeping in IndexedDB
 (`downloadResume.ts`, shared opener `idb.ts`); the record is written only after
 `close()` commits, since the writable holds nothing durable until then. When
 the transfer carries a bao outboard small enough to hold in memory, each range

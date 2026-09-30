@@ -55,14 +55,25 @@ echo "  the range plan covers every byte once, with inclusive ends"
 # have correct CORS and it still fails, so the client must resolve the storage
 # url over JSON and fetch the bytes from there. This shipped broken twice; the
 # check exists so it cannot ship broken a third time.
+# saveToDisk reaches storage only through fetchFromStorage(src, …), where `src`
+# is the renewing source from client/src/storageSource.ts; that module is the
+# only place the resolved url is fetched, and its resolver asks for JSON.
 BODY=$(awk '/async function saveToDisk/,/^async function sha256Hex/' "$WEB/client/src/delivery.ts")
-if printf '%s' "$BODY" | grep 'fetch(' | grep -qv 'fetch(src'; then
+if printf '%s' "$BODY" | grep -E 'fetch\(|fetchFromStorage\(' | grep -qv 'fetchFromStorage(src'; then
   echo "FAIL - saveToDisk fetches something other than the resolved storage url:"
-  printf '%s' "$BODY" | grep -n 'fetch(' | grep -v 'fetch(src' | sed 's/^/    /'
+  printf '%s' "$BODY" | grep -nE 'fetch\(|fetchFromStorage\(' | grep -v 'fetchFromStorage(src' | sed 's/^/    /'
   exit 1
 fi
-grep -q 'format=json' "$WEB/client/src/delivery.ts" \
+printf '%s' "$BODY" | grep -q 'openStorageSource(url)' \
+  || { echo "FAIL - saveToDisk does not resolve the mediated url through openStorageSource"; exit 1; }
+SRC="$WEB/client/src/storageSource.ts"
+grep -q 'searchParams.set("format", "json")' "$SRC" \
   || { echo "FAIL - resolver does not request the storage url as JSON"; exit 1; }
+# Inside fetchFromStorage, bytes come only from the source's url (current/renew).
+FBODY=$(awk '/export async function fetchFromStorage/,/^}/' "$SRC")
+if printf '%s' "$FBODY" | grep 'fetch(' | grep -qvE 'fetch\((url|await source\.renew\(url\)),'; then
+  echo "FAIL - fetchFromStorage fetches something other than the source's storage url"; exit 1
+fi
 grep -q 'if (c.req.query("format") === "json")' "$WEB/gateway/src/routes.ts" \
   || { echo "FAIL - gateway has no JSON mode for the mediated route"; exit 1; }
 echo "  every byte fetch targets resolved storage; the redirect is never fetched by script"

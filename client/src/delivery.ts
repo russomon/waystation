@@ -7,6 +7,7 @@ import { GatewayError, gwGet, gwPost } from "./config.js";
 import { verifyRange } from "./blake3.js";
 import { formatBytes } from "./format.js";
 import { planRanges } from "./ranges.js";
+import { fetchFromStorage, openStorageSource } from "./storageSource.js";
 import {
   clearDownloadResume, getDownloadResume, saveDownloadResume, usable,
   type DownloadResume,
@@ -117,40 +118,6 @@ async function drain(
   }
 }
 
-/** Ask the gateway where storage actually is, and fetch the bytes from there.
- *
- *  Script MUST NOT fetch the mediated url itself. It answers with a redirect to
- *  another origin, and the Fetch spec requires the browser to send
- *  `Origin: null` on a cross-origin redirected request — which B2 answers with
- *  403. Both hosts have correct CORS and it still fails, because `null` is not
- *  any host's configured origin. Allowing `null` at the bucket would let any
- *  sandboxed context read the object, so the fix is on this side: request JSON,
- *  then go to storage directly, where the origin is intact and a preflight is
- *  permitted.
- *
- *  The redirect is still the right shape for a top-level `<a href>` navigation
- *  (not a CORS request) and for curl or aria2c (no CORS at all). */
-async function resolveStorageUrl(url: string): Promise<string> {
-  // Credentialed, unlike the storage fetches below: this hits the gateway's
-  // mediated /original route, which for a paid link claims one download credit and
-  // sets an HttpOnly, transfer-scoped grant cookie. Sending that cookie back (it is
-  // same-site to the gateway, so a Strict cookie is delivered) is what makes a
-  // resumed or reloaded download reuse the SAME credit instead of spending another.
-  // This is JSON, not the 302, so the cross-origin-redirect CORS problem does not
-  // apply here — the storage bytes below are still fetched with a bare fetch.
-  const res = await fetch(url + (url.includes("?") ? "&" : "?") + "format=json", { credentials: "include" });
-  if (res.status === 403) {
-    const body = await res.json().catch(() => null);
-    if (body?.code === "downloads_exhausted")
-      throw Object.assign(new Error(body.error || "This link has reached its download limit."), { code: "downloads_exhausted" });
-    throw new Error(`HTTP ${res.status}`);
-  }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const body = await res.json();
-  if (!body?.url) throw new Error("gateway returned no storage url");
-  return body.url as string;
-}
-
 /** Download `url` into an open FileSystemWritableFileStream, in parallel where
  *  storage supports it. Nothing is buffered: every byte goes network → disk, so
  *  a 26 GiB master costs no more memory than a small one.
@@ -189,35 +156,26 @@ async function saveToDisk(
   // partial file — any resume progress is void once it runs.
   const single = async (): Promise<void> => {
     done = 0; onProgress(0);
-    const res = await fetch(src, { signal });
+    const res = await fetchFromStorage(src, { signal });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     await drain(res.body, 0, write, count);
   };
 
-  // Resolve once. Every byte below comes from `src`, never from the mediated
-  // url — see resolveStorageUrl. If resolution fails we still try the url as
-  // given: a deployment that serves storage directly needs no resolution.
-  let src = url;
-  try {
-    src = await resolveStorageUrl(url);
-  } catch (e) {
-    // A spent download limit is terminal — surface it rather than falling through
-    // to a raw fetch of the mediated url, which would only 403 again less clearly.
-    if ((e as { code?: string })?.code === "downloads_exhausted") throw e;
-    /* otherwise fall through to `url`: a deployment that serves storage directly
-       needs no resolution */
-  }
+  // Every byte below comes from `src`, never from the mediated url, and `src`
+  // renews its storage URL before it expires — see storageSource.ts. Without
+  // that, any range started more than an hour into a download is refused.
+  const src = await openStorageSource(url);
 
   if (total < PARALLEL_MIN_BYTES) return single();
 
   try {
-    const probe = await fetch(src, { headers: { Range: "bytes=0-0" }, signal });
+    const probe = await fetchFromStorage(src, { headers: { Range: "bytes=0-0" }, signal });
     await probe.body?.cancel();
     if (probe.status !== 206) return single();
 
     const todo = all.filter((r) => !skip.has(r.start));
     await pool(todo, DOWNLOAD_CONCURRENCY, async ({ start, end }) => {
-      const res = await fetch(src, { headers: { Range: `bytes=${start}-${end}` }, signal });
+      const res = await fetchFromStorage(src, { headers: { Range: `bytes=${start}-${end}` }, signal });
       if (!res.ok || !res.body) throw new Error(`range ${start}-${end}: HTTP ${res.status}`);
       if (verify) {
         // Check BEFORE writing. Verifying after would put unverified bytes on
