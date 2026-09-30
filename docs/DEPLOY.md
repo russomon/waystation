@@ -722,6 +722,26 @@ The full-QC host was spun down. Production now runs the **transfer-only** stack.
 | Gateway image | `1c3c81e18b4e` — **restored from B2**, not rebuilt |
 | Measured at idle | 523 MB of 955 used · gateway 94 MiB, cloudflared 16 MiB · CPU 0.36% |
 
+### Download-renewal gateway release — 2026-09-30
+
+- Source `c141016` on `codex/hosted-waystation-mvp` (from `5d47d6d`; the two
+  commits between touch only the client). Portal: OrbitWebsite `f3bb51e`, clean
+  manifest pinned to the same source, live ~45 s after push.
+- Rebuilt and recreated **gateway only** with
+  `docker-compose.transfer.yml up -d --no-deps gateway`; healthy within 30 s.
+  Cloudflared retained container id prefix `7d107bc6d419`. No new env vars, no
+  schema change.
+- Pre-deploy WAL-safe backup: `/home/waystation/control-pre-c141016.db`,
+  94,208 bytes, mode 600, SHA-256 prefix `b6c2be200b160508`; integrity ok.
+  Contains live capabilities — do not copy off the host unencrypted.
+- Post-start: schema v6, `integrity_check=ok`, rows preserved (13 transfers,
+  15 uploads, 31 meter events, 9 download grants). Boot banner unchanged
+  (transfer-only, `maxQC=0.0GiB`, QC preview). Public `/healthz` 200,
+  unauthenticated upload 401, unknown transfer 404.
+- Not exercised against a live transfer: hitting `/original` would meter egress
+  and, on a paid link, claim a download credit. Behaviour is covered by
+  `scripts/storage-renewal-proof.sh`.
+
 ### Protected-transfer gateway release — 2026-09-01
 
 - Production checkout/source: `5bb5952` on

@@ -18,8 +18,8 @@ narrative to `docs/PROJECT_HISTORY.md`.
 |---|---|
 | Live stack | `docker-compose.transfer.yml` — gateway + cloudflared only |
 | Host | Vultr Los Angeles, 1 vCPU / 1 GB / 25 GB, no block volume |
-| Gateway source | `2621608` — pulled and rebuilt in place 2026-09-17 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v4 |
-| Portal | OrbitWebsite `465e305`, client pinned to `2621608`, at `https://orbitolive.com/waystation/` |
+| Gateway source | `c141016` — pulled and rebuilt in place 2026-09-30 (gateway container only; cloudflared untouched since 2026-09-01); control DB at schema v6 |
+| Portal | OrbitWebsite `f3bb51e`, client pinned to `c141016`, at `https://orbitolive.com/orbistation/` (`/waystation/` 301-redirects) |
 | API | `https://api.orbitolive.com` behind an outbound-only Cloudflare Tunnel |
 | QC ceiling | `MAX_QC_BYTES: "1"` — every pipeline service forced off; `WAYSTATION_QC_MODE: "preview"` — clients see the QC tab, only the admin may start a QC upload |
 | Upload ceilings | `MAX_ACTIVE_UPLOADS_PER_SESSION=3` (24 h window), jobs/session 10, jobs/day 20 (global) |
@@ -42,9 +42,8 @@ not assume a running worker, a scratch disk, or GMI spend.
   `parallel-download` (static checks updated for the new module),
   `mediated-download`, `resumable-download`, `access`, `recipient-password`,
   `delivery`, `transfer-mode` proofs PASS; gateway type-checks, client builds.
-  **Built, not deployed** — needs a gateway redeploy AND a client re-pin into
-  OrbitWebsite (the client needs the gateway's `expiresIn`, but falls back
-  safely without it).
+  **Deployed 2026-09-30**: gateway rebuilt at `c141016`, portal re-pinned in
+  OrbitWebsite `f3bb51e` (`docs/DEPLOY.md`).
 - **2026-09-21** — **pay-per-gig v2 pricing/options** (`DECISIONS.md` 2026-09-21):
   extra downloads cut to 1¢/GB; a new "Link lasts" selector (1 week included, up to
   5, extra weeks 1¢/GB); link life = weeks×7 + 1 day; a hidden +1 bonus download on
