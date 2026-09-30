@@ -45,7 +45,9 @@ not assume a running worker, a scratch disk, or GMI spend.
   schema-v4 assertion — pre-existing). **Deployed 2026-09-30**; purge turned on
   after dry-run review (6 expired transfers purged); Web Analytics removed from
   OrbiStation; CSP enforced after a clean live upload/download/checkout.
-  **Remaining:** replace the over-broad B2 key (owner, in Backblaze).
+  B2 key narrowed to five capabilities (`orbistation-gateway-min`); old keys
+  deleted (`docs/DEPLOY.md`). Local `.env` still names the deleted key — local
+  real-B2 scripts need their own key.
 - **2026-09-30** — **downloads survive the 1-hour storage URL** (`DECISIONS.md`
   2026-09-30): the delivery page renews its storage URL before expiry and on a
   refusal (single-flight, `client/src/storageSource.ts`), and egress is metered

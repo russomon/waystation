@@ -43,10 +43,11 @@ is itself the useful part.
     **Report-Only** until a live upload, download and checkout run clean.
   - **Claims.** "Encrypted in transit and at rest" — verified 2026-09-30 that
     the bucket's default SSE-B2 (AES256) is on. Not end-to-end.
-- Also found: the production B2 application key is bucket-restricted but far
+- Also found: the production B2 application key was bucket-restricted but far
   broader than needed (writeBuckets, writeBucketEncryption, bypassGovernance,
-  retention/replication writes…). Recommended: a replacement key limited to
-  listBuckets, listFiles, readFiles, writeFiles, deleteFiles on the one bucket.
+  retention/replication writes…). **Done 2026-09-30:** replaced by a key limited
+  to listBuckets, listFiles, readFiles, writeFiles, deleteFiles on the one
+  bucket (CLI-created — the web UI presets cannot express it); old keys deleted.
 
 ### 2026-09-30 - End-to-end encryption shelved; harden the current model instead
 

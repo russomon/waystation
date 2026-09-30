@@ -722,6 +722,37 @@ The full-QC host was spun down. Production now runs the **transfer-only** stack.
 | Gateway image | `1c3c81e18b4e` — **restored from B2**, not rebuilt |
 | Measured at idle | 523 MB of 955 used · gateway 94 MiB, cloudflared 16 MiB · CPU 0.36% |
 
+### B2 application key narrowed — 2026-09-30
+
+- The gateway's key (`waystation`, …`003`) was bucket-restricted to `OrBucket`
+  but held 25 capabilities — the Backblaze web UI "Read and Write" preset —
+  including `writeBuckets`, `writeBucketEncryption`, `bypassGovernance` and the
+  retention/replication/notification/lifecycle writes. The web UI cannot make a
+  narrower key (a second preset key, …`006`, came out identical), so it was
+  created with the `b2` CLI under a newly generated master key (the previous
+  master key's secret had been lost; nothing found on the Mac used it).
+- **Now in production:** `orbistation-gateway-min` (…`007`), restricted to
+  `OrBucket`, capabilities exactly `listBuckets, listFiles, readFiles,
+  writeFiles, deleteFiles`. Swapped into `~/waystation/.env` by the owner;
+  gateway recreated (`up -d --no-deps gateway`), healthy.
+- Verified from inside the gateway with its own credentials: list, list
+  versions (purge), presigned PUT, presigned GET (content matched), delete of
+  every version of a `healthcheck/` test object (0 left); reading bucket
+  settings (`GetBucketEncryption`) refused with AccessDenied. Public `/healthz`
+  200; purge still on. Backblaze's native `b2_authorize_account` answers 400 for
+  this key — the gateway uses only the S3 API, so it is unaffected.
+- Old keys **deleted** by the owner: …`003` (`waystation`), …`004`
+  (`waystation-production`, unused), …`006` (preset duplicate). Remaining in the
+  account: …`005` (`orbisphere-stage2`, a different bucket) and …`007`.
+- Consequence: the local Mac `.env` still names …`003`, so local scripts that
+  talk to real B2 (`live-run.sh`, `verify-b2.sh`, …) fail until given their own
+  key. The proof suite uses MinIO and is unaffected.
+- Creating another narrow key later (needs the master key, from the password
+  manager): `b2 account authorize`, then
+  `b2 key create --bucket OrBucket <name> listBuckets,listFiles,readFiles,writeFiles,deleteFiles`.
+  Account admin (CORS, lifecycle, event rules) uses the master key, never the
+  gateway's.
+
 ### Hardening gateway release + purge enabled — 2026-09-30
 
 - Source `7f520bd` (hardening), then `81e07c1` (purge `on`), on
