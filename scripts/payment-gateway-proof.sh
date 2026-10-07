@@ -239,6 +239,63 @@ assert n == 3, ("downloads 2-4 are three new grants, three egress events", n)
 PY
 echo "  each new download (grant) is its own egress event, even within the same hour"
 
+# ── owner-based recovery stays inside the paid boundary ──
+#    A paid session's owner is minted per ORDER. Re-claiming the order after the
+#    session lapsed (a new session id, the same owner) may resume the upload, and
+#    the entitlement applied at completion is the ORDER's — never the session's.
+#    A different order is a different owner and gets the neutral 404.
+new_paid_order(){ # downloads weeks -> prints order id (paid)
+  local co o
+  co=$(api -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+        --data "{\"bytes\":6291456,\"gateway\":\"stripe\",\"downloads\":$1,\"weeks\":$2}" http://127.0.0.1:$GW/api/payments/checkout)
+  o=$(printf '%s' "$co" | J orderId)
+  send_webhook "$o" "$(printf '%s' "$co" | J amountCents)"
+  printf '%s' "$o"
+}
+ORDER2=$(new_paid_order 2 1); ORDER3=$(new_paid_order 5 3)
+P2A="$WORK/pay2a.cookie" P2B="$WORK/pay2b.cookie" P3="$WORK/pay3.cookie"
+for pair in "$ORDER2 $P2A" "$ORDER2 $P2B" "$ORDER3 $P3"; do
+  set -- $pair
+  api -c "$2" -X POST -H "Origin: $ORIGIN" http://127.0.0.1:$GW/api/payments/$1/session >/dev/null
+done
+"$PY" - "$P2A" "$P2B" "$P3" "$ORIGIN" "$GW" "$WORK/six.bin" "$WORK/gateway.db" <<'PY'
+import json, sys, urllib.request, urllib.error, http.cookiejar, sqlite3, datetime
+pa, pb, p3, origin, port, source, dbp = sys.argv[1:8]
+def opener(path):
+  cj = http.cookiejar.MozillaCookieJar(path); cj.load(ignore_discard=True, ignore_expires=True)
+  return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+A, B, C = opener(pa), opener(pb), opener(p3)
+base = f"http://127.0.0.1:{port}/api"
+def call(op, method, path, body=None):
+  data = json.dumps(body).encode() if body is not None else None
+  req = urllib.request.Request(base + path, data, {"content-type": "application/json", "origin": origin}, method=method)
+  try:
+    r = op.open(req); return r.status, json.loads(r.read() or b"{}")
+  except urllib.error.HTTPError as e:
+    return e.code, json.loads(e.read() or b"{}")
+sid = lambda path: [l.split("\t")[6].strip() for l in open(path) if "ws_session" in l][0]
+assert sid(pa) != sid(pb), "re-claiming the order must mint a NEW session"
+st, up = call(A, "POST", "/uploads", {"filename": "rec.bin", "contentType": "application/octet-stream", "size": 6291456})
+assert st == 200, (st, up)
+q = f"/uploads/parts?key={urllib.parse.quote(up['key'], safe='')}&uploadId={up['uploadId']}"
+assert call(B, "GET", q)[0] == 200, "same order, new session, must reattach"
+assert call(C, "GET", q)[0] == 404, "a different order must get the neutral 404"
+st, parts = call(B, "POST", "/uploads/parts", {"key": up["key"], "uploadId": up["uploadId"], "partNumbers": [1]})
+assert st == 200
+urllib.request.urlopen(urllib.request.Request(parts["urls"]["1"], open(source, "rb").read(), method="PUT"))
+assert call(C, "POST", "/uploads/complete", {"key": up["key"], "uploadId": up["uploadId"], "blake3Root": "x"})[0] == 404
+st, out = call(B, "POST", "/uploads/complete", {"key": up["key"], "uploadId": up["uploadId"], "blake3Root": "proof-root", "options": {"qc_av": False}})
+assert st == 200 and out.get("ok"), (st, out)
+tid = up["key"].split("/")[1]
+allowed, created, expires = sqlite3.connect(dbp).execute(
+  "select downloads_allowed, created_at, expires_at from transfers where transfer_id=?", (tid,)).fetchone()
+parse = lambda s: datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+days = (parse(expires) - parse(created)).total_seconds() / 86400
+assert allowed == 3, ("order 2 bought 2 downloads (+1 bonus), not order 3's 5", allowed)
+assert abs(days - 8) < 0.05, ("order 2 bought 1 week (+1 day), not order 3's 3 weeks", days)
+print("  paid recovery: the same order resumes on a new session, another order gets 404, and completion applies THIS order's entitlement (3 downloads, 8 days)")
+PY
+
 # ── regression: a comped (admin) transfer is uncapped and needs no payment ──
 ADMIN="$WORK/admin.cookie"
 api -c "$ADMIN" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \

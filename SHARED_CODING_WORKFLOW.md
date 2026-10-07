@@ -224,7 +224,7 @@ Proof scripts are self-contained on MinIO + ffmpeg and need no cloud credentials
 
 | Script | Covers |
 |---|---|
-| `scripts/access-proof.sh` | hosted-MVP access control: session required on every upload route, cross-session ownership refused, input validation, exact credentialed CORS + preflight-before-auth, cost ceilings + kill switch, recipient scoping, `/healthz` non-disclosure |
+| `scripts/access-proof.sh` | hosted-MVP access control: session required on every upload route, cross-owner ownership refused (and same-owner new session allowed), input validation, exact credentialed CORS + preflight-before-auth, cost ceilings + kill switch, recipient scoping, `/healthz` non-disclosure |
 | `scripts/coverage-proof.sh` | detection-coverage upgrades: tiled signal analysis, blind-pass audio, scene/anomaly frame selection, duration scaling, lip-sync proxy |
 | `scripts/avsync-proof.sh` | SyncNet AV-sync analyzer: honest-absence FYI, model cannot clear lip_sync; measures offset when SyncNet installed |
 | `scripts/hybrid-proof.sh` | perceive-then-compute hybrid: align recovers/abstains, channel-semantics flags dialogue-on-LFE, hybrid WARN→SUSPECTED but PASS never CLEARs (no cloud) |
@@ -259,6 +259,7 @@ Proof scripts are self-contained on MinIO + ffmpeg and need no cloud credentials
 | `scripts/recipient-password-proof.sh` | optional recipient password over the real gateway + MinIO multipart path: hashed and persistent, 4-character minimum for new transfers (older links still open), 20 wrong guesses lock a link from any number of addresses, a deployment-wide 60/min unlock cap |
 | `scripts/qc-preview-proof.sh` | QC preview: `WAYSTATION_QC_MODE=preview` refuses a client's QC initiate (403, no row) before spend, admin stays live, `/session` reports the mode per viewer, default live |
 | `scripts/access-codes-proof.sh` | named sender access codes: v3 → current-schema migration (target read from `db.ts`), admin-issued or admin-chosen (case-sensitive, no collisions), shown once, hash-only storage, neutral 404 for non-admins, owner_id recorded, live revocation, ownerless cookies rejected, deployment-wide login cap |
+| `scripts/upload-recovery-proof.sh` | owner-based upload recovery: the same owner on a new session resumes (ListParts, part signing, completion), another owner or a forged owner field gets the neutral 404 identical to a missing upload, no session is 401, legacy ownerless rows keep session-only access, cross-session recovery stops at the active-upload window, and revocation wins over re-login (also `gateway/test/ownership.test.ts`) |
 | `scripts/payment-gateway-proof.sh` | pay-per-gig checkout: pricing and v2 price table, v4→v6 migration, webhook signature, payment-backed session, upload budget, `downloads_allowed` = chosen + 1, grant reuse and exhaustion, weeks-based expiry, per-grant metering |
 | `scripts/authority-boundary-proof.sh` | deterministic delivery authority + advisory PSE (no network or media I/O) |
 | `scripts/triage-proof.sh` | cost-aware AI triage: the router changes spend decisions only, never verdicts |

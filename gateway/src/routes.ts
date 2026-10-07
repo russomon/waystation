@@ -77,6 +77,7 @@ import { dispatchPipeline } from "./pipeline.js";
 import { saveTransfer, getTransfer } from "./store.js";
 import { meter, usageFor } from "./metering.js";
 import * as sse from "./sse.js";
+import { mayUseUpload } from "./ownership.js";
 import { loadPublicApiOrigin, mediatedDownloadUrlFor } from "./publicOrigin.js";
 import {
   quote,
@@ -485,10 +486,14 @@ api.post("/transfers/email", requireSession, enforceOrigin, limiter("email", 20,
 // upload just by knowing its identifiers.
 
 /** Resolve an upload the caller legitimately owns, or an error response.
- *  A neutral 404 is returned whether the upload does not exist OR belongs to a
- *  different session — never confirm the existence of another session's work. */
+ *  Ownership is the server-recorded owner compared with the owner in the
+ *  caller's signed session (ownership.ts), so a sender who logs back in after
+ *  their session lapsed can resume. A neutral 404 is returned whether the upload
+ *  does not exist OR belongs to someone else — never confirm the existence of
+ *  another owner's work. */
 function ownUpload(c: Context, row: UploadRow | undefined) {
-  if (!row || (authEnabled && row.sessionId !== sessionIdOf(c)))
+  const s = sessionOf(c);
+  if (!row || (authEnabled && !mayUseUpload(row, s, { now: Date.now(), recoveryWindowMs: ACTIVE_UPLOAD_WINDOW_MS })))
     return { fail: c.json({ error: "Upload not found.", code: "not_found" }, 404) };
   return { row };
 }

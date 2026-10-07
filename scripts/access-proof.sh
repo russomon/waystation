@@ -8,8 +8,9 @@
 #   D  CORS preflight is answered 204 WITHOUT a session — if auth ran before
 #      cors(), preflight would 401 and the browser would never send the request
 #   E  exact credentialed CORS: allowed origin echoed, unlisted origin refused
-#   F  OWNERSHIP: session B cannot sign parts for, list, attach sidecars to,
-#      or complete session A's upload, even knowing its key and uploadId
+#   F  OWNERSHIP: another OWNER cannot sign parts for, list, attach sidecars to,
+#      or complete A's upload, even knowing its key and uploadId; the same
+#      owner's new session can resume it
 #   G  validation: bad filename, non-finite/negative size, oversized file,
 #      out-of-range part numbers, and disallowed sidecar names are refused
 #      BEFORE any multipart upload is created on the object store
@@ -117,8 +118,18 @@ need "$(code_of -X POST -b "$A" -H "Origin: $ORIGIN" -H 'content-type: applicati
   --data '{"filename":"a.mp4","size":999999999999}' http://localhost:$GW/api/uploads)" 413 "oversized file"
 echo "  G: bad filename / bad size / oversized refused before B2 initiation ✓"
 
-# F) ownership
+# F) ownership. Ownership is the OWNER recorded by the server, not the one-hour
+#    session: B is a DIFFERENT owner (a named code issued by the admin A), so it
+#    must be refused; A2 is a second login of the SAME owner and may resume
+#    (see scripts/upload-recovery-proof.sh for the full recovery matrix).
+NAMED=$(curl -s -b "$A" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+  --data '{"label":"other-owner"}' http://localhost:$GW/api/admin/codes \
+  | "$PY" -c 'import json,sys;print(json.load(sys.stdin)["code"])')
+[ -n "$NAMED" ] || { echo "  FAIL: could not issue a second owner's code"; ok=0; }
 curl -s -c "$B" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
+  --data "{\"code\":\"$NAMED\"}" http://localhost:$GW/api/session >/dev/null
+A2="${A}.second"
+curl -s -c "$A2" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
   --data "{\"code\":\"$CODE\"}" http://localhost:$GW/api/session >/dev/null
 INIT=$(curl -s -b "$A" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
   --data '{"filename":"master.mp4","contentType":"video/mp4","size":10485760}' http://localhost:$GW/api/uploads)
@@ -142,6 +153,8 @@ for spec in "POST|/api/uploads/parts|{\"key\":\"$KEY\",\"uploadId\":\"$UPL\",\"p
     --data "$BODY" "http://localhost:$GW$P")" 404 "session B must not use A's upload via $P"
 done
 need "$(code_of -b "$B" "http://localhost:$GW/api/uploads/parts?key=$KEY&uploadId=$UPL")" 404 "session B must not list A's parts"
+# the same owner on a NEW session is not an attacker: it may resume
+need "$(code_of -b "$A2" "http://localhost:$GW/api/uploads/parts?key=$KEY&uploadId=$UPL")" 200 "the same owner's new session may reattach"
 # disallowed sidecar name, as the owner
 need "$(code_of -b "$A" -X POST -H "Origin: $ORIGIN" -H 'content-type: application/json' \
   --data "{\"key\":\"$KEY\",\"filename\":\"evil.sh\"}" http://localhost:$GW/api/uploads/sidecar-url)" 400 "disallowed sidecar name"
