@@ -1,218 +1,53 @@
-# Next Steps
+# NEXT_STEPS.md
 
-Repo: waystation
+## Active Queue
 
-The actionable work queue. Current state lives in `CURRENT_WORK.md`; durable
-decisions in `DECISIONS.md`. Keep this file short — an item that is finished
-gets deleted, an item that stops making sense moves to **Obsolete** with a
-reason.
+1. **[P1] Confirm `X-Forwarded-Host` cannot be spoofed through Cloudflare**
+   - **Target**: `gateway/src/routes.ts` (`mediatedDownloadUrl`, around lines 985-1005)
+   - **Done When**: a forged `X-Forwarded-Host`/`X-Forwarded-Proto` request through the real tunnel is shown to be overwritten, or the link host is taken from a dedicated trusted API-origin setting (new, name TBD; it must hold the public API origin, for example the `api.orbitolive.com` origin, not the sender-page URL) and the header trust is removed, with a proof covering it. `WAYSTATION_PUBLIC_BASE_URL` is not suitable: it is the sender-page base used for payment success/cancel redirects. The source comment asserting Cloudflare sets these headers is currently unverified.
+   - **Blocked By**: NOT BLOCKED for a configuration-based fix; a live forged-header test needs the owner's authorization for one outward request to the public API.
 
-Waystation is currently **parked** as an engine: production is transfer-only
-with no worker. The active *direction*, decided 2026-09-05, is to turn it into a
-client-facing paid transfer service — see **`docs/COMMERCIAL_DELIVERY_PLAN.md`**,
-which holds the design and the decisions already taken.
+2. **[P1] Move upload ownership from session to owner**
+   - **Target**: `gateway/src/routes.ts` (`ownUpload`, line 488), `scripts/access-proof.sh`, `scripts/access-codes-proof.sh`
+   - **Done When**: a client whose session lapsed mid-upload can log back in and resume it (ListParts reattachment succeeds) because ownership compares `owner_id`, falling back to `session_id` only for pre-identity rows; cross-owner access still returns a neutral 404; both proofs assert it.
+   - **Blocked By**: NOT BLOCKED
 
-## Commercial track — the main line of work
+3. **[P1] Document features that are live but missing from shared context**
+   - **Target**: `docs/DEPLOY.md`, `DECISIONS.md`; source in `gateway/src/email.ts` (`d67f9f8`), the admin activity dashboard (`888fd5e`), in-page Stripe checkout (`a4edee7`)
+   - **Done When**: each feature is described from source (what it does, its configuration and constraints) and recorded as live. The owner confirmed on 2026-10-06 that email-the-link, the admin dashboard and embedded Stripe checkout are live; that is owner-confirmed, not independently verified. Host configuration (for example how the Resend key is supplied, which appears in no compose file or record) stays `UNKNOWN` until the operator records it.
+   - **Blocked By**: NOT BLOCKED for the source description; host configuration needs the operator.
 
-Each step depends on the one above it. Full rationale in
-`docs/COMMERCIAL_DELIVERY_PLAN.md`; do not start one of these without reading
-it, because several obvious-looking shortcuts are already ruled out there.
+4. **[P1] Adopt `main` as canonical and retire `codex/hosted-cloud-control`**
+   - **Target**: Git refs and worktree registrations; `docs/archive/BRANCH_RETIREMENTS.md`, ADR-037
+   - **Done When**: the sequence below is complete, each step authorized individually, stopping on any divergence or surprise: (1) stage the documentation files, run `git diff --cached --check`, commit on `codex/hosted-waystation-mvp`; (2) push it to its upstream without force; (3) confirm `git merge-base --is-ancestor main codex/hosted-waystation-mvp`, then `git switch main`, `git merge --ff-only codex/hosted-waystation-mvp`, `git push origin main`; (4) re-confirm `564d55e5abd4d85998e6f21a8689d8d1a56ca572` is still the tip of both the local and `origin/codex/hosted-cloud-control` and that `/private/tmp/waystation-hosted-cloud.ZvAK2M` is still missing; (5) run `git worktree prune --dry-run -v` and proceed with `git worktree prune` only if it lists exactly that one path (it did on 2026-10-06), otherwise stop; (6) delete exactly local `codex/hosted-cloud-control` (`git branch -D`, because it is not merged) and then `git push origin --delete codex/hosted-cloud-control`; (7) record the result in `CURRENT_WORK.md`. `codex/hosted-waystation-mvp` and every other branch stay untouched.
+   - **Blocked By**: Owner approval of this sequence. Open question: what to do with `codex/hosted-waystation-mvp` once `main` adopts it (TBD, owner).
 
-1. ~~**Payment + identity.**~~ **Dual-gateway checkout built 2026-09-19**
-   (`DECISIONS.md` 2026-09-19; `scripts/payment-gateway-proof.sh`). A public sender
-   pays by card (Stripe) or crypto (Coinbase); a confirmed payment mints a
-   payment-backed upload session and **is** the authorization — no code, no signup.
-   Pricing: $0.02/decimal GB + a per-gateway markup, with a per-link download
-   allowance (2 included, up to 10; each extra download = another flat base
-   transfer, no fee). Access codes stay for
-   comped/admin free uploads. **Remaining follow-ups**: email the sender their
-   capability URL at creation + magic-link recovery (the payer email is captured and
-   stored on the order, but no mail is sent yet); a fuller `owners` table (email
-   currently rides on the order alongside the existing `transfers.owner_id`).
-2. ~~**Gateway-mediated download + egress metering.**~~ **DONE 2026-09-05.**
-   `GET /transfers/:id/original` redirects to a freshly minted presigned URL
-   after re-checking revocation and expiry, and meters egress once per transfer
-   per hour rather than once per range. *(2026-09-30: now once per download —
-   grant or continuation token — and browser downloads renew the 1-hour storage
-   URL instead of stalling; `DECISIONS.md` 2026-09-30.)* Proven by
-   `scripts/mediated-download-proof.sh`. Credits and grant issuance hang off
-   this endpoint next.
-3. **Download credits.** ~~Grants, default 2 per link (up to 10), count-by-grant
-   not by request, 7-day resume~~ **built 2026-09-19** with the pay flow
-   (`download_grants`; `GET /transfers/:id/original` claims one grant per download
-   and refuses past `downloads_allowed` with `downloads_exhausted`). **Remaining**:
-   the 1.7× byte budget per grant (the column exists; enforcement is deferred — a
-   redirect hides byte counts from the gateway until the CDN worker is deployed) and
-   post-send credit **top-up**.
-4. **Per-transfer expiry selection** (7 / 14 / 21 / 30 days). Small: the
-   `expires_at` column is already per-transfer, only the input is global.
-5. **Magic-link recovery** for a sender who loses their capability URL —
-   the only path that may act on an email, because delivering to the address
-   proves control of it.
-6. **Usage billing** — Stripe or Lago meters. The ledger in
-   `gateway/src/metering.ts` is already shaped 1:1 onto a meter event.
-7. **Re-scope the upload quotas.** Do this WITH billing, not before — the right
-   ceiling is a pricing question, and raising the numbers now would only defer
-   the same problem.
+5. **[P2] Finish the commercial-track follow-ups**
+   - **Target**: `docs/COMMERCIAL_DELIVERY_PLAN.md`, `gateway/src/`
+   - **Done When**: magic-link recovery exists (a sender who loses their capability URL can regain it by email); the per-grant 1.7× byte budget is enforced and post-send credit top-up exists, or each is explicitly dropped. Byte budget depends on byte counts being visible, which a redirect hides until the CDN worker is deployed.
+   - **Blocked By**: NOT BLOCKED for magic-link recovery; byte budget is blocked on a CDN-worker/design decision.
 
-   Partly addressed 2026-09-19: a **paid** session now bypasses the job-count caps
-   (`MAX_JOBS_PER_SESSION`, `MAX_DAILY_JOBS`) at `POST /uploads` — the prepaid byte
-   budget is the control instead. Comped/access-code sessions still hit them. The
-   large-file ceilings still need setting for production (see below).
+6. **[P2] Usage billing and quota re-scope, together**
+   - **Target**: `gateway/src/metering.ts`, `gateway/src/limits.ts`, `docker-compose.transfer.yml` (`MAX_JOBS_PER_SESSION`, `MAX_DAILY_JOBS`)
+   - **Done When**: ledger events feed Stripe or Lago meters, and upload ceilings are expressed per owner and in bytes instead of a global daily count (ADR-028). Today `MAX_DAILY_JOBS` is a global count that gives the twenty-first sender an opaque refusal.
+   - **Blocked By**: A pricing decision from the owner.
 
-   `MAX_JOBS_PER_SESSION` and `MAX_DAILY_JOBS` are named for jobs but count
-   **completed uploads in a rolling 24 hours**, checked at `POST /uploads`.
-   Production runs 10 and 20; the code defaults are 20 and 200.
+7. **[P2] Add a discovery-based proof-suite runner**
+   - **Target**: `scripts/` (new runner), `SHARED_CODING_WORKFLOW.md` section 12
+   - **Done When**: one command enumerates `scripts/*-proof.sh` from disk, runs each, tallies `PASS ✓` and `FAIL`, honours the self-skip convention, and the workflow stops depending on a hand-kept table.
+   - **Blocked By**: NOT BLOCKED
 
-   They were **QC cost controls**: every completed upload used to fire the
-   pipeline and spend real money on GMI calls, so capping uploads capped spend.
-   In transfer-only mode no pipeline runs, so they now cap the only thing the
-   product does, for a reason that no longer applies.
+8. **[P2] Owner confirmations of earlier work**
+   - **Target**: merged verified download (`539c4ab`, 2026-09-08); access-code rehearsal check 17 (2026-09-17)
+   - **Done When**: the owner confirms the file is playable after a pause/resume and the status line reads "every range verified against BLAKE3" for a sub-4 GB transfer; and records whether the check-17 sequence (issue, use, revoke, bounce a throwaway code) was completed. Four access codes existed on 2026-09-30, but completion was never recorded.
+   - **Blocked By**: Owner
 
-   Two problems, in order of severity:
+9. **[P2] Decide link-lifetime selection for comped and admin links**
+   - **Target**: `gateway/src/routes.ts` (`RECIPIENT_LINK_TTL_DAYS`, expiry around line 697), `client/src/main.ts`
+   - **Done When**: the owner decides whether comped/admin senders get the weeks selector that paid senders have, and it is built or recorded as declined. Selection for paid links is already done (ADR-032).
+   - **Blocked By**: Owner decision
 
-   - **`MAX_DAILY_JOBS` is global, not per user.** Twenty transfers across
-     *everybody* in a rolling day is a hard business ceiling, and the twenty-first
-     client gets an opaque "This deployment has reached its daily job ceiling."
-   - **An upload count is the wrong unit.** Spend is now storage and egress, so
-     a 5 GB transfer and a 5 MB one cost wildly different amounts and consume one
-     slot each. A gigabyte cap expresses the real risk; a count does not.
-
-   `MAX_JOBS_PER_SESSION` also stops meaning much once accounts exist — a fresh
-   login already starts a new session and a new count, so the meaningful unit
-   becomes per-account, which is what `owner_id` provides.
-
-   Precedent for treating this as urgent-when-it-lands rather than theoretical:
-   `MAX_ACTIVE_UPLOADS_PER_SESSION=1`, also a hackathon-era control, wedged a
-   real session on 2026-09-08 when a Wi-Fi drop left an upload unfinished.
-
-## Now
-
-- **Confirm `X-Forwarded-Host` cannot be spoofed through Cloudflare.**
-  `mediatedDownloadUrl` (`gateway/src/routes.ts`) trusts `X-Forwarded-Proto`
-  and `X-Forwarded-Host` to build the mediated download link. cloudflared
-  should overwrite a client-supplied value; verify it with a request carrying
-  a forged header. If it does not, take the public host from configuration
-  and drop the header trust. Untested as of 2026-09-11.
-- **Move upload ownership from session to owner.** `ownUpload`
-  (`gateway/src/routes.ts`) still compares `session_id`, so a client whose
-  hour-long session lapses mid-upload cannot resume it after logging back in
-  — `ListParts` reattachment 404s as "not yours". Rows now carry `owner_id`;
-  compare that instead (falling back to `session_id` for pre-identity rows).
-  Small, and it removes the last reason a client would have to start over.
-- **Decide the fate of `codex/hosted-cloud-control`.** It has carried one
-  unmerged commit — "Show hosted cloud compute selection" — since 2026-08-04.
-  Merge it or delete the branch; a month-old dangling branch is a trap for the
-  next agent.
-- **Add a proof-suite runner.** There are 45 `scripts/*-proof.sh` and no way to
-  run them as a suite, so "the proofs are green" is currently a manual claim.
-  A discovery-based runner (`ls scripts/*-proof.sh`, run each, tally
-  `PASS ✓` / `FAIL`, honour the self-skip convention) also stops the table in
-  `SHARED_CODING_WORKFLOW.md` from drifting again.
-
-## Planned
-
-Real engineering, deliberately deferred. Any of these can start whenever.
-
-- **When QC returns, flip `WAYSTATION_QC_MODE` to `live` together with
-  `MAX_QC_BYTES`** (`docker-compose.transfer.yml`); the tab is a preview until
-  then. See `docs/DEPLOY.md` → *WAYSTATION_QC_MODE*.
-- **Deterministic tooling for the worker image.** Register in
-  `docs/DEFERRED_TOOLING.md` — currently OpenCV, with the pin, the derived-layer
-  build and the integration point already worked out. Do this while a full-QC
-  box is already up; that is the cheap moment.
-- **Decide on synthetic-origin QC.** Full design preserved in
-  `docs/SYNTHETIC_ORIGIN_PLAN.md` — deliberately not implemented. The deciding
-  factor is whether a corpus can be assembled; the code is the cheaper half.
-- **Deploy policy v1.4.** Complete in source since 2026-08-02, never deployed.
-  Adds bounded advisory MXF, IMF and HDR/Dolby metadata evidence, the house
-  delivery template, hash-validated shadow packets and offline Wilson
-  evaluation. It claims no AS/IMF/HDR/Dolby conformance. Production still runs
-  **v1.1.0** with `AI_INTERPRETIVE_SHADOW=false`; deploying is a separate
-  explicit decision.
-
-## Later
-
-- **Native sender for large-file verification.** BLAKE3 range verification stops
-  at 16 GiB because the outboard is built in browser wasm, not because of any
-  limit in BLAKE3 or storage. `docs/NATIVE_SENDER_PLAN.md` sketches using
-  OrbitXfer as an alternative *sender* so the recipient keeps verification with
-  no install — and weighs the probably-better alternative of generating the
-  outboard server-side. Idea only; not designed in detail.
-
-- **Jury policy 1.1 candidate.** From live pair-policy data: both models caught
-  5/5 plants standalone, yet the deployed policy scored 3 reproduced /
-  2 contested, because `match_key` requires identical `evidence_ids` — a juror
-  flagging the same mutation across a *different* consecutive evidence pair
-  reads as contested. Honest but conservative. Consider relaxing to
-  overlap-based matching under a bumped `JURY_POLICY_VERSION`, then re-publish
-  proficiency: exactly the drift-invalidation flow the passport was designed for.
-- **Validate the hybrid lip-sync instance on a real-face clip.** The cartoon
-  stimulus proved the mechanism; real mouths are subtler. Do this before leaning
-  on it for any certification-adjacent claim.
-- **Hybrid framework, next specs.** `qc/hybrid.py` makes logo/watermark
-  **persistence** and shot-content **continuity** straightforward new
-  `HybridCheck` instances.
-- **Dolby Vision dynamic-metadata canvas verification** via `dovi_tool` —
-  currently an explicit `REVIEW_REQUIRED` registry item and a real
-  specialist-tool gap.
-- Queue between gateway and workers, then autoscaling on backlogged
-  media-minutes — the metering ledger is already the right signal.
-- Per-customer billing on the metering ledger (Stripe/Lago meters).
-- Deeper ABR support: segment/ladder playback rather than manifest lint.
-- Full-timeline dead-pixel tracking and dedicated click/pop/test-tone
-  classifiers. The agentic reporter samples scene/anomaly frames and audio
-  windows and requests more evidence, but does not claim exhaustive timeline
-  clearance.
-
-## Blocked
-
-Not blocked by defects — blocked on inputs that do not exist yet.
-
-- **Promoting Phase 2 / Phase 3-4 thresholds beyond advisory** needs real,
-  decision-backed accepted and rejected deliveries. Do not broaden authority
-  from synthetic fixtures alone. Intake gate: `calibration/`,
-  `docs/QC_CALIBRATION.md`, `scripts/phase2-quality-proof.sh`.
-- **Live calibration of the remaining generated-media stages.** The 2026-07-24
-  proficiency session put real GMI through 10 blind assets and validated two of
-  five model stages — the coarse **scene ledger** and **native-resolution
-  typography**, plus their deterministic reducers, at 5/5 sensitivity and 5/5
-  specificity. Still live-unvalidated, mock-proven only: the **planner**
-  (`plan_prompt`), the **jittered fine verification** pass, **prompt adherence**,
-  and the **artifact/anatomy specialist**. To close it, run one representative
-  generated clip plus its `.genblaze.json` through real GMI. Tune prompts or
-  normalizers only if a concrete failure appears, and add that failure to
-  `scripts/synthetic-qc-proof.sh`.
-
-### The deployed Passport is honestly `UNCALIBRATED`. Leave it that way.
-
-A proficiency manifest exists, WORM-locked on B2 under `proficiency/`
-(COMPLIANCE; bound to commit `e85fd947`). **That record is bound to `e85fd947`,
-which is not what production runs.**
-
-> **Do not set `WAYSTATION_COMMIT` to an older manifest's commit on the
-> production deployment.** `citation_state()` compares the recorded
-> configuration against the running one; overriding the commit to match an
-> older manifest would manufacture an EXACT citation for code that did not
-> produce those numbers. That is falsifying the binding, and it is the one
-> thing the whole Passport design exists to prevent. `UNCALIBRATED` is the
-> truthful state.
-
-The only honest route to a citable Passport is to publish a *new* manifest
-against the exact deployed configuration — commit, model identities, prompts,
-reducers, sampling — from a clean worktree, then point
-`PROFICIENCY_MANIFEST_PATH` at it. Re-run `--publish` whenever any of those
-change; the citation is *supposed* to flip to UNCALIBRATED when they do. Never
-alter the production Passport configuration to chase a green label.
-
-## Obsolete
-
-Kept briefly so nobody re-queues them. The Backblaze Generative Media Hackathon
-was submitted on 2026-08-03 and judging closed 2026-08-12.
-
-- ~~Record the demo video~~ — the procedure survives in `docs/demo-script.md`
-  if a product demo is ever wanted, but no deadline drives it.
-- ~~Prepare the 20–45 s showcase asset~~ — same.
-- ~~Re-paste the Devpost "What it does" / "What's next" copy~~ — the Devpost
-  page is closed; `docs/devpost-about.md` remains as marketing source material.
-- ~~Install `mediainfo` on the recording machine~~ — recording-specific polish.
+10. **[P2] Triage the parked engineering backlog**
+    - **Target**: `docs/archive/NEXT_STEPS_2026-09-30.md` (Planned, Later, Blocked sections), `docs/DEFERRED_TOOLING.md`
+    - **Done When**: each retained item (deploy policy v1.4, synthetic-origin QC, OpenCV, jury policy 1.1, real-face lip-sync validation, Dolby Vision metadata, native sender, queue/autoscaling, generated-media live calibration) is moved to an issue tracker or roadmap by the owner, or explicitly dropped. QC is parked, so none is urgent.
+    - **Blocked By**: Owner classification; no issue tracker or roadmap is configured in the repository.

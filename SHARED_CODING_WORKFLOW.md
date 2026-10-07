@@ -1,73 +1,215 @@
-# Shared Coding Workflow
+# SHARED_CODING_WORKFLOW.md — Authoritative Workflow V2.2
 
-Use this routine when moving Waystation between computers, Codex, Claude Code
-and Cursor. GitHub is the source of truth; consumer file sync (iCloud, Dropbox,
-Google Drive) is never used for live source. Platform shortcuts invoke this
-file rather than restating it — in Cursor, `/resume` runs *Start On A
-Computer* and `/handoff` runs *Handoff Before Switching*
-(`.cursor/commands/`).
+This file is the single operating procedure for agents working in this repository. `AGENTS.md` defines universal rules and schemas; this file defines how a session is run.
 
-## Start On A Computer
+## 1. Start Safely
 
-```sh
-cd /Users/Shared/Orbit/Code/waystation
-git status --short --branch          # establish the CURRENT branch — do not assume
-git fetch origin
-git pull --ff-only                   # fast-forward only, never a merge commit
+From the repository root, inspect the local state before editing:
+
+```bash
+git status --short --branch
+git branch --show-current
+git rev-parse --short HEAD
+git diff --stat
+git remote -v
 ```
 
-**Do not switch branches to start work.** `codex/hosted-waystation-mvp` is the
-trunk — it holds the whole history, and `main` is fast-forwarded to follow it.
-Work on whatever branch the repository is already on.
+Then read, when present:
 
-Stop and report, rather than changing anything, if:
+1. `AGENTS.md`
+2. any more-specific `AGENTS.md` governing the target path
+3. `SHARED_CODING_WORKFLOW.md`
+4. `CURRENT_WORK.md`
+5. `NEXT_STEPS.md`
+6. `DECISIONS.md`
+7. relevant sections of `docs/ARCHITECTURE.md` and `docs/REPO_MAP.md`
+8. platform-specific guidance only when using that platform
 
-- there are uncommitted changes you did not make;
-- `git pull --ff-only` refuses because the branches have diverged;
-- the current branch has no upstream, or points somewhere unexpected.
+Do not edit yet. Compare the documented branch, HEAD, tree state, immediate task, and blockers with the observed repository state.
 
-Then read, in order:
+## 2. Establish the Working Branch
 
-- `AGENTS.md` — the rules
-- `CURRENT_WORK.md` — where we are and the next step
-- `NEXT_STEPS.md` — the queue
-- `docs/ARCHITECTURE.md` — how the system works, if the task is unfamiliar
-- `docs/REPO_MAP.md` — where things live
-- `DECISIONS.md` — before contradicting an existing choice
-- `CLAUDE.md` when using Claude Code; `SETUP.md` when touching B2 or GMI
+Use this decision order:
 
-## Fresh-Machine Setup
+1. If the tree is dirty, preserve it. Inspect enough to identify the changes. Do not switch branches, pull, stash, reset, clean, or incorporate the changes until their ownership and relationship to the task are understood.
+2. If the current branch is valid and consistent with `CURRENT_WORK.md`, remain on it.
+3. If the tree is clean and `CURRENT_WORK.md` clearly names another existing branch, verify that branch and its upstream before switching.
+4. If the intended branch is `TBD`, `UNKNOWN`, missing, or inconsistent with Git, stop before changing branches and report the ambiguity.
+5. Never switch to the default branch merely by habit.
+
+## 3. Verify and Synchronize Remote State
+
+If a remote is configured and network access is allowed, refresh remote references:
+
+```bash
+git fetch --prune origin
+```
+
+Identify the upstream and compare ancestry:
+
+```bash
+git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'
+git rev-list --left-right --count HEAD...'@{upstream}'
+```
+
+Interpret the counts as local-only and upstream-only commits.
+
+- `0 0`: synchronized.
+- `0 N`: local branch is behind; if the tree is clean, fast-forward with `git pull --ff-only` or the repository's documented equivalent.
+- `N 0`: local branch is ahead; do not push unless the current request or closing procedure authorizes it.
+- `N M`: diverged; stop and report. Do not merge, rebase, reset, or force-push without explicit direction.
+- No upstream or inaccessible remote: record the limitation; do not claim synchronization.
+
+After any synchronization, re-run:
+
+```bash
+git status --short --branch
+git rev-parse --short HEAD
+```
+
+Remote status is verified only after a successful authenticated fetch. A cached tracking reference or failed web request is not proof of current remote state.
+
+## 4. Confirm the Handoff
+
+Before implementation, report or internally establish:
+
+- current branch and HEAD;
+- clean or dirty tree, including relevant uncommitted work;
+- upstream and synchronization status;
+- immediate target and known target files;
+- applicable decisions and architecture boundaries;
+- validation expectations;
+- blockers, contradictions, and `TBD`/`UNKNOWN` fields.
+
+If repository state contradicts the handoff, trust verified evidence, preserve both states, and resolve or report the discrepancy before editing.
+
+## 5. Load Context Economically
+
+Start with repository context, change summaries, relevant entry points, and targeted tests. Inspect full diffs, broader history, generated files, or unrelated subsystems only when needed.
+
+Use `docs/REPO_MAP.md` to locate code and `docs/ARCHITECTURE.md` to understand boundaries. Do not infer behavior from filenames alone. Mark unresolved facts `UNKNOWN` and state how they can be verified.
+
+## 6. Work Within Scope
+
+- Make the smallest coherent change that satisfies the current request.
+- Preserve unrelated edits and untracked files.
+- Follow more-specific repository instructions for files within their scope.
+- Do not broaden a review-only, planning, documentation, or diagnostic request into implementation.
+- Do not change architecture, security controls, deployment state, external systems, or adjacent repositories unless authorized.
+- Never expose or commit secrets, credentials, tokens, private keys, or sensitive generated evidence.
+- Update context files during the work only when doing so prevents a misleading handoff; otherwise finalize them after validation.
+
+## 7. Validate Proportionately
+
+Use the repository's documented commands and the checks appropriate to the changed surface. Typical layers are:
+
+1. targeted tests for changed behavior;
+2. formatting, linting, or static analysis;
+3. broader test/build checks required by repository policy;
+4. manual or integration verification where automation is insufficient.
+
+Record exact commands and results. Distinguish pass, fail, and not run. Do not translate skipped or unavailable checks into success. If a check can mutate data, infrastructure, or external systems, confirm it is in scope before running it.
+
+## 8. Review the Final Change Set
+
+Before checkpointing:
+
+```bash
+git status --short --branch
+git diff --stat
+git diff --check
+```
+
+Review the complete relevant diff. Confirm every change is intentional and no temporary, generated, debug, cache, secret, credential, or unrelated file is included.
+
+## 9. Update Shared Context
+
+Apply the schemas in `AGENTS.md`.
+
+- `CURRENT_WORK.md`: replace the old snapshot with the verified current state, validation result, blockers, and exact handoff.
+- `NEXT_STEPS.md`: reorder only the concise active queue; remove completed items and identify real blockers.
+- `DECISIONS.md`: add or supersede entries only for durable decisions, including rationale and invariant.
+- `docs/ARCHITECTURE.md`: update only when stable structure, boundaries, interfaces, or rationale changed.
+- `docs/REPO_MAP.md`: update only when locations or responsibilities changed enough to mislead.
+- `AGENTS.md` or this workflow: update only when the shared contract itself changed.
+
+Distill conclusions; never paste chat logs or terminal transcripts.
+
+Because a new commit changes `HEAD`, use the planned commit value or a clearly labeled pre-commit value while drafting `CURRENT_WORK.md`, then correct it after the checkpoint if needed. Do not amend merely to chase a self-referential hash; repository policy may permit `HEAD` to name the code commit immediately preceding a documentation-only handoff commit. If so, state that convention explicitly.
+
+## 10. Create a Checkpoint
+
+Prefer a clean, pushed checkpoint when the work is coherent and the closing request authorizes commit and push.
+
+1. Stage only intentional files.
+2. Review the staged diff and run `git diff --cached --check`.
+3. Commit with a descriptive message.
+4. Push the current branch to its configured upstream, without force.
+
+Do not rewrite history, force-push, hard-reset, discard changes, or hide unfinished work.
+
+If the work is not appropriate to commit, preserve it in place and make the dirty state explicit in `CURRENT_WORK.md` and the final report. A clean tree is preferred; a truthful dirty handoff is required.
+
+## 11. Verify and Report the Handoff
+
+After checkpointing, verify:
+
+```bash
+git status --short --branch
+git rev-parse --short HEAD
+```
+
+When remote access is available, verify the pushed relationship rather than assuming it.
+
+The final handoff report must state:
+
+- final branch and HEAD;
+- upstream/push status and whether it was verified;
+- clean or dirty tree;
+- material changes;
+- exact validation commands and results;
+- context files updated;
+- unresolved failures, blockers, uncertainty, or uncommitted work;
+- the first concrete action for the next agent.
+
+Never claim completion from aggregate green output alone. Completion requires the requested scope, relevant validation, final state, and blockers to be reported accurately.
+
+## 12. Repository Profile — Waystation / OrbiStation
+
+Repository-specific values for the procedure above. They add to it and do not replace it.
+
+### Location and platform files
+
+- Repository root: `/Users/Shared/Orbit/Code/waystation`; remote `origin` (SSH) is `git@github.com:russomon/waystation.git` and is **public**.
+- Adapters: `.cursor/commands/resume.md` and `handoff.md` and `CLAUDE.md` point here and hold no procedure. Read `SETUP.md` when touching B2 or GMI, and `docs/DEPLOY.md` before touching production.
+
+### Branch policy (owner decision 2026-10-06; ADR-037)
+
+- `main` is the **canonical development branch** going forward. Ordinary work happens on `main`. The earlier arrangement (`codex/hosted-waystation-mvp` as trunk, `main` as follower) is replaced; the `codex/` prefix was only a name from when the work started.
+- Use a separate named branch only for parallel or risky work, and merge or delete it promptly; a stale branch is a trap for the next agent. Make sure the current branch is pushed before switching machines.
+- **Transition.** While the V2.2 migration is uncommitted on `codex/hosted-waystation-mvp`, do not switch branches (section 2). Commit and push there only when authorized, verify `main` is an ancestor of it (`git merge-base --is-ancestor main <branch>`), and then adopt it into `main` by fast-forward only: `git switch main`, `git merge --ff-only <branch>`, `git push origin main`. Stop on any divergence. Each of these steps needs explicit authorization in the current request.
+- This policy does not authorize deleting any branch. `codex/hosted-waystation-mvp` is retained with its disposition TBD. The retirement of `codex/hosted-cloud-control` follows `docs/archive/BRANCH_RETIREMENTS.md`: remove a worktree registration only after confirming its directory is missing, one exact registration at a time (never a broad `git worktree prune`), and delete only the exact approved local and remote branch.
+- Never force-push, reset hard, or rewrite history.
+
+### Handoff snapshot convention
+
+`CURRENT_WORK.md` **Meta** records an observed, pre-checkpoint snapshot: the Branch, HEAD, Upstream and Tree State seen while the file was being written. A documentation-only checkpoint commit necessarily changes HEAD and cleans the tree, so after such a commit HEAD names the code commit that preceded it, and a clean tree is expected. Do not invent a future hash, and do not amend repeatedly to chase a self-referential hash. An incoming agent verifies Git itself (section 1) and trusts what it observes; a difference explained by the documentation checkpoint is not a reason to stop. Any other difference is.
+
+### Fresh-machine setup
 
 ```sh
 npm install                                     # workspaces
 npm run build:wasm                              # needs cargo + wasm-pack
 ( cd pipeline && python3.13 -m venv .venv && .venv/bin/pip install -r requirements.txt )
 bash scripts/fetch-photon.sh                    # optional: IMF/Photon (needs openjdk + maven)
-cp .env.example .env                            # then fill in per SETUP.md — never commit .env
+cp .env.example .env                            # then fill in per SETUP.md; never commit .env
 ```
 
-Host tools: `ffmpeg`/`ffprobe`, `minio` (for the proof scripts), optionally
-`mediainfo`, `docker`/`colima`, `cloudflared`, `openjdk` + `maven`.
+Host tools: `ffmpeg`/`ffprobe`, `minio` (for the proof scripts), optionally `mediainfo`, `docker`/`colima`, `cloudflared`, `openjdk` + `maven`. Run the whole stack locally on MinIO with `bash scripts/dev-up.sh` (localhost:5173), or on real B2 + GMI with `bash scripts/live-event-run.sh`.
 
-## During Development
+### Validation commands
 
-- **Read the existing implementation before introducing a pattern.** This
-  codebase has settled conventions — bounded ffmpeg windows in `qc/util.py`,
-  the check/tier model in `qc/report.py`, the service-policy reducer in
-  `gateway/src/limits.ts`. Extend them rather than inventing a parallel one.
-- Keep changes focused. Do not fold unrelated cleanup, formatting or dependency
-  bumps into a feature commit.
-- Preserve work you did not start. If you find unrelated uncommitted changes,
-  leave them alone and say so.
-- Never use destructive Git: no `push --force`, `reset --hard`, history
-  rewriting, or discarding changes you did not make.
-- When a durable decision gets made, write it to `DECISIONS.md` in the same
-  commit — that is what stops the next agent from re-litigating it.
-
-## Checks Before Handoff
-
-Run the checks relevant to what changed. Compile checks are cheap — run all
-three every time:
+Compile checks are cheap; run all three whenever source changed:
 
 ```sh
 ( cd gateway && npx tsc --noEmit )              # gateway type-check
@@ -76,9 +218,9 @@ npm -w client run build                         # client build
     B2_KEY_ID=x B2_APP_KEY=x B2_REGION=x .venv/bin/python -c "import worker" )
 ```
 
-Proof scripts — self-contained on MinIO + ffmpeg, no cloud creds needed. Run
-the ones covering the area you touched; run all before a submission-worthy
-handoff:
+Documentation-only work (including shared-context migration) needs none of these. Validate it with `git diff --check`, a local-reference check, and a secret scan instead, and say that the application checks were not run.
+
+Proof scripts are self-contained on MinIO + ffmpeg and need no cloud credentials. Run those covering the area touched, and all of them before a submission-worthy handoff. Each prints `PASS ✓` or `FAIL`; scripts that need docker or Photon self-skip with instructions. **`ls scripts/*-proof.sh` is authoritative, not this table or any stored count**; the table went stale before. There is no suite runner yet (`NEXT_STEPS.md`). Do not run proofs for a documentation-only or review-only request.
 
 | Script | Covers |
 |---|---|
@@ -117,6 +259,7 @@ handoff:
 | `scripts/recipient-password-proof.sh` | optional recipient password over the real gateway + MinIO multipart path: hashed and persistent, 4-character minimum for new transfers (older links still open), 20 wrong guesses lock a link from any number of addresses, a deployment-wide 60/min unlock cap |
 | `scripts/qc-preview-proof.sh` | QC preview: `WAYSTATION_QC_MODE=preview` refuses a client's QC initiate (403, no row) before spend, admin stays live, `/session` reports the mode per viewer, default live |
 | `scripts/access-codes-proof.sh` | named sender access codes: v3 → current-schema migration (target read from `db.ts`), admin-issued or admin-chosen (case-sensitive, no collisions), shown once, hash-only storage, neutral 404 for non-admins, owner_id recorded, live revocation, ownerless cookies rejected, deployment-wide login cap |
+| `scripts/payment-gateway-proof.sh` | pay-per-gig checkout: pricing and v2 price table, v4→v6 migration, webhook signature, payment-backed session, upload budget, `downloads_allowed` = chosen + 1, grant reuse and exhaustion, weeks-based expiry, per-grant metering |
 | `scripts/authority-boundary-proof.sh` | deterministic delivery authority + advisory PSE (no network or media I/O) |
 | `scripts/triage-proof.sh` | cost-aware AI triage: the router changes spend decisions only, never verdicts |
 | `scripts/ai-thumbnail-proof.sh` | AI poster selection against an SDK-shaped mock; no network or spend |
@@ -130,59 +273,14 @@ handoff:
 | `scripts/qc-calibration-proof.sh` | calibration intake; no policy file is read or modified |
 | `scripts/qc-benchmark-proof.sh` | offline benchmark intake; no commercial result is fabricated |
 
-Each prints `PASS ✓` or `FAIL`. Scripts that need docker/Photon self-skip with
-instructions when the dependency is absent.
+### Done means (for source changes)
 
-> **`ls scripts/*-proof.sh` is authoritative, not this table.** The table went
-> stale once already — it listed 26 of 40. Before claiming the suite is green,
-> enumerate from disk. There is no suite runner yet; see `NEXT_STEPS.md`.
+- Relevant proof scripts pass and the three compile checks pass.
+- `CURRENT_WORK.md`, `NEXT_STEPS.md` and `DECISIONS.md` are updated per `AGENTS.md`, and any production-affecting change is recorded in `docs/DEPLOY.md` by the operator who performed it.
+- Committed on the working branch and pushed when the closing request authorizes it; `main` is the canonical branch and adopts work only per the branch policy above.
 
-## Handoff Before Switching
+### Secrets and artifacts
 
-1. Update `CURRENT_WORK.md` with what changed, what was validated, and the
-   exact next step.
-2. Update `NEXT_STEPS.md` if the queue changed.
-3. Update `DECISIONS.md` if a durable project decision was made.
-4. Run the relevant checks above.
-5. Commit and push.
+`.env` and `.env.local` hold real Backblaze B2 and GMI credentials and are gitignored; never open, echo, print or commit them, and lint by length or prefix only. Keep out of Git: `vendor/`, `node_modules/`, `pipeline/.venv/`, `.devdata/`, `target/`, `crates/*/pkg*/`, `client/public/` fixtures, `client/dist/`, and `*.db*` control-database files. Access codes, recipient capability IDs and tickets are bearer tokens: at most 8 characters in any record.
 
-```sh
-git status --short
-git add <changed-shared-context-files> <changed-source-files>
-git commit -m "Describe the completed work"
-git push origin "$(git branch --show-current)"     # the working branch, not a guess
-```
-
-`main` is then fast-forwarded to match, so the GitHub default branch keeps
-telling the truth:
-
-```sh
-git checkout main && git merge --ff-only codex/hosted-waystation-mvp
-git push origin main && git checkout codex/hosted-waystation-mvp
-```
-
-Finally, report: **branch, HEAD, what was validated, and the exact next step.**
-Do not leave unexplained uncommitted work — but equally, do not commit
-incomplete or misleading work merely to produce a clean tree. If something is
-left uncommitted on purpose, say which files and why.
-
-## Branch Discipline
-
-- **`codex/hosted-waystation-mvp` is the trunk.** It holds the entire history —
-  every commit back to the first scaffold — and ordinary work happens there. The
-  `codex/` prefix is only a name from when the work started; it does not mean
-  the branch belongs to a particular agent.
-- **`main` is a follower**, fast-forwarded to the trunk after each push. The two
-  should always be equal; if they are not, say so before doing anything else.
-- Use a separate named branch only for parallel or risky work, and merge or
-  delete it promptly — a stale branch is a trap for the next agent.
-- Before switching machines, make sure the current branch is pushed.
-- On the next machine, pull before opening a coding agent.
-
-## Secrets
-
-`.env` holds real Backblaze B2 and GMI Cloud credentials and is gitignored.
-Never echo, print, or commit secret values — lint by length/prefix only. Also
-keep out of Git: `vendor/` (Photon jars), `node_modules/`, `pipeline/.venv/`,
-`.devdata/`, `target/`, `crates/*/pkg*/`, and test fixtures written into
-`client/public/`.
+The local `.env` still names the production B2 key deleted on 2026-09-30 (`docs/DEPLOY.md`), so local scripts that talk to real B2 (`live-run.sh`, `verify-b2.sh`, and similar) fail until given their own key. The proof suite uses MinIO and is unaffected.

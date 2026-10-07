@@ -1,14 +1,5 @@
-End this coding session using the repository's Shared Git-Centric Coding
-Environment.
+# Prepare Shared Handoff
 
-Read and follow:
-- AGENTS.md
-- SHARED_CODING_WORKFLOW.md
+Follow `AGENTS.md` and the final review through handoff-report sections of `SHARED_CODING_WORKFLOW.md`.
 
-Perform the documented session-close procedure ("Handoff Before Switching").
-
-Validate the work, update the appropriate shared-context documents, create a
-safe Git checkpoint when appropriate, and report the final branch, HEAD,
-validation state, and exact next instruction.
-
-Do not duplicate project state inside Cursor-specific configuration.
+Validate the work, update shared context using its schemas, create and verify a checkpoint when authorized and appropriate, and report the exact final state and first action for the next agent. Never hide uncommitted or failing work.
