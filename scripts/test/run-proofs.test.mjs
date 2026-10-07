@@ -63,6 +63,7 @@ test("scan: benign local scripts need nothing", () => {
 test("scan: docker and obvious external use are flagged for an early refusal", () => {
   assert.deepEqual(scan("docker build -t x .\n").needs, ["docker"]);
   assert.deepEqual(scan("colima start\n").needs, ["docker"]);
+  assert.deepEqual(scan('. "$WEB/scripts/lib/docker-isolation.sh"\nws_dk run x\n').needs, ["docker"]);
   assert.deepEqual(scan("curl -s https://api.stripe.com/v1/charges\n").needs, ["external"]);
   assert.deepEqual(scan("b2 authorize-account\n").needs, ["external"]);
 });

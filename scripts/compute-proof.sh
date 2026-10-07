@@ -4,7 +4,8 @@
 # it was processed.
 #   transfer L  compute=local  → host uvicorn worker  → manifest says "local"
 #   transfer C  compute=cloud  → DOCKER worker        → manifest says "cloud-docker"
-# Requires docker (self-skips without it). MinIO + gateway run on the host;
+# Requires docker, explicit approval and an image matching this source (scripts/lib/docker-isolation.sh;
+# it self-skips otherwise and never builds, pulls or tags on its own). MinIO + gateway run on the host;
 # the containerized worker reaches them via host.docker.internal.
 set -u
 TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
@@ -23,51 +24,57 @@ grep -Fq 'Creative and delivery context' "$WEB/client/index.html" \
   || { echo "FAIL: interpretive context label is missing"; exit 1; }
 echo "✓ sender defaults to Cloud compute and exposes only consolidated interpretive AI"
 
-command -v docker >/dev/null && docker info >/dev/null 2>&1 || { echo "SKIP — docker not available"; exit 0; }
-
-PIPELINE_FINGERPRINT=$(
-  cd "$WEB"
-  git ls-files -z pipeline \
-    | xargs -0 shasum -a 256 \
-    | shasum -a 256 \
-    | cut -c1-12
-)
-CLOUD_IMAGE="waystation-worker:compute-proof-$PIPELINE_FINGERPRINT"
-if ! docker image inspect "$CLOUD_IMAGE" >/dev/null 2>&1; then
-  echo "▶ building current Docker worker for compute proof…"
-  docker build -t "$CLOUD_IMAGE" "$WEB/pipeline" \
-    || { echo "FAIL: current worker image did not build"; exit 1; }
+# shellcheck source=lib/docker-isolation.sh
+. "$WEB/scripts/lib/docker-isolation.sh"
+OWNED=()
+killtree(){ local c; for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done; kill -9 "$1" 2>/dev/null || true; }
+# Only processes THIS script started are signalled, never "whatever listens on the port";
+# containers are removed only by their run label (ws_dk_cleanup).
+cleanup(){ for p in ${OWNED[@]+"${OWNED[@]}"}; do killtree "$p"; done; ws_dk_cleanup; rm -rf "$DATA" "$WORK"; }
+trap cleanup EXIT
+ws_dk_begin compute
+if [ "${WS_DOCKER_PLAN:-0}" != 1 ]; then
+  for p in 8787 8000 9000; do
+    if lsof -ti:$p >/dev/null 2>&1; then echo "SKIP - port $p is in use; not touching whatever owns it"; exit 0; fi
+  done
 fi
 
-cleanup(){ docker rm -f ws-cloud-worker >/dev/null 2>&1 || true; { lsof -ti:8787; lsof -ti:8000; lsof -ti:8001; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
-trap cleanup EXIT
-# clear leftovers WITHOUT nuking the fresh work dirs
-docker rm -f ws-cloud-worker >/dev/null 2>&1 || true
-{ lsof -ti:8787; lsof -ti:8000; lsof -ti:8001; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true
+# The cloud worker must be the CURRENT source: an existing image whose application files
+# match this tree, or an authorized build. Never a shared tag, never silently an old image.
+ws_dk_obtain_image worker; CLOUD_IMAGE="$WS_DK_IMAGE_ID"
+if [ "${WS_DOCKER_PLAN:-0}" = 1 ]; then CP=18001; else CP=$(ws_dk_free_port); fi
 
-MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 --console-address :9011 >$TT/minio.log 2>&1 &
-until curl -sf -o /dev/null --max-time 1 http://localhost:9000/minio/health/live; do sleep 0.3; done
+if [ "${WS_DOCKER_PLAN:-0}" != 1 ]; then
+  MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 --console-address :9011 >$TT/minio.log 2>&1 &
+  OWNED+=($!)
+  until curl -sf -o /dev/null --max-time 1 http://localhost:9000/minio/health/live; do sleep 0.3; done
 
-# local worker (host python) on :8000
-( cd "$WEB/pipeline" && PIPELINE_SHARED_SECRET=$SHARED WORKER_LABEL=local \
-   ./.venv/bin/uvicorn worker:app --port 8000 >$TT/pipe-local.log 2>&1 ) &
-until curl -sf -o /dev/null --max-time 1 http://localhost:8000/healthz; do sleep 0.3; done
+  # local worker (host python) on :8000
+  ( cd "$WEB/pipeline" && exec env PIPELINE_SHARED_SECRET=$SHARED WORKER_LABEL=local \
+     ./.venv/bin/uvicorn worker:app --port 8000 ) >$TT/pipe-local.log 2>&1 &
+  OWNED+=($!)
+  until curl -sf -o /dev/null --max-time 1 http://localhost:8000/healthz; do sleep 0.3; done
+fi
 
-# cloud worker (the SHIPPED docker image) on :8001
-docker run -d --name ws-cloud-worker -p 8001:8000 \
-  -e PIPELINE_SHARED_SECRET=$SHARED -e WORKER_LABEL=cloud-docker \
+# cloud worker (the SHIPPED docker image) on a free loopback port. It reaches the host MinIO and
+# gateway through host.docker.internal, so those two (and only those) are reachable from it.
+ws_dk run -d --name "${WS_DK_RUN_ID}-cloud" --label "$WS_DK_LABEL" "${WS_DK_LIMITS[@]}" --memory 2g --memory-swap 2g \
+  --tmpfs /tmp:rw,size=2g -p "127.0.0.1:${CP}:8000" \
+  -e PIPELINE_SHARED_SECRET=$SHARED -e WORKER_LABEL=cloud-docker -e PYTHONDONTWRITEBYTECODE=1 \
   -e B2_S3_ENDPOINT=http://host.docker.internal:9000 -e B2_REGION=us-east-1 \
   -e B2_KEY_ID=minioadmin -e B2_APP_KEY=minioadmin -e B2_BUCKET=$BUCKET \
   -e B2_FORCE_PATH_STYLE=true -e GATEWAY_URL=http://host.docker.internal:8787 \
-  --add-host=host.docker.internal:host-gateway "$CLOUD_IMAGE" >/dev/null
-until curl -sf -o /dev/null --max-time 1 http://localhost:8001/healthz; do sleep 0.5; done
+  --add-host=host.docker.internal:host-gateway "$CLOUD_IMAGE" >/dev/null || { echo "FAIL: cloud worker did not start"; exit 1; }
+if [ "${WS_DOCKER_PLAN:-0}" = 1 ]; then echo "PLAN-ONLY: nothing executed"; exit 0; fi
+until curl -sf -o /dev/null --max-time 1 "http://127.0.0.1:$CP/healthz"; do sleep 0.5; done
 
 # gateway with BOTH workers registered
-( cd "$WEB/gateway" && CDN_BASE=https://cdn.test CDN_TOKEN_SECRET=dev B2_EVENT_SIGNING_SECRET=$SECRET \
+( cd "$WEB/gateway" && exec env CDN_BASE=https://cdn.test CDN_TOKEN_SECRET=dev B2_EVENT_SIGNING_SECRET=$SECRET \
    DEV_TRIGGER_ON_COMPLETE=true \
-   PIPELINE_URL=http://localhost:8000 PIPELINE_URL_CLOUD=http://localhost:8001 \
+   PIPELINE_URL=http://localhost:8000 PIPELINE_URL_CLOUD=http://127.0.0.1:$CP \
    PIPELINE_SHARED_SECRET=$SHARED GATEWAY_PUBLIC_URL=http://localhost:8787 PORT=8787 \
-   npx tsx src/server.ts >$TT/gw.log 2>&1 ) &
+   npx tsx src/server.ts ) >$TT/gw.log 2>&1 &
+OWNED+=($!)
 until curl -sf -o /dev/null --max-time 1 http://localhost:8787/; do sleep 0.3; done
 echo "✓ minio + local worker + DOCKER cloud worker + gateway up"
 
@@ -112,7 +119,7 @@ grep -q pipeline_complete $TT/sse-local.log || { echo "FAIL: local run incomplet
 echo "✓ transfer L (compute=local) complete"
 TID_C=$(send cloud cloud)
 for i in $(seq 1 180); do grep -q pipeline_complete $TT/sse-cloud.log 2>/dev/null && break; sleep 0.5; done
-grep -q pipeline_complete $TT/sse-cloud.log || { echo "FAIL: cloud run incomplete"; docker logs --tail 10 ws-cloud-worker; exit 1; }
+grep -q pipeline_complete $TT/sse-cloud.log || { echo "FAIL: cloud run incomplete"; ws_dk logs --tail 10 "${WS_DK_RUN_ID}-cloud"; exit 1; }
 echo "✓ transfer C (compute=cloud) complete"
 
 echo "=== compute-routing assertions ==="

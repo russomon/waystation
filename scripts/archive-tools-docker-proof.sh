@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# Build the worker image and assert exact headless QCTools/MediaConch tooling.
+# Assert exact headless QCTools/MediaConch tooling inside an EXISTING worker image.
+# Isolation: see scripts/lib/docker-isolation.sh. This proof never builds, pulls, tags or
+# removes a shared image; it needs WS_PROOF_WORKER_IMAGE to name a local image whose
+# application files match this working tree (or an authorized --docker-build), and it runs
+# one ephemeral, labelled, resource-capped, network-less container.
 set -u
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="waystation-archive-tools-proof:local"
 QCOMMIT="29bc627d7a3b4048d3e2ac250ca20adb1ba39cd2"
-
-command -v docker >/dev/null || { echo "SKIP - docker not installed"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP - docker daemon not running"; exit 0; }
-
-echo "- building worker image -"
-docker build -t "$IMAGE" "$WEB/pipeline" || { echo "FAIL: worker image build"; exit 1; }
+# shellcheck source=lib/docker-isolation.sh
+. "$WEB/scripts/lib/docker-isolation.sh"
+ws_dk_begin archive
+trap ws_dk_cleanup EXIT
+ws_dk_obtain_image worker
 
 echo "- verifying headless CLI versions and image provenance -"
-docker run --rm --entrypoint sh "$IMAGE" -c '
+ws_dk run --rm --name "${WS_DK_RUN_ID}-archive" --label "$WS_DK_LABEL" "${WS_DK_LIMITS[@]}" --network none \
+  -e PYTHONDONTWRITEBYTECODE=1 --entrypoint sh "$WS_DK_IMAGE_ID" -c '
   set -eu
   command -v qcli >/dev/null
   command -v mediaconch >/dev/null
@@ -39,11 +42,12 @@ print("  bounded qcli reducer:", checks[0]["detail"])
 PY
   ! command -v qctools >/dev/null
   ! command -v mediaconch-gui >/dev/null
-'
+' || { echo "FAIL: in-container assertions"; exit 1; }
 
-[ "$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.waystation.qctools.revision" }}')" = "$QCOMMIT" ] \
+[ "${WS_DOCKER_PLAN:-0}" = 1 ] && { ws_dk image inspect "$WS_DK_IMAGE_ID" --format '{{ index .Config.Labels "org.opencontainers.image.waystation.qctools.revision" }}'; echo "PLAN-ONLY: nothing executed"; exit 0; }
+[ "$(ws_dk image inspect "$WS_DK_IMAGE_ID" --format '{{ index .Config.Labels "org.opencontainers.image.waystation.qctools.revision" }}')" = "$QCOMMIT" ] \
   || { echo "FAIL: QCTools revision label mismatch"; exit 1; }
-[ "$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.waystation.mediaconch.package-version" }}')" = "25.04-2" ] \
+[ "$(ws_dk image inspect "$WS_DK_IMAGE_ID" --format '{{ index .Config.Labels "org.opencontainers.image.waystation.mediaconch.package-version" }}')" = "25.04-2" ] \
   || { echo "FAIL: MediaConch package label mismatch"; exit 1; }
 
 echo "PASS ✓  worker image contains pinned headless qcli + MediaConch CLIs only"

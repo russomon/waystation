@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Docker proof: pinned MediaConch runs the checked-in broadcast policy.
+# Docker proof: pinned MediaConch runs the checked-in broadcast policy, inside an EXISTING
+# worker image. Isolation: see scripts/lib/docker-isolation.sh. Never builds, pulls, tags or
+# removes a shared image; needs WS_PROOF_WORKER_IMAGE to name a local image whose application
+# files match this working tree (or an authorized --docker-build); one ephemeral, labelled,
+# resource-capped, network-less container.
 set -u
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="waystation-broadcast-qc-proof:local"
-
-command -v docker >/dev/null || { echo "SKIP - docker not installed"; exit 0; }
-docker info >/dev/null 2>&1 || { echo "SKIP - docker daemon not running"; exit 0; }
-
-echo "- building worker image -"
-docker build -t "$IMAGE" "$WEB/pipeline" || { echo "FAIL: worker image build"; exit 1; }
+# shellcheck source=lib/docker-isolation.sh
+. "$WEB/scripts/lib/docker-isolation.sh"
+ws_dk_begin broadcast
+trap ws_dk_cleanup EXIT
+ws_dk_obtain_image worker
 
 echo "- exercising MediaConch baseline policy in the worker -"
-docker run --rm --entrypoint sh "$IMAGE" -c '
+ws_dk run --rm --name "${WS_DK_RUN_ID}-broadcast" --label "$WS_DK_LABEL" "${WS_DK_LIMITS[@]}" --network none \
+  -e PYTHONDONTWRITEBYTECODE=1 --entrypoint sh "$WS_DK_IMAGE_ID" -c '
   set -eu
   ffmpeg -y -v error \
     -f lavfi -i "testsrc2=s=1920x1080:r=30000/1001:d=2" \
@@ -64,5 +67,6 @@ print("  bad:", bad["detail"])
 print("  Phase 2 extractors:", len(visual), "visual +", len(audio), "audio findings")
 PY
 ' || { echo "FAIL: Docker MediaConch policy outcomes"; exit 1; }
+[ "${WS_DOCKER_PLAN:-0}" = 1 ] && { echo "PLAN-ONLY: nothing executed"; exit 0; }
 
 echo "PASS ✓  Docker MediaConch policy good/bad outcomes"

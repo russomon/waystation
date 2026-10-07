@@ -2,7 +2,8 @@
 // Discovery-based proof runner.
 //
 //   node scripts/run-proofs.mjs [--list] [--only a,b] [--skip a,b]
-//        [--docker] [--external] [--timeout SECONDS] [--json FILE] [--dir DIR]
+//        [--docker] [--docker-build] [--docker-pull] [--external]
+//        [--timeout SECONDS] [--json FILE] [--dir DIR]
 //
 // It discovers `*-proof.sh` under scripts/ (or --dir), runs them one at a time,
 // and reports each as exactly one of:
@@ -19,7 +20,11 @@
 //
 //   * network: loopback only. No other host is reachable; nothing is "approved"
 //     by the text of the script. (--external lifts this.)
-//   * docker: the Docker/Colima sockets are unreachable. (--docker lifts this.)
+//   * docker: the Docker/Colima sockets are unreachable. (--docker lifts this, and tells
+//     the Docker proofs they are approved; --docker-build / --docker-pull additionally
+//     authorize image builds / pulls, which reach external mirrors.) The sandbox does NOT
+//     constrain what the Docker daemon does for a script that can reach it: the Docker
+//     proofs enforce their own isolation (scripts/lib/docker-isolation.sh).
 //   * file writes: only the repository and a private, uniquely created per-run
 //     temp directory (TMPDIR points at it; proofs put their logs and fixtures
 //     there). Home, /tmp, /var/folders, caches, other projects and `.git` are
@@ -74,7 +79,7 @@ export function scan(text) {
   const needs = new Set();
   const why = [];
   const flag = (need, reason) => { needs.add(need); why.push(`${need}: ${reason}`); };
-  if (/(^|[\s;&|(])(docker|colima|docker-compose|podman)(\s|$)/m.test(code)) flag("docker", "uses docker/colima");
+  if (/(^|[\s;&|(])(docker|colima|docker-compose|podman)(\s|$)/m.test(code) || /docker-isolation\.sh|\bws_dk\b/.test(code)) flag("docker", "uses docker/colima");
   const loopback = String.raw`(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0|host\.docker\.internal)`;
   const reserved = String.raw`[^/\s"']*\.(?:test|example|invalid|localhost)\b`;
   const hostRe = new RegExp(String.raw`\b(?:curl|wget)\b[^\n]*?https?://(?!${loopback}|${reserved})[A-Za-z0-9]`, "m");
@@ -239,7 +244,26 @@ export function scrubbedEnv(source = process.env, runTmp) {
   return env;
 }
 
-export function runScript(file, { timeoutMs, cwd, repo, docker = false, external = false, keepBytes = 8192 }) {
+/** Extra environment for the Docker proofs. Nothing here is set unless --docker is given. */
+export function dockerEnv(opts, runTmp, source = process.env, resolveHost = defaultDockerHost) {
+  if (!opts.docker) return {};
+  const env = { WS_DOCKER_APPROVED: "1", DOCKER_CONFIG: path.join(runTmp, "docker-config") };
+  if (opts.dockerBuild) env.WS_DOCKER_ALLOW_BUILD = "1";
+  if (opts.dockerPull) env.WS_DOCKER_ALLOW_PULL = "1";
+  for (const k of ["WS_PROOF_WORKER_IMAGE", "WS_PROOF_GATEWAY_IMAGE", "WS_PROOF_MINIO_IMAGE"])
+    if (source[k]) env[k] = source[k];
+  const host = source.DOCKER_HOST || resolveHost();
+  if (host) env.DOCKER_HOST = host;
+  return env;
+}
+
+/** The current Docker context's endpoint (reads local config only; contacts no daemon). */
+export function defaultDockerHost() {
+  const r = spawnSync("docker", ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : "";
+}
+
+export function runScript(file, { timeoutMs, cwd, repo, docker = false, external = false, keepBytes = 8192, extraEnv = () => ({}) }) {
   return new Promise((resolve) => {
     const started = Date.now();
     let output = "";
@@ -248,7 +272,7 @@ export function runScript(file, { timeoutMs, cwd, repo, docker = false, external
     const home = process.env.HOME ?? os.homedir();
     const profile = buildProfile({ repo, runTmp, home, docker, external });
     const child = spawn("sandbox-exec", ["-p", profile, "bash", file],
-      { cwd, env: scrubbedEnv(process.env, runTmp), stdio: ["ignore", "pipe", "pipe"], detached: true });
+      { cwd, env: { ...scrubbedEnv(process.env, runTmp), ...extraEnv(runTmp) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
     const take = (b) => { output += b.toString("utf8"); if (output.length > 4_000_000) output = output.slice(-2_000_000); };
     child.stdout.on("data", take);
     child.stderr.on("data", take);
@@ -283,12 +307,14 @@ export async function gate(scanResult, flags, inUse = portInUse) {
 // ───────── CLI ─────────
 
 export function parseArgs(argv) {
-  const o = { list: false, only: [], skip: [], docker: false, external: false, timeout: 900, json: null, dir: null };
+  const o = { list: false, only: [], skip: [], docker: false, dockerBuild: false, dockerPull: false, external: false, timeout: 900, json: null, dir: null };
   const need = (i, name) => { if (i + 1 >= argv.length) throw new Error(`${name} needs a value`); return argv[i + 1]; };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--list") o.list = true;
     else if (a === "--docker" || a === "--external") o[a.slice(2)] = true;
+    else if (a === "--docker-build") { o.dockerBuild = true; o.docker = true; }
+    else if (a === "--docker-pull") { o.dockerPull = true; o.docker = true; }
     else if (a === "--only") { o.only = need(i, a).split(",").filter(Boolean); i++; }
     else if (a === "--skip") { o.skip = need(i, a).split(",").filter(Boolean); i++; }
     else if (a === "--timeout") { o.timeout = Number(need(i, a)); i++; if (!(o.timeout > 0)) throw new Error("--timeout must be a positive number of seconds"); }
@@ -306,7 +332,7 @@ export async function main(argv, { out = (s) => process.stdout.write(s + "\n"), 
   let opts;
   try { opts = parseArgs(argv); } catch (e) { out(`error: ${e.message}`); return 3; }
   if (opts.help) {
-    out("usage: node scripts/run-proofs.mjs [--list] [--only a,b] [--skip a,b] [--docker] [--external] [--timeout S] [--json FILE] [--dir DIR]");
+    out("usage: node scripts/run-proofs.mjs [--list] [--only a,b] [--skip a,b] [--docker] [--docker-build] [--docker-pull] [--external] [--timeout S] [--json FILE] [--dir DIR]");
     return 0;
   }
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -341,7 +367,8 @@ export async function main(argv, { out = (s) => process.stdout.write(s + "\n"), 
       continue;
     }
     out(`running  ${name} ...`);
-    const r = await runScript(file, { timeoutMs: opts.timeout * 1000, cwd: repo, repo, docker: opts.docker, external: opts.external });
+    const r = await runScript(file, { timeoutMs: opts.timeout * 1000, cwd: repo, repo, docker: opts.docker, external: opts.external,
+      extraEnv: (runTmp) => dockerEnv(opts, runTmp) });
     const c = classifyResult(r);
     results.push({ name, status: c.status, reason: c.reason, ms: r.ms, tail: c.status === STATUS.PASS ? undefined : r.tail });
     out(`${c.status.padEnd(8)} ${name}  ${(r.ms / 1000).toFixed(1)}s${c.reason ? `  (${c.reason})` : ""}`);
