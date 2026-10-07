@@ -33,9 +33,9 @@
    - **Blocked By**: A pricing decision from the owner.
 
 7. **[P2] Finish making the proof suite green and self-contained**
-   - **Target**: `scripts/*-proof.sh`, `scripts/run-proofs.mjs`
-   - **Done When**: the proofs stop binding fixed ports (8787, 8000, 9000, others) and killing whatever listens on them (they should kill only the process IDs they started, and use fixed `/tmp` log paths no longer); `scripts/qc-proof.sh` is diagnosed and fixed (it fails identically on `main` at `b16a109`: "metering missing entries", no `thumbnail` ledger entry); the four docker proofs (`archive-tools-docker`, `broadcast-qc-docker`, `compute`, `docker`) have been inspected and run with `--docker` in an isolated project; and `node scripts/run-proofs.mjs --docker` prints `ACCEPTED`. The runner already enforces its limits with a sandbox; the latest local result is in `docs/reviews/2026-10-06-security-and-proof-hardening.md`.
-   - **Blocked By**: Owner approval to build and run the worker image on the shared Docker daemon (it also hosts unrelated containers).
+   - **Target**: `scripts/qc-proof.sh`, the four Docker proofs, `scripts/*-proof.sh` port cleanup
+   - **Done When**: (1) `qc-proof.sh` asserts the current thumbnail contract. Diagnosed 2026-10-07: a stale expectation, since `pipeline/worker.py:3271-3286` bills the poster only when a GMI call is made (since `61b0105`) and the proof still expects a ledger entry on the deterministic fallback; proposed repair and the billing-rule question are in the review summary. (2) The four Docker proofs run, one at a time, under the isolation plan in the review summary (unique project/tags/container names, no `.env`, existing images reused, before/after inventory), and `node scripts/run-proofs.mjs --docker` prints `ACCEPTED`. (3) The proofs stop binding fixed ports and kill only process IDs they started (three already do).
+   - **Blocked By**: Owner decisions: approve the `qc-proof.sh` repair and confirm that an unbilled deterministic poster is intended; approve or amend the Docker plan, including whether a from-scratch image rebuild with external network access is allowed.
 
 8. **[P2] Owner confirmations of earlier work**
    - **Target**: merged verified download (`539c4ab`, 2026-09-08); access-code rehearsal check 17 (2026-09-17)
