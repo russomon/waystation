@@ -17,37 +17,32 @@
    - **Done When**: each feature is described from source (what it does, its configuration and constraints) and recorded as live. The owner confirmed on 2026-10-06 that email-the-link, the admin dashboard and embedded Stripe checkout are live; that is owner-confirmed, not independently verified. Host configuration (for example how the Resend key is supplied, which appears in no compose file or record) stays `UNKNOWN` until the operator records it.
    - **Blocked By**: NOT BLOCKED for the source description; host configuration needs the operator.
 
-4. **[P1] Adopt `main` as canonical and retire `codex/hosted-cloud-control`**
-   - **Target**: Git refs and worktree registrations; `docs/archive/BRANCH_RETIREMENTS.md`, ADR-037
-   - **Done When**: the sequence below is complete, each step authorized individually, stopping on any divergence or surprise: (1) stage the documentation files, run `git diff --cached --check`, commit on `codex/hosted-waystation-mvp`; (2) push it to its upstream without force; (3) confirm `git merge-base --is-ancestor main codex/hosted-waystation-mvp`, then `git switch main`, `git merge --ff-only codex/hosted-waystation-mvp`, `git push origin main`; (4) re-confirm `564d55e5abd4d85998e6f21a8689d8d1a56ca572` is still the tip of both the local and `origin/codex/hosted-cloud-control` and that `/private/tmp/waystation-hosted-cloud.ZvAK2M` is still missing; (5) run `git worktree prune --dry-run -v` and proceed with `git worktree prune` only if it lists exactly that one path (it did on 2026-10-06), otherwise stop; (6) delete exactly local `codex/hosted-cloud-control` (`git branch -D`, because it is not merged) and then `git push origin --delete codex/hosted-cloud-control`; (7) record the result in `CURRENT_WORK.md`. `codex/hosted-waystation-mvp` and every other branch stay untouched.
-   - **Blocked By**: Owner approval of this sequence. Open question: what to do with `codex/hosted-waystation-mvp` once `main` adopts it (TBD, owner).
-
-5. **[P2] Finish the commercial-track follow-ups**
+4. **[P2] Finish the commercial-track follow-ups**
    - **Target**: `docs/COMMERCIAL_DELIVERY_PLAN.md`, `gateway/src/`
    - **Done When**: magic-link recovery exists (a sender who loses their capability URL can regain it by email); the per-grant 1.7× byte budget is enforced and post-send credit top-up exists, or each is explicitly dropped. Byte budget depends on byte counts being visible, which a redirect hides until the CDN worker is deployed.
    - **Blocked By**: NOT BLOCKED for magic-link recovery; byte budget is blocked on a CDN-worker/design decision.
 
-6. **[P2] Usage billing and quota re-scope, together**
+5. **[P2] Usage billing and quota re-scope, together**
    - **Target**: `gateway/src/metering.ts`, `gateway/src/limits.ts`, `docker-compose.transfer.yml` (`MAX_JOBS_PER_SESSION`, `MAX_DAILY_JOBS`)
    - **Done When**: ledger events feed Stripe or Lago meters, and upload ceilings are expressed per owner and in bytes instead of a global daily count (ADR-028). Today `MAX_DAILY_JOBS` is a global count that gives the twenty-first sender an opaque refusal.
    - **Blocked By**: A pricing decision from the owner.
 
-7. **[P2] Add a discovery-based proof-suite runner**
+6. **[P2] Add a discovery-based proof-suite runner**
    - **Target**: `scripts/` (new runner), `SHARED_CODING_WORKFLOW.md` section 12
    - **Done When**: one command enumerates `scripts/*-proof.sh` from disk, runs each, tallies `PASS ✓` and `FAIL`, honours the self-skip convention, and the workflow stops depending on a hand-kept table.
    - **Blocked By**: NOT BLOCKED
 
-8. **[P2] Owner confirmations of earlier work**
+7. **[P2] Owner confirmations of earlier work**
    - **Target**: merged verified download (`539c4ab`, 2026-09-08); access-code rehearsal check 17 (2026-09-17)
    - **Done When**: the owner confirms the file is playable after a pause/resume and the status line reads "every range verified against BLAKE3" for a sub-4 GB transfer; and records whether the check-17 sequence (issue, use, revoke, bounce a throwaway code) was completed. Four access codes existed on 2026-09-30, but completion was never recorded.
    - **Blocked By**: Owner
 
-9. **[P2] Decide link-lifetime selection for comped and admin links**
+8. **[P2] Decide link-lifetime selection for comped and admin links**
    - **Target**: `gateway/src/routes.ts` (`RECIPIENT_LINK_TTL_DAYS`, expiry around line 697), `client/src/main.ts`
    - **Done When**: the owner decides whether comped/admin senders get the weeks selector that paid senders have, and it is built or recorded as declined. Selection for paid links is already done (ADR-032).
    - **Blocked By**: Owner decision
 
-10. **[P2] Triage the parked engineering backlog**
+9. **[P2] Triage the parked engineering backlog**
     - **Target**: `docs/archive/NEXT_STEPS_2026-09-30.md` (Planned, Later, Blocked sections), `docs/DEFERRED_TOOLING.md`
     - **Done When**: each retained item (deploy policy v1.4, synthetic-origin QC, OpenCV, jury policy 1.1, real-face lip-sync validation, Dolby Vision metadata, native sender, queue/autoscaling, generated-media live calibration) is moved to an issue tracker or roadmap by the owner, or explicitly dropped. QC is parked, so none is urgent.
     - **Blocked By**: Owner classification; no issue tracker or roadmap is configured in the repository.

@@ -58,4 +58,11 @@ index 5dd9a23..63d8524 100644
 
 ## Results
 
-PENDING — to be recorded after the retirement sequence runs.
+Performed 2026-10-06 with the owner's approval; every step was verified.
+
+1. Documentation checkpoint `9a3582318e6466aa1d6158c564e4d5b04fa48f5a` committed and pushed on `codex/hosted-waystation-mvp`; `main` (previously at `452812c`, equal to `origin/main`, no unique work) was fast-forwarded to it and pushed.
+2. Annotated tag `archive/hosted-cloud-control` created and pushed. Tag object `0881e07bf3e0edc4221eee12ecc3d37b72a20792`; remote `ls-remote` shows it peels to `564d55e5abd4d85998e6f21a8689d8d1a56ca572`.
+3. Before deletion, local and remote `codex/hosted-cloud-control` were both re-confirmed at `564d55e5…` and `/private/tmp/waystation-hosted-cloud.ZvAK2M` was still missing.
+4. A fresh `git worktree prune --dry-run -v` listed exactly one registration (`worktrees/waystation-hosted-cloud.ZvAK2M`); `git worktree prune -v` removed it. No directory was deleted.
+5. Local branch deleted (`git branch -D`, was `564d55e`). Remote branch deleted with a lease on its tip (`--force-with-lease=refs/heads/codex/hosted-cloud-control:564d55e5…`).
+6. Remaining refs: `main` and `codex/hosted-waystation-mvp` (both `9a35823` at the time), and the tag. `codex/hosted-waystation-mvp` was kept; it is no longer mirrored and may fall behind `main`.
