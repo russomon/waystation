@@ -154,6 +154,6 @@ Constraints specific to this repository. They add to, and never relax, sections 
 
 ### Additional repository documents
 
-Read when the task touches them: `docs/DEPLOY.md` (what is live, restore paths), `docs/DEFERRED_TOOLING.md`, `docs/COMMERCIAL_DELIVERY_PLAN.md` (identity, metering, credits, billing), `docs/E2E_ENCRYPTION_PLAN.md` (shelved), `docs/NATIVE_SENDER_PLAN.md`, `docs/SYNTHETIC_ORIGIN_PLAN.md`, `README.md`, `SETUP.md` (B2/GMI account setup). History, not state: `docs/PROJECT_HISTORY.md`, `docs/DECISIONS_HISTORY.md`, `docs/archive/`.
+Read when the task touches them: `docs/DEPLOY.md` (what is live, restore paths), `docs/HOSTED_FEATURES.md` (email-the-link, admin dashboard, embedded Stripe checkout), `docs/DEFERRED_TOOLING.md`, `docs/COMMERCIAL_DELIVERY_PLAN.md` (identity, metering, credits, billing), `docs/E2E_ENCRYPTION_PLAN.md` (shelved), `docs/NATIVE_SENDER_PLAN.md`, `docs/SYNTHETIC_ORIGIN_PLAN.md`, `README.md`, `SETUP.md` (B2/GMI account setup). History, not state: `docs/PROJECT_HISTORY.md`, `docs/DECISIONS_HISTORY.md`, `docs/archive/`.
 
 Platform adapters: `CLAUDE.md` (Claude Code only) and `.cursor/commands/` (`/resume`, `/handoff`) are thin pointers and hold no project state.

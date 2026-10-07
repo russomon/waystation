@@ -19,16 +19,22 @@ SETUP.md                   B2 / GMI account setup for a fresh environment
 ## Source
 
 ```
-gateway/src/               Hono/Node control plane — 12 modules
+gateway/src/               Hono/Node control plane — 18 modules
   server.ts                  entry point: app assembly, CORS, boot banner
   routes.ts                  every HTTP route
   auth.ts                    access codes, sessions, recipient unlock
-  db.ts                      SQLite schema + migrations (schema v4)
+  db.ts                      SQLite schema + migrations (schema v7)
   s3.ts                      B2 presigning and multipart bookkeeping
   limits.ts                  size ceilings, service policy, verification mode
   events.ts  pipeline.ts     B2 webhook · worker dispatch
   sse.ts  store.ts           progress fan-out
   metering.ts  env.ts        usage ledger · environment loading
+  payments.ts  pricing.ts    Stripe / Coinbase checkout and webhooks · price model
+  email.ts                   email-the-link via Resend (docs/HOSTED_FEATURES.md)
+  purge.ts                   storage purge of expired/revoked transfers
+  publicOrigin.ts            trusted public API origin for download links (ADR-038)
+  ownership.ts               who may use an in-progress upload (ADR-039)
+gateway/test/              node:test unit tests (`npm test` in gateway/)
 
 client/src/                Vite + TypeScript browser app — 15 modules
   main.ts                    the sender
