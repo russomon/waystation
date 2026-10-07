@@ -11,6 +11,7 @@ import {
   failureLocked,
   hasRecipientUnlock,
   hashAccessCode,
+  IS_PRODUCTION,
   issueContinuation,
   issueSession,
   limiter,
@@ -76,6 +77,7 @@ import { dispatchPipeline } from "./pipeline.js";
 import { saveTransfer, getTransfer } from "./store.js";
 import { meter, usageFor } from "./metering.js";
 import * as sse from "./sse.js";
+import { loadPublicApiOrigin, mediatedDownloadUrlFor } from "./publicOrigin.js";
 import {
   quote,
   quoteAll,
@@ -972,43 +974,19 @@ const classifyTransferObjects = (all: { key: string; size: number }[]) => ({
   outboard: all.find((o) => o.key.endsWith(".obao")),
 });
 
-/** Absolute URL of the mediated download for this transfer, derived from the
- *  request that asked for it. Deriving beats configuring: there is no public
- *  base URL to set (GATEWAY_PUBLIC_URL is the worker-callback address and is
- *  deliberately empty in transfer-only mode), and appending to the incoming
- *  path preserves whatever prefix the deployment uses.
+/** Absolute URL of the mediated download for this transfer. The origin is the
+ *  configured WAYSTATION_PUBLIC_API_ORIGIN (see publicOrigin.ts): it is never
+ *  derived from Host or X-Forwarded-* because a client controls those. Behind the
+ *  tunnel the process sees plain http to `gateway:8787`, which is why the scheme
+ *  cannot be read from the connection either — an http:// link on an https page
+ *  is blocked as mixed content with no CORS error to chase.
  *
  *  It carries NO credential. For a protected transfer the unlock cookie of the
- *  browser that entered the password is what authorizes it. */
-const mediatedDownloadUrl = (c: Context, id: string): string => {
-  const u = new URL(c.req.url);
-  // ⚠ The scheme and host of c.req.url describe the connection this process
-  // received, NOT the one the browser made. Behind the tunnel that connection
-  // is plain HTTP to `gateway:8787`, so @hono/node-server derives
-  // `scheme = socket.encrypted ? "https" : "http"` and hands back **http://**.
-  //
-  // A page served over https that fetches an http:// url is ACTIVE MIXED
-  // CONTENT: the browser blocks it before sending anything, and fetch() throws
-  // "Failed to fetch" with no request in the network log and no CORS error to
-  // chase. That symptom is indistinguishable from a CORS failure and cost three
-  // wrong fixes to find.
-  //
-  // The proxy tells us what the browser actually used. Trust those headers here
-  // and only here — they are set by Cloudflare in front of this origin, which is
-  // the only way in.
-  u.protocol = `${(c.req.header("x-forwarded-proto") || u.protocol.replace(":", "")).split(",")[0].trim()}:`;
-  const fwdHost = (c.req.header("x-forwarded-host") || "").split(",")[0].trim();
-  if (fwdHost) {
-    u.host = fwdHost;
-    // The WHATWG host setter KEEPS the existing port when the new value has
-    // none, so `api.orbitolive.com` would inherit the internal :8787 and
-    // produce a link nothing can reach. Clear it explicitly.
-    if (!fwdHost.includes(":")) u.port = "";
-  }
-  u.search = "";
-  u.pathname = `${u.pathname.replace(/\/$/, "")}/original`;
-  return u.toString();
-};
+ *  browser that entered the password is what authorizes it. Returns null only in
+ *  an unconfigured non-loopback development setup; the caller refuses then. */
+const publicApi = loadPublicApiOrigin(env.WAYSTATION_PUBLIC_API_ORIGIN, IS_PRODUCTION);
+const mediatedDownloadUrl = (c: Context, id: string): string | null =>
+  mediatedDownloadUrlFor(publicApi, c.req.url, id);
 
 const mimeOf = (k: string) =>
   k.endsWith(".jpg") || k.endsWith(".jpeg") ? "image/jpeg"
@@ -1037,6 +1015,12 @@ api.get("/transfers/:id", async (c) => {
 
   const manifest = derivs.find((d) => d.key.endsWith("manifest.json"));
   const transfer = getTransfer(id);
+  // Refuse rather than guess: with no trusted API origin (development on a
+  // non-loopback host with WAYSTATION_PUBLIC_API_ORIGIN unset) there is no safe
+  // link to hand out, and falling back to request headers is exactly the bug.
+  const mediatedUrl = mediatedDownloadUrl(c, id);
+  if (!mediatedUrl)
+    return c.json({ error: "Download links are not configured on this server.", code: "public_origin_unconfigured" }, 503);
   return c.json({
     transferId: id,
     // The original is signed with a Content-Disposition override so browsers
@@ -1046,10 +1030,9 @@ api.get("/transfers/:id", async (c) => {
     original: {
       key: orig.key,
       // MEDIATED, not presigned. The recipient never receives a storage URL for
-      // the master — see GET /transfers/:id/original above. Built from the
-      // incoming request so it needs no configured public base and stays
-      // correct behind the tunnel, a vite proxy, or plain localhost.
-      url: mediatedDownloadUrl(c, id),
+      // the master — see GET /transfers/:id/original above. The origin is
+      // configuration, never a request header (publicOrigin.ts).
+      url: mediatedUrl,
       mime: mimeOf(orig.key),
       size: orig.size,
       filename: orig.key.split("/").pop(),

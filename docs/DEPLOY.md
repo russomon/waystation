@@ -874,6 +874,32 @@ docker load < waystation-worker-753b834fbac5-2026-08-02.tar.gz
 docker images waystation-worker      # expect id 753b834fbac5
 ```
 
+## WAYSTATION_PUBLIC_API_ORIGIN: the trusted origin for download links
+
+*Source change on branch `claude/orbistation-security-and-proof-hardening`; **not deployed**. This section is a prerequisite checklist, not a deployment record.*
+
+The mediated download link the gateway returns (`original.url`) used to be built
+from the incoming request, trusting `X-Forwarded-Host`, `X-Forwarded-Proto` and
+the `Host` header. A client can set all three. The link now comes only from
+configuration:
+
+| Setting | Meaning |
+|---|---|
+| `WAYSTATION_PUBLIC_API_ORIGIN` | Scheme + host (+ port) of the public API, for example `https://api.orbitolive.com`. No path, query, fragment or credentials. `https` required, except `http` on a loopback host in development. |
+| `WAYSTATION_PUBLIC_BASE_URL` | Unchanged and **different**: the website sender page used for payment success/cancel redirects. |
+
+Behaviour:
+
+- **Production** (`NODE_ENV=production`): the gateway **refuses to start** if the setting is absent or invalid, and names it in the error. There is no fallback to request headers.
+- **Development**: an invalid value refuses to start. With the setting absent, links fall back to the request's own host **only if it is loopback** (`localhost`, `127.0.0.1`, `[::1]`) and always over `http`. Any other host with the setting absent gets `503 public_origin_unconfigured` from `GET /api/transfers/:id`.
+- The `/api` prefix is fixed by the route mount, so it is preserved. The protected-download gate is unchanged: the link still carries no credential.
+
+**Operator prerequisites before deploying this change** (none executed here):
+
+1. Confirm the value matches the hostname the Cloudflare Tunnel publishes for the API. Both compose files set `WAYSTATION_PUBLIC_API_ORIGIN: "https://api.orbitolive.com"`; edit them if the real hostname differs.
+2. A gateway rebuilt from this source will not start without it. Roll out as a gateway-only release (`up -d --no-deps gateway`) with a WAL-safe backup first, as in the earlier releases above.
+3. After the restart, check that `GET /api/transfers/<id>` returns a link on the configured host even when the request carries a forged `X-Forwarded-Host`, and that a download still works. Do not paste a transfer id longer than 8 characters into records.
+
 ## WAYSTATION_QC_MODE: who may start a QC upload
 
 `MAX_QC_BYTES` decides what runs once an upload exists; `WAYSTATION_QC_MODE`

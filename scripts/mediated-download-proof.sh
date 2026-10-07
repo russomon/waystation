@@ -40,6 +40,7 @@ PY
 ( cd "$WEB/gateway" && PORT=$GW WAYSTATION_DB_PATH="$WORK/gateway.db" \
   WAYSTATION_AUTH_MODE=access-code WAYSTATION_ACCESS_CODE_HASH="$HASH" \
   WAYSTATION_SESSION_SECRET="$SECRET" WAYSTATION_ALLOWED_ORIGINS="https://orbitolive.com" \
+  WAYSTATION_PUBLIC_API_ORIGIN="http://127.0.0.1:$GW" \
   B2_S3_ENDPOINT=http://127.0.0.1:$MIN B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin \
   B2_BUCKET=$BUCKET B2_REGION=us-east-1 B2_FORCE_PATH_STYLE=true \
   PIPELINE_SHARED_SECRET=proof-secret B2_EVENT_SIGNING_SECRET=event-secret \
@@ -92,15 +93,36 @@ if printf '%s' "$META" | grep -q "X-Amz-Signature"; then
 fi
 echo "  the master is delivered as a bare mediated gateway link — no presigned URL, no credential in it"
 
-# 1b -- the link must carry the scheme and host the BROWSER used, not the ones
-#       this process was reached on. Behind a TLS-terminating proxy those differ,
-#       and an http:// link on an https page is blocked as mixed content before
-#       any request is sent — a "Failed to fetch" with nothing in the network log.
-FWD=$(curl -fsS -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: api.example.test" \
+# 1b -- the link origin is CONFIGURED (WAYSTATION_PUBLIC_API_ORIGIN), never taken
+#       from the request. Host and X-Forwarded-* are client-controlled: honouring
+#       them would let a forged header put an attacker's origin in a link the page
+#       then follows. Scheme and host must therefore be identical whatever the
+#       request claims, and the /api path prefix must be preserved.
+for H in "X-Forwarded-Host: evil.example.test" "X-Forwarded-Proto: https" "Host: evil.example.test:9999" \
+         "X-Forwarded-Host: evil.example.test:8443"; do
+  GOT=$(curl -fsS -H "$H" "http://127.0.0.1:$GW/api/transfers/$TID" | jqv original.url)
+  [ "$GOT" = "$URL" ] || { echo "FAIL - a forged header changed the link ($H): $GOT"; exit 1; }
+done
+GOT=$(curl -fsS -H "X-Forwarded-Proto: https" -H "X-Forwarded-Host: evil.example.test" -H "Host: evil.example.test" \
   "http://127.0.0.1:$GW/api/transfers/$TID" | jqv original.url)
-[ "$FWD" = "https://api.example.test/api/transfers/$TID/original" ] \
-  || { echo "FAIL - forwarded scheme/host ignored; got: $FWD"; exit 1; }
-echo "  the link honours X-Forwarded-Proto/Host, so it is https behind a TLS proxy"
+[ "$GOT" = "$URL" ] || { echo "FAIL - combined forged headers changed the link: $GOT"; exit 1; }
+case "$URL" in "http://127.0.0.1:$GW/api/transfers/"*) ;; *) echo "FAIL - API path prefix lost: $URL"; exit 1;; esac
+echo "  forged Host / X-Forwarded-Host / X-Forwarded-Proto never change the link; the /api prefix is preserved"
+
+# 1c -- invalid configuration refuses to start (no silent fallback to headers).
+for BAD in "http://evil.example.test" "https://api.example.test/api" "not-a-url" "https://user:pw@api.example.test"; do
+  ( cd "$WEB/gateway" && PORT=$((GW+50)) WAYSTATION_DB_PATH=":memory:" WAYSTATION_AUTH_MODE=access-code \
+    WAYSTATION_ACCESS_CODE_HASH="$HASH" WAYSTATION_SESSION_SECRET="$SECRET" \
+    WAYSTATION_PUBLIC_API_ORIGIN="$BAD" B2_S3_ENDPOINT=http://127.0.0.1:$MIN B2_KEY_ID=x B2_APP_KEY=x \
+    B2_BUCKET=$BUCKET B2_REGION=us-east-1 PIPELINE_SHARED_SECRET=x B2_EVENT_SIGNING_SECRET=x \
+    npx tsx src/server.ts >"$WORK/badorigin.log" 2>&1 & echo $! >"$WORK/badorigin.pid" )
+  BP=$(cat "$WORK/badorigin.pid"); n=0
+  while kill -0 "$BP" 2>/dev/null && [ $n -lt 150 ]; do sleep .1; n=$((n+1)); done
+  if kill -0 "$BP" 2>/dev/null; then kill -9 "$BP" 2>/dev/null || true; echo "FAIL - gateway started with invalid WAYSTATION_PUBLIC_API_ORIGIN=$BAD"; exit 1; fi
+  grep -q "WAYSTATION_PUBLIC_API_ORIGIN" "$WORK/badorigin.log" \
+    || { echo "FAIL - refusal for $BAD did not name the setting"; cat "$WORK/badorigin.log"; exit 1; }
+done
+echo "  an invalid or unsafe WAYSTATION_PUBLIC_API_ORIGIN refuses to start and names the setting"
 
 # 2 ── it redirects to storage, and the bytes that arrive are the bytes sent.
 [ "$(code "$URL")" = 302 ] || { echo "FAIL - expected a 302"; exit 1; }

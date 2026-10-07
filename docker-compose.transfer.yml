@@ -60,6 +60,13 @@ services:
       WAYSTATION_SESSION_TTL_SECONDS: "3600"
       WAYSTATION_RECIPIENT_UNLOCK_TTL_SECONDS: "3600"
       WAYSTATION_ALLOWED_ORIGINS: "https://orbitolive.com,https://www.orbitolive.com"
+      # Public origin of THIS API, used to build the download links returned to
+      # recipients. Required: the gateway refuses to start without a valid
+      # https origin in production. It is never derived from Host or
+      # X-Forwarded-* (client-controlled). Distinct from WAYSTATION_PUBLIC_BASE_URL,
+      # which is the website page used for payment redirects. Operator: confirm
+      # this matches the hostname the Cloudflare Tunnel publishes.
+      WAYSTATION_PUBLIC_API_ORIGIN: "https://api.orbitolive.com"
       WAYSTATION_DB_PATH: /data/waystation.db
 
       # ── TRANSFER-ONLY ENFORCEMENT ──
