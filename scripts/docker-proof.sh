@@ -18,11 +18,13 @@
 # the compose file itself.
 set -u
 TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
-export PATH="/opt/homebrew/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PY="$WEB/pipeline/.venv/bin/python"
+# Source the isolation library BEFORE touching PATH: it pins the docker executable once, so the
+# Homebrew prepend below cannot swap in a different `docker`.
 # shellcheck source=lib/docker-isolation.sh
 . "$WEB/scripts/lib/docker-isolation.sh"
+export PATH="/opt/homebrew/bin:$PATH"
+PY="$WEB/pipeline/.venv/bin/python"
 
 ws_dk_begin dockerloop
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
