@@ -213,6 +213,7 @@ Compile checks are cheap; run all three whenever source changed:
 
 ```sh
 ( cd gateway && npx tsc --noEmit )              # gateway type-check
+( cd gateway && npm test )                      # gateway unit tests (node:test)
 npm -w client run build                         # client build
 ( cd pipeline && PIPELINE_SHARED_SECRET=x B2_BUCKET=b B2_S3_ENDPOINT=http://x \
     B2_KEY_ID=x B2_APP_KEY=x B2_REGION=x .venv/bin/python -c "import worker" )
@@ -220,7 +221,9 @@ npm -w client run build                         # client build
 
 Documentation-only work (including shared-context migration) needs none of these. Validate it with `git diff --check`, a local-reference check, and a secret scan instead, and say that the application checks were not run.
 
-Proof scripts are self-contained on MinIO + ffmpeg and need no cloud credentials. Run those covering the area touched, and all of them before a submission-worthy handoff. Each prints `PASS ✓` or `FAIL`; scripts that need docker or Photon self-skip with instructions. **`ls scripts/*-proof.sh` is authoritative, not this table or any stored count**; the table went stale before. There is no suite runner yet (`NEXT_STEPS.md`). Do not run proofs for a documentation-only or review-only request.
+Proof scripts are self-contained on MinIO + ffmpeg and need no cloud credentials. Run those covering the area touched, and all of them before a submission-worthy handoff. Each prints `PASS ✓` or `FAIL`; scripts that need docker or Photon self-skip with instructions. **`ls scripts/*-proof.sh` is authoritative, not this table or any stored count**; the table went stale before. Do not run proofs for a documentation-only or review-only request.
+
+**Suite runner.** `node scripts/run-proofs.mjs` discovers every `scripts/*-proof.sh`, runs them one at a time in a scrubbed environment (no ambient credentials; B2 pointed at a dead loopback port), and reports each as exactly one of `PASS`, `FAIL`, `SKIP` or `NOT_RUN`. Only a run in which every discovered script passed prints `ACCEPTED`; any skip or not-run makes it `INCOMPLETE, NOT AN ACCEPTANCE` (exit 2), a failure exits 1, and `--only`/`--skip` runs are labelled a selection. Before running a script it scans for docker use, non-loopback hosts or provider CLIs, credential reads and destructive commands, and refuses (`NOT_RUN`) unless you pass `--docker`, `--external`, `--credentials` or `--destructive`; it also refuses when a port the script would bind or terminate is already in use, because several proofs kill whatever listens on their ports (8787, 8000, 9000 and others). A scan hit that is benign for one exact script is recorded in `scripts/proof-review.json`, bound to that script's sha256, so editing the script invalidates it. `--list` shows the classification without running anything. Its own tests: `node --test scripts/test/run-proofs.test.mjs`. Gateway unit tests: `( cd gateway && npm test )`.
 
 | Script | Covers |
 |---|---|
