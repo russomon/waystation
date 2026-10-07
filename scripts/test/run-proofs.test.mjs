@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync, chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -101,7 +101,7 @@ test("portInUse: finds a real IPv6-only listener (skipped where ::1 is unavailab
 
 // ───────── environment ─────────
 
-test("scrubbedEnv: ambient credentials are dropped, B2 points at a dead loopback port, TMPDIR is the run's own", () => {
+test("scrubbedEnv: ambient credentials are dropped, B2 points at a dead loopback port, TMPDIR and caches are the run's own", () => {
   const env = scrubbedEnv({
     PATH: "/bin", HOME: "/h", STRIPE_SECRET_KEY: "synthetic-not-a-key", RESEND_API_KEY: "re_x", GMI_API_KEY: "g",
     B2_APP_KEY: "real", B2_S3_ENDPOINT: "https://s3.example", AWS_SECRET_ACCESS_KEY: "a", TUNNEL_TOKEN: "t", TMPDIR: "/elsewhere",
@@ -112,6 +112,9 @@ test("scrubbedEnv: ambient credentials are dropped, B2 points at a dead loopback
   assert.equal(env.B2_S3_ENDPOINT, "http://127.0.0.1:9");
   assert.notEqual(env.B2_APP_KEY, "real");
   assert.equal(env.TMPDIR, "/run/tmp");
+  assert.equal(env.npm_config_cache, "/run/tmp/npm-cache");
+  assert.equal(env.XDG_CACHE_HOME, "/run/tmp/xdg-cache");
+  assert.match(env.JAVA_TOOL_OPTIONS, /-Djava\.io\.tmpdir=\/run\/tmp/);
 });
 
 // ───────── the sandbox profile ─────────
@@ -125,7 +128,9 @@ test("buildProfile: network, docker, signal, write and credential rules, and the
   assert.match(p, /\(deny signal\)/);
   assert.match(p, /allow signal \(target same-sandbox\)/);
   assert.match(p, /\(deny file-write\*\)/);
-  assert.match(p, /deny file-write-unlink \(subpath "\/private\/tmp"\)/);
+  assert.doesNotMatch(p, /allow file-write\*[^\n]*\/private\/(tmp|var\/folders)/, "shared temp areas must not be writable");
+  assert.doesNotMatch(p, /Library\/Caches|\.npm|\.cache/, "shared caches must not be writable");
+  assert.match(p, /allow file-write\* \(subpath "\/r\/repo"\) \(subpath "\/t\/run"\)/);
   assert.match(p, /subpath "\/r\/repo\/\.git"/);
   assert.match(p, /subpath "\/h\/\.aws"/);
   const ext = buildProfile({ ...base, external: true });
@@ -440,4 +445,63 @@ exit 0
     assert.equal(code, 0, text);
     assert.equal(existsSync(path.join(victim, "keep")), true, "the helper deleted a directory it did not create");
   } finally { rmSync(victim, { recursive: true, force: true }); rmSync(dir, { recursive: true }); }
+});
+
+test("enforced: pre-existing files outside the run directory cannot be created over, overwritten, truncated, appended to, renamed or deleted", async (t) => {
+  if (!needSandbox(t)) return;
+  // Bystanders: another program's files in the shared temp areas and in a cache directory.
+  const home = os.homedir();
+  const places = [
+    ["/private/tmp", `proof-runner-bystander-${process.pid}`],
+    [realpathSync(os.tmpdir()), `proof-runner-bystander-${process.pid}`],
+    [path.join(home, ".cache"), `proof-runner-bystander-${process.pid}`],
+  ];
+  const made = [];
+  for (const [d, n] of places) {
+    mkdirSync(d, { recursive: true });
+    const f = path.join(d, n); writeFileSync(f, "ORIGINAL"); made.push(f);
+  }
+  const body = made.map((f) => `
+f="${f}"
+echo overwritten > "$f" 2>/dev/null
+: > "$f" 2>/dev/null                                  # truncate
+echo appended >> "$f" 2>/dev/null
+python3 -c 'import os,sys; os.truncate(sys.argv[1], 0)' "$f" 2>/dev/null
+mv "$f" "$f.moved" 2>/dev/null
+echo replacement > "$f.new" 2>/dev/null && mv -f "$f.new" "$f" 2>/dev/null   # rename over it
+ln -f "$f" "$f.hardlink" 2>/dev/null
+touch "$f.created" 2>/dev/null                         # create a sibling
+chmod 000 "$f" 2>/dev/null
+rm -f "$f" 2>/dev/null
+`).join("");
+  const dir = mk({ "bystander-proof.sh": `#!/usr/bin/env bash\n${body}\necho PASS\n` });
+  try {
+    const { text } = await runSandboxed(dir);
+    assert.match(text, /PASS\s+bystander/, text);
+    for (const f of made) {
+      assert.equal(readFileSync(f, "utf8"), "ORIGINAL", `${f} was modified`);
+      for (const sfx of [".moved", ".new", ".hardlink", ".created"]) assert.equal(existsSync(f + sfx), false, `${f}${sfx} was created`);
+      assert.equal((statSync(f).mode & 0o777) !== 0, true, `${f} permissions were changed`);
+    }
+  } finally {
+    for (const f of made) for (const sfx of ["", ".moved", ".new", ".hardlink", ".created"]) rmSync(f + sfx, { force: true });
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test("enforced: the run's TMPDIR is a private, uniquely created directory that the script may fully use", async (t) => {
+  if (!needSandbox(t)) return;
+  const dir = mk({ "own-tmp-proof.sh": `#!/usr/bin/env bash
+case "$TMPDIR" in */proof-run-*) ;; *) echo "FAIL TMPDIR is not a per-run directory: $TMPDIR"; exit 1;; esac
+echo log > "$TMPDIR/x.log"; echo more >> "$TMPDIR/x.log"; : > "$TMPDIR/x.log"
+mv "$TMPDIR/x.log" "$TMPDIR/y.log"; rm -f "$TMPDIR/y.log"
+echo "$TMPDIR" > ./tmpdir-seen.txt
+echo PASS
+` });
+  try {
+    const { code, text } = await runSandboxed(dir);
+    assert.equal(code, 0, text);
+    const seen = readFileSync(path.join(dir, "tmpdir-seen.txt"), "utf8").trim();
+    assert.equal(existsSync(seen), false, "the run directory must be removed afterwards");
+  } finally { rmSync(dir, { recursive: true }); }
 });

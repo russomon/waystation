@@ -16,7 +16,7 @@ docker info >/dev/null 2>&1 || { echo "SKIP — docker daemon not running (colim
 docker compose version >/dev/null 2>&1 || { echo "SKIP — docker compose plugin missing"; exit 0; }
 
 cleanup(){ "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true; rm -rf "$WORK"; }
-WORK=$(mktemp -d); trap cleanup EXIT
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX"); trap cleanup EXIT
 SECRET=evsecretevsecretevsecretevsecret
 
 echo "— building + starting containers —"

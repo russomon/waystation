@@ -6,11 +6,12 @@
 # so the page can grey the panel out rather than let someone discover the
 # rule by trying. Default is live, so nothing else in the suite changes.
 set -euo pipefail
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 GW=8798 MIN=9018 BUCKET=waystation-qcpreview-proof
-WORK=$(mktemp -d)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 cleanup(){ { lsof -ti:$GW; lsof -ti:$MIN; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 
@@ -30,7 +31,7 @@ SECRET=$(printf '%s\n' "$OUT" | sed -n "s/.*WAYSTATION_SESSION_SECRET='\(.*\)'.*
 [ -n "$CODE" ] && [ -n "$HASH" ] && [ -n "$SECRET" ] || { echo "FAIL - access credential generation"; exit 1; }
 
 MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-  minio server "$WORK/minio" --address :$MIN >/tmp/qcpreview-minio.log 2>&1 &
+  minio server "$WORK/minio" --address :$MIN >$TT/qcpreview-minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$MIN/minio/health/live; do sleep .2; done
 "$PY" - <<PY
 import boto3
@@ -51,16 +52,16 @@ start_gateway(){ # [WAYSTATION_QC_MODE value]
     B2_BUCKET=$BUCKET B2_REGION=us-east-1 B2_FORCE_PATH_STYLE=true \
     PIPELINE_SHARED_SECRET=proof-secret B2_EVENT_SIGNING_SECRET=event-secret \
     DEV_TRIGGER_ON_COMPLETE=false \
-    env ${1:+WAYSTATION_QC_MODE="$1"} npx tsx src/server.ts >/tmp/qcpreview-gateway.log 2>&1 & )
+    env ${1:+WAYSTATION_QC_MODE="$1"} npx tsx src/server.ts >$TT/qcpreview-gateway.log 2>&1 & )
 }
 wait_gateway(){ until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$GW/; do sleep .2; done; }
 
 # 1. an unknown mode refuses to boot; preview shows in the banner
 start_gateway bogus; sleep 3
-grep -q 'WAYSTATION_QC_MODE must be "live" or "preview"' /tmp/qcpreview-gateway.log \
+grep -q 'WAYSTATION_QC_MODE must be "live" or "preview"' $TT/qcpreview-gateway.log \
   || { echo "FAIL - an invalid WAYSTATION_QC_MODE did not refuse to start"; exit 1; }
 start_gateway preview; wait_gateway
-grep -q "qc=preview" /tmp/qcpreview-gateway.log || { echo "FAIL - banner does not show qc=preview"; exit 1; }
+grep -q "qc=preview" $TT/qcpreview-gateway.log || { echo "FAIL - banner does not show qc=preview"; exit 1; }
 echo "  invalid mode refuses to boot; preview is announced in the banner"
 
 ORIGIN=https://orbitolive.com ADMIN="$WORK/admin.cookie" CLIENT="$WORK/client.cookie"
@@ -95,7 +96,7 @@ echo "  a client sees qc:preview; QC initiate is 403 qc_preview with no row; Tra
 
 # 4. default is live: the same client may start QC when the flag is unset
 start_gateway; wait_gateway
-grep -q "qc=live" /tmp/qcpreview-gateway.log || { echo "FAIL - default banner is not qc=live"; exit 1; }
+grep -q "qc=live" $TT/qcpreview-gateway.log || { echo "FAIL - default banner is not qc=live"; exit 1; }
 curl -fsS -b "$CLIENT" http://127.0.0.1:$GW/api/session | grep -q '"qc":"live"' || { echo "FAIL - client does not see QC live by default"; exit 1; }
 R=$(initiate "$CLIENT" ',"mode":"qc"'); [ "$(printf '%s' "$R" | tail -1)" = 200 ] || { echo "FAIL - client QC initiate refused in live mode: $R"; exit 1; }
 echo "  without the flag the deployment is live and the client may start QC"

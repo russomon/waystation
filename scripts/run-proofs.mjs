@@ -20,10 +20,11 @@
 //   * network: loopback only. No other host is reachable; nothing is "approved"
 //     by the text of the script. (--external lifts this.)
 //   * docker: the Docker/Colima sockets are unreachable. (--docker lifts this.)
-//   * file writes: only the repository, a private per-run temp directory,
-//     /dev, the system temp area, and package caches. Home, other projects
-//     and `.git` are not writable; files under /tmp cannot be unlinked, so a
-//     script cannot delete a directory it did not create in its own temp dir.
+//   * file writes: only the repository and a private, uniquely created per-run
+//     temp directory (TMPDIR points at it; proofs put their logs and fixtures
+//     there). Home, /tmp, /var/folders, caches, other projects and `.git` are
+//     not writable, so no pre-existing file outside the run directory can be
+//     created over, overwritten, truncated, appended to, renamed or deleted.
 //   * file reads: `.env*`, ~/.aws, ~/.ssh, ~/.config/gcloud, ~/.docker and
 //     ~/.netrc are unreadable, so an unset B2 endpoint cannot load credentials.
 //   * signals: a script may signal only processes inside its own sandbox, so a
@@ -181,14 +182,15 @@ export function buildProfile({ repo, runTmp, home, docker = false, external = fa
     // signals: only inside this sandbox
     "(deny signal)",
     "(allow signal (target same-sandbox))",
-    // writes
+    // writes: ONLY the repository and this run's own unique temp directory (plus the
+    // null/tty/random device nodes). Shared temp areas (/tmp, /var/folders) and
+    // caches are NOT writable at all, so another program's temporary data cannot be
+    // created over, overwritten, truncated, appended to, renamed or deleted.
     "(deny file-write*)",
-    `(allow file-write* (subpath ${q(repo)}) (subpath ${q(runTmp)}) (subpath "/dev")` +
-      ` (subpath "/private/var/folders") (subpath "/private/tmp")` +
-      ` (subpath ${q(path.join(home, ".npm"))}) (subpath ${q(path.join(home, "Library/Caches"))})` +
-      ` (subpath ${q(path.join(home, ".cache"))}))`,
-    // nothing under /tmp (the run's own temp dir is elsewhere) may be unlinked
-    '(deny file-write-unlink (subpath "/private/tmp"))',
+    `(allow file-write* (subpath ${q(repo)}) (subpath ${q(runTmp)})` +
+      ` (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom")` +
+      ` (literal "/dev/tty") (literal "/dev/dtracehelper") (literal "/dev/stdout") (literal "/dev/stderr")` +
+      ` (regex #"^/dev/(fd/[0-9]+|ttys[0-9]+|pty[a-z0-9]+)$"))`,
     // never writable, even inside the repo
     `(deny file-write* (subpath ${q(path.join(repo, ".git"))}) (regex #"/\\.env[^/]*$"))`,
     // credentials unreadable
@@ -217,7 +219,16 @@ const ENV_ALLOW = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL",
 export function scrubbedEnv(source = process.env, runTmp) {
   const env = {};
   for (const k of ENV_ALLOW) if (source[k] !== undefined) env[k] = source[k];
-  if (runTmp) env.TMPDIR = runTmp;
+  if (runTmp) {
+    env.TMPDIR = runTmp;
+    // Caches go to the run's own directory too (the home caches are not writable).
+    env.XDG_CACHE_HOME = path.join(runTmp, "xdg-cache");
+    env.npm_config_cache = path.join(runTmp, "npm-cache");
+    env.npm_config_logs_dir = path.join(runTmp, "npm-logs");
+    env.npm_config_update_notifier = "false";
+    // The JVM ignores TMPDIR on macOS; point it (and its perf-data file) at the run directory.
+    env.JAVA_TOOL_OPTIONS = `-Djava.io.tmpdir=${runTmp} -XX:-UsePerfData`;
+  }
   // Belt and braces with the file-read denial: a gateway started without
   // B2_S3_ENDPOINT would try to load the repository .env. Pre-setting these keeps
   // that path closed; proofs override them as they need.

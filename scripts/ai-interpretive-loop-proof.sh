@@ -2,10 +2,11 @@
 # Full local gateway -> worker -> MinIO loop for explicit interpretation.
 # GMI is an OpenAI-compatible local mock; no cloud calls or production access.
 set -euo pipefail
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$ROOT/pipeline/.venv/bin/python"
-DATA=$(mktemp -d); WORK=$(mktemp -d)
+DATA=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX"); WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 BUCKET=waystation-test SHARED=proof-shared
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1
 export B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
@@ -14,7 +15,7 @@ trap cleanup EXIT
 cleanup_ports(){ { lsof -ti:8787; lsof -ti:8000; lsof -ti:8009; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; }
 cleanup_ports
 
-"$PY" - <<'PYEOF' >/tmp/ai-interpretive-mock-gmi.log 2>&1 &
+"$PY" - <<'PYEOF' >$TT/ai-interpretive-mock-gmi.log 2>&1 &
 import json, re, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 RISK_IDS = ["perceptual_visual_defect", "temporal_continuity_defect", "typography_defect",
@@ -77,7 +78,7 @@ until curl -s -o /dev/null -X POST http://localhost:8009/v1/chat/completions \
   -H 'content-type: application/json' --data '{"model":"probe","messages":[{"content":[]}]}' ; do sleep .2; done
 
 MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" \
-  --address :9000 --console-address :9011 >/tmp/ai-interpretive-minio.log 2>&1 &
+  --address :9000 --console-address :9011 >$TT/ai-interpretive-minio.log 2>&1 &
 until curl -sf -o /dev/null http://localhost:9000/minio/health/live; do sleep .2; done
 
 (cd "$ROOT/gateway" && env \
@@ -86,7 +87,7 @@ until curl -sf -o /dev/null http://localhost:9000/minio/health/live; do sleep .2
   PIPELINE_URL=http://localhost:8000 PIPELINE_SHARED_SECRET=$SHARED GATEWAY_PUBLIC_URL=http://localhost:8787 \
   CDN_BASE=https://cdn.test CDN_TOKEN_SECRET=dev DEV_TRIGGER_ON_COMPLETE=true \
   ALLOW_AI_INTERPRETIVE=true WAYSTATION_AUTH_MODE=disabled PORT=8787 \
-  npx tsx src/server.ts >/tmp/ai-interpretive-gateway.log 2>&1) &
+  npx tsx src/server.ts >$TT/ai-interpretive-gateway.log 2>&1) &
 until curl -sf -o /dev/null http://localhost:8787/healthz; do sleep .2; done
 
 (cd "$ROOT/pipeline" && env \
@@ -94,7 +95,7 @@ until curl -sf -o /dev/null http://localhost:8787/healthz; do sleep .2; done
   GMI_MULTIMODAL_MODEL=mock/multimodal GMI_MODEL=mock/text AI_QC_MIN_INTERVAL=0 \
   AI_INTERPRETIVE_RUN_ENABLED=true AI_INTERPRETIVE_MAX_FRAMES=2 \
   AI_INTERPRETIVE_MAX_AUDIO_WINDOWS=1 AI_INTERPRETIVE_TIMEOUT_SECONDS=10 \
-  ./.venv/bin/uvicorn worker:app --port 8000 >/tmp/ai-interpretive-worker.log 2>&1) &
+  ./.venv/bin/uvicorn worker:app --port 8000 >$TT/ai-interpretive-worker.log 2>&1) &
 until curl -sf -o /dev/null http://localhost:8000/healthz; do sleep .2; done
 
 "$PY" - <<PYEOF
@@ -145,7 +146,7 @@ PYEOF
   [ "$COUNT" = 1 ] && break
   sleep .25
 done
-[ "$COUNT" = 1 ] || { echo "FAIL explicit pipeline timeout"; tail -30 /tmp/ai-interpretive-worker.log; exit 1; }
+[ "$COUNT" = 1 ] || { echo "FAIL explicit pipeline timeout"; tail -30 $TT/ai-interpretive-worker.log; exit 1; }
 
 "$PY" - "$TID" <<'PYEOF'
 import hashlib, json, sys, urllib.request

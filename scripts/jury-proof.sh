@@ -12,10 +12,11 @@
 #   D  jury disabled (GMI_JURY_MODEL empty) → honest single_source verdicts
 #   E  same-family juror relation is disclosed; jury frames metered in details
 set -u
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
-WORK=$(mktemp -d)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 REQLOG="$WORK/gmi-requests.jsonl"
 cleanup(){ lsof -ti:8010 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$WORK"; }
 trap cleanup EXIT
@@ -25,7 +26,7 @@ command -v ffmpeg >/dev/null || { echo "SKIP — ffmpeg not installed"; exit 0; 
 # ── model-aware mock GMI: routes on BOTH prompt keywords AND requested model.
 #    Primary sees TWO text mutations (door-sign OPEN→0PEN, poster SALE→SA1E);
 #    the juror independently reproduces door-sign but reads poster as stable.
-REQLOG="$REQLOG" "$PY" - <<'PYEOF' >/tmp/jurymock.log 2>&1 &
+REQLOG="$REQLOG" "$PY" - <<'PYEOF' >$TT/jurymock.log 2>&1 &
 import json, os, re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -96,7 +97,7 @@ until curl -s -o /dev/null -X POST http://localhost:8010/v1/chat/completions \
   -H 'content-type: application/json' --data '{"messages":[{"content":"ping"}]}'; do sleep 0.3; done
 
 ffmpeg -y -f lavfi -i testsrc2=duration=4:size=640x360:rate=15 \
-  -c:v libx264 -pix_fmt yuv420p "$WORK/clip.mp4" >/tmp/juryff.log 2>&1
+  -c:v libx264 -pix_fmt yuv420p "$WORK/clip.mp4" >$TT/juryff.log 2>&1
 cat > "$WORK/source.genblaze.json" <<'JSON'
 {"schema_version":"1.5","run":{"run_id":"gen-jury","steps":[
   {"step_id":"generate","provider":"gmicloud","model":"video-gen",

@@ -8,11 +8,12 @@
 # it (owner_id), which is the durable identity docs/COMMERCIAL_DELIVERY_PLAN.md
 # says must not be deferred.
 set -euo pipefail
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 GW=8797 MIN=9017 BUCKET=waystation-codes-proof
-WORK=$(mktemp -d)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 cleanup(){ { lsof -ti:$GW; lsof -ti:$MIN; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 
@@ -37,7 +38,7 @@ SECRET=$(printf '%s\n' "$OUT" | sed -n "s/.*WAYSTATION_SESSION_SECRET='\(.*\)'.*
 [ -n "$CODE" ] && [ -n "$HASH" ] && [ -n "$SECRET" ] || { echo "FAIL - access credential generation"; exit 1; }
 
 MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-  minio server "$WORK/minio" --address :$MIN >/tmp/codes-minio.log 2>&1 &
+  minio server "$WORK/minio" --address :$MIN >$TT/codes-minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$MIN/minio/health/live; do sleep .2; done
 "$PY" - <<PY
 import boto3
@@ -58,7 +59,7 @@ start_gateway(){
     B2_BUCKET=$BUCKET B2_REGION=us-east-1 B2_FORCE_PATH_STYLE=true \
     PIPELINE_SHARED_SECRET=proof-secret B2_EVENT_SIGNING_SECRET=event-secret \
     DEV_TRIGGER_ON_COMPLETE=false \
-    npx tsx src/server.ts >/tmp/codes-gateway.log 2>&1 & )
+    npx tsx src/server.ts >$TT/codes-gateway.log 2>&1 & )
   until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$GW/; do sleep .2; done
 }
 start_gateway
@@ -98,7 +99,7 @@ assert owner is not None, "the pre-existing 'legacy' transfer row was lost in mi
 assert owner[0] is None, f"a pre-identity row was given an owner: {owner[0]!r}"
 print(f"  schema v3 migrates in place to the current v{want}; pre-identity rows keep a NULL owner")
 PY
-grep -q "senderCodes=0" /tmp/codes-gateway.log || { echo "FAIL - boot banner does not report the code count"; exit 1; }
+grep -q "senderCodes=0" $TT/codes-gateway.log || { echo "FAIL - boot banner does not report the code count"; exit 1; }
 
 ORIGIN=https://orbitolive.com ADMIN="$WORK/admin.cookie" CLIENT="$WORK/client.cookie"
 code(){ curl -s -o /dev/null -w '%{http_code}' "$@"; }
@@ -129,7 +130,7 @@ LIST=$(curl -fsS -b "$ADMIN" http://127.0.0.1:$GW/api/admin/codes)
 printf '%s' "$LIST" | grep -q "$CLIENT_CODE" && { echo "FAIL - list discloses the code"; exit 1; }
 printf '%s' "$LIST" | grep -q 'scrypt\$\|code_hash\|codeHash' && { echo "FAIL - list discloses the hash"; exit 1; }
 printf '%s' "$LIST" | grep -q '"label":"Acme Post"' || { echo "FAIL - list is missing the new code"; exit 1; }
-grep -q "$CLIENT_CODE" /tmp/codes-gateway.log && { echo "FAIL - the code reached the gateway log"; exit 1; }
+grep -q "$CLIENT_CODE" $TT/codes-gateway.log && { echo "FAIL - the code reached the gateway log"; exit 1; }
 echo "  the list shows the label and never the code or hash; the log never saw the code"
 # Two live codes never share a label — the admin revoked the wrong "RussoFree"
 # because the list could not tell two same-named rows apart.

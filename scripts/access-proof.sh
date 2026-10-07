@@ -18,10 +18,11 @@
 #   I  recipient/progress routes stay reachable WITHOUT a session (share links)
 #   J  auth disabled (dev/proof default) leaves everything open
 set -u
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
-WORK=$(mktemp -d); BUCKET=access-test
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX"); BUCKET=access-test
 GW=8795; MIN=9011
 cleanup(){ { lsof -ti:$GW; lsof -ti:$MIN; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$WORK"; }
 trap cleanup EXIT
@@ -37,7 +38,7 @@ SECRET=$(printf '%s\n' "$OUT" | sed -n "s/.*WAYSTATION_SESSION_SECRET='\(.*\)'.*
 [ -n "$CODE" ] && [ -n "$HASH" ] && [ -n "$SECRET" ] || { echo "FAIL: could not generate a code"; exit 1; }
 
 MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-  minio server "$WORK/data" --address :$MIN >/tmp/access-minio.log 2>&1 &
+  minio server "$WORK/data" --address :$MIN >$TT/access-minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://localhost:$MIN/minio/health/live; do sleep 0.3; done
 "$PY" - <<PYEOF
 import boto3
@@ -60,7 +61,7 @@ start_gw() { # $1 = auth mode
     B2_BUCKET=$BUCKET B2_REGION=us-east-1 B2_FORCE_PATH_STYLE=true \
     PIPELINE_SHARED_SECRET=ps CDN_BASE=https://cdn.test CDN_TOKEN_SECRET=d \
     B2_EVENT_SIGNING_SECRET=s \
-    npx tsx src/server.ts >"/tmp/access-gw-$1.log" 2>&1 & )
+    npx tsx src/server.ts >"$TT/access-gw-$1.log" 2>&1 & )
   until curl -sf -o /dev/null --max-time 1 http://localhost:$GW/; do sleep 0.3; done
 }
 
@@ -210,7 +211,7 @@ start_gw_env() { # $1=extra env assignments
     B2_BUCKET=$BUCKET B2_REGION=us-east-1 B2_FORCE_PATH_STYLE=true \
     PIPELINE_SHARED_SECRET=ps CDN_BASE=https://cdn.test CDN_TOKEN_SECRET=d \
     B2_EVENT_SIGNING_SECRET=s \
-    npx tsx src/server.ts >"/tmp/access-gw-limits.log" 2>&1 & )
+    npx tsx src/server.ts >"$TT/access-gw-limits.log" 2>&1 & )
   until curl -sf -o /dev/null --max-time 1 http://localhost:$GW/; do sleep 0.3; done
 }
 init_body='{"filename":"a.mp4","contentType":"video/mp4","size":1048576}'

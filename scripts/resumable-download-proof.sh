@@ -7,11 +7,12 @@
 # errors and the file looks complete, so both halves are checked — the tiling,
 # and a real interrupted download finished on a second attempt.
 set -euo pipefail
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 GW=8796 MIN=9016 BUCKET=waystation-resume-proof
-WORK=$(mktemp -d)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 cleanup(){ { lsof -ti:$GW; lsof -ti:$MIN; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 
@@ -140,7 +141,7 @@ HASH=$(printf '%s\n' "$OUT" | sed -n "s/.*WAYSTATION_ACCESS_CODE_HASH='\(.*\)'.*
 SECRET=$(printf '%s\n' "$OUT" | sed -n "s/.*WAYSTATION_SESSION_SECRET='\(.*\)'.*/\1/p")
 
 MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-  minio server "$WORK/minio" --address :$MIN >/tmp/resume-minio.log 2>&1 &
+  minio server "$WORK/minio" --address :$MIN >$TT/resume-minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$MIN/minio/health/live; do sleep .2; done
 "$PY" - <<PY
 import boto3
@@ -159,7 +160,7 @@ PY
   B2_BUCKET=$BUCKET B2_REGION=us-east-1 B2_FORCE_PATH_STYLE=true \
   PIPELINE_SHARED_SECRET=proof-secret B2_EVENT_SIGNING_SECRET=event-secret \
   DEV_TRIGGER_ON_COMPLETE=false \
-  npx tsx src/server.ts >/tmp/resume-gateway.log 2>&1 & )
+  npx tsx src/server.ts >$TT/resume-gateway.log 2>&1 & )
 until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$GW/; do sleep .2; done
 
 ORIGIN=https://orbitolive.com SENDER="$WORK/sender.cookie"

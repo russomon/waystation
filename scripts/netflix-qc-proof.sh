@@ -14,23 +14,24 @@
 # Plus: .ref sidecar accepted by /uploads/sidecar-url, .exe rejected, and a
 # signed B2 event for the .ref key does NOT trigger a second pipeline run.
 set -u
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
-DATA=$(mktemp -d); WORK=$(mktemp -d)
+DATA=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX"); WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 SECRET=evsecret; SHARED=ps; BUCKET=waystation-test
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 cleanup(){ { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
 trap cleanup EXIT
 { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true
 
-MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 --console-address :9011 >/tmp/minio.log 2>&1 &
+MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 --console-address :9011 >$TT/minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://localhost:9000/minio/health/live; do sleep 0.3; done
 ( cd "$WEB/gateway" && CDN_BASE=https://cdn.test CDN_TOKEN_SECRET=dev B2_EVENT_SIGNING_SECRET=$SECRET \
    PIPELINE_URL=http://localhost:8000 PIPELINE_SHARED_SECRET=$SHARED GATEWAY_PUBLIC_URL=http://localhost:8787 PORT=8787 \
-   npx tsx src/server.ts >/tmp/gw.log 2>&1 ) &
+   npx tsx src/server.ts >$TT/gw.log 2>&1 ) &
 until curl -sf -o /dev/null --max-time 1 http://localhost:8787/; do sleep 0.3; done
-( cd "$WEB/pipeline" && PIPELINE_SHARED_SECRET=$SHARED ./.venv/bin/uvicorn worker:app --port 8000 >/tmp/pipe.log 2>&1 ) &
+( cd "$WEB/pipeline" && PIPELINE_SHARED_SECRET=$SHARED ./.venv/bin/uvicorn worker:app --port 8000 >$TT/pipe.log 2>&1 ) &
 until curl -sf -o /dev/null --max-time 1 http://localhost:8000/healthz; do sleep 0.3; done
 echo "✓ stack up"
 
@@ -79,12 +80,12 @@ if sidecar:
         s3.upload_file(sc, "waystation-test", f"transfers/{tid}/{os.path.basename(sc)}")
 s3.upload_file(file, "waystation-test", f"transfers/{tid}/{os.path.basename(file)}", ExtraArgs={"ContentType":"video/mp4"})
 PYEOF
-  curl -N -s "http://localhost:8787/api/progress/$tid" > "/tmp/sse-$tid.log" 2>&1 &
-  until grep -q subscribed "/tmp/sse-$tid.log"; do sleep 0.2; done
+  curl -N -s "http://localhost:8787/api/progress/$tid" > "$TT/sse-$tid.log" 2>&1 &
+  until grep -q subscribed "$TT/sse-$tid.log"; do sleep 0.2; done
   curl -sS -o /dev/null -X POST http://localhost:8000/jobs -H "content-type: application/json" -H "authorization: Bearer $SHARED" \
     --data "{\"bucket\":\"$BUCKET\",\"key\":\"$key\",\"transferId\":\"$tid\",\"gatewayUrl\":\"http://localhost:8787\",\"options\":$opts}"
-  for i in $(seq 1 240); do grep -q pipeline_complete "/tmp/sse-$tid.log" && return 0; sleep 0.5; done
-  echo "TIMEOUT waiting for $tid"; tail -5 /tmp/pipe.log; return 1
+  for i in $(seq 1 240); do grep -q pipeline_complete "$TT/sse-$tid.log" && return 0; sleep 0.5; done
+  echo "TIMEOUT waiting for $tid"; tail -5 $TT/pipe.log; return 1
 }
 
 TID_A=$(uuidgen | tr 'A-Z' 'a-z'); TID_B=$(uuidgen | tr 'A-Z' 'a-z')
@@ -123,7 +124,7 @@ BODY="{\"events\":[{\"eventType\":\"b2:ObjectCreated:Upload\",\"objectName\":\"$
 SIG="v1=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')"
 curl -sS -o /dev/null -X POST http://localhost:8787/api/events/b2 -H "content-type: application/json" -H "X-Bz-Event-Notification-Signature: $SIG" --data-raw "$BODY"
 sleep 2
-RUNS=$(grep -c pipeline_started "/tmp/sse-$TID_A.log")
+RUNS=$(grep -c pipeline_started "$TT/sse-$TID_A.log")
 [ "$RUNS" = "1" ] && echo "✓ .ref event ignored (still exactly 1 pipeline run)" \
   || { echo "FAIL: ref event triggered a run ($RUNS)"; exit 1; }
 

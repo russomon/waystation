@@ -3,7 +3,7 @@
 set -u
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 command -v ffmpeg >/dev/null || { echo "SKIP - ffmpeg not installed"; exit 0; }

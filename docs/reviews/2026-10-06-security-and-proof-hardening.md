@@ -32,7 +32,7 @@
 
 ### 4. Proof runner
 - `scripts/run-proofs.mjs` (`npm run proofs`): discovers `*-proof.sh`; reports `PASS`/`FAIL`/`SKIP`/`NOT_RUN`; a full pass alone prints `ACCEPTED`; skips and not-runs print `INCOMPLETE, NOT AN ACCEPTANCE` (exit 2); failures exit 1; `--only`/`--skip` is labelled a selection.
-- **Enforcement, not text scanning** (after review finding 2): each script runs inside a macOS `sandbox-exec` profile that allows network to this machine only, blocks the Docker/Colima sockets, confines file writes to the repository (never `.git` or `.env*`), a private per-run temp dir and the system temp area (nothing under `/tmp` can be unlinked), blocks reads of `.env*` and cloud/SSH credential directories, and permits signals only to processes inside the sandbox. With no sandbox available every script is `NOT_RUN`; there is no unsandboxed mode. `--docker` and `--external` lift the socket and network limits. The old text scan survives only as an early refusal for docker/external use; a clean scan authorizes nothing, and the review-exemption file was deleted.
+- **Enforcement, not text scanning** (after review finding 2): each script runs inside a macOS `sandbox-exec` profile that allows network to this machine only, blocks the Docker/Colima sockets, confines file writes to the repository (never `.git` or `.env*`) and a private, uniquely created per-run temp directory (shared `/tmp`, `/var/folders` and home caches are not writable at all), blocks reads of `.env*` and cloud/SSH credential directories, and permits signals only to processes inside the sandbox. With no sandbox available every script is `NOT_RUN`; there is no unsandboxed mode. `--docker` and `--external` lift the socket and network limits. The old text scan survives only as an early refusal for docker/external use; a clean scan authorizes nothing, and the review-exemption file was deleted.
 - **Ports**: a script is `NOT_RUN` while a port it names listens on IPv4 **or** IPv6 loopback (after review finding 4).
 - The sandbox reaches this machine's own addresses but no other host; Docker proofs need an explicit `--docker`.
 
@@ -45,13 +45,17 @@
 | 3. `toggle` deleted `/tmp/toggle-work` | `proof-review.json` deleted. `toggle-proof.sh` now reads its clip from its own `mktemp` directory and removes nothing outside it. | The sandbox would also refuse the old `rm`. `toggle` passes in both suite runs. |
 | 4. IPv6 listeners missed; port-wide kills | Port preflight probes `127.0.0.1` and `::1`. The sandbox prevents signalling strangers. `upload-recovery`, `mediated-download` and `storage-renewal` proofs now signal only process trees they started (the other proofs still `lsof`-kill by port; the sandbox makes that harmless, and NEXT_STEPS item 7 keeps the cleanup). | Deterministic IPv4/IPv6 probe tests, plus a real `::1` listener test (skipped where `::1` is unavailable; it ran here). |
 
+## Second repair: shared temporary areas (re-review finding at `0df8918`)
+
+The first sandbox still allowed writes throughout `/private/tmp` and `/private/var/folders` and only blocked unlinking, so another program's temporary file could be overwritten, truncated or renamed. Now the profile allows writes only to the repository and the run's own directory (plus null/tty/random device nodes). `TMPDIR`, npm and XDG caches and the JVM temp dir point into that directory, and every proof now keeps its logs and fixtures there: 22 scripts use `$TT` (= `$TMPDIR`) instead of fixed `/tmp/...` paths, and all 28 that make temp directories call `mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX"` (BSD `mktemp -d` ignores `TMPDIR`). The two Docker proofs' `/tmp` paths are inside their containers and were left alone; `triage-proof.sh` only passes a non-existent path string. New tests prove a bystander file in `/private/tmp`, in the system temp area and in `~/.cache` cannot be overwritten, truncated, appended to, renamed over, hard-linked, chmod-ed, deleted, or given a created sibling, and that the run directory is private, fully usable and removed afterwards. Restoring the old permissive profile makes three tests fail.
+
 ## Validation run (all local; no live service, credential or production access)
 
 | Command | Result |
 |---|---|
 | `( cd gateway && npx tsc --noEmit )` | pass |
 | `( cd gateway && npm test )` | 16 of 16 pass |
-| `node --test scripts/test/*.test.mjs` (`npm run test:runner`) | 38 of 38 pass (34 runner incl. real-sandbox enforcement, 4 decision-record checks) |
+| `node --test scripts/test/*.test.mjs` (`npm run test:runner`) | 40 of 40 pass (36 runner incl. real-sandbox enforcement, 4 decision-record checks) |
 | `npm -w client run build`, pipeline `import worker` | pass (before the repairs; no source touched since) |
 | `node scripts/run-proofs.mjs` (whole suite, **sandboxed**, rerun after the repairs) | **44 passed, 1 failed, 0 skipped, 4 not run of 49: FAILED, not an acceptance** (the same result as the earlier unsandboxed run) |
 

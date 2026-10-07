@@ -15,7 +15,7 @@ set -u
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
-WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX"); trap 'rm -rf "$WORK"' EXIT
 command -v ffmpeg >/dev/null || { echo "SKIP — ffmpeg not installed"; exit 0; }
 [ -x "$PY" ] || { echo "SKIP — pipeline venv not built"; exit 0; }
 

@@ -12,10 +12,11 @@
 #   6  --publish writes a COMPLIANCE-locked WORM object (MinIO); the locked
 #      version cannot be deleted
 set -u
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
-WORK=$(mktemp -d); DATA=$(mktemp -d)
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX"); DATA=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 MODEFILE="$WORK/mockmode"; REQLOG="$WORK/req.jsonl"
 BUCKET=waystation-prof-test
 cleanup(){ { lsof -ti:8010; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$WORK" "$DATA"; }
@@ -25,8 +26,8 @@ command -v ffmpeg >/dev/null || { echo "SKIP — ffmpeg not installed"; exit 0; 
 command -v minio >/dev/null || { echo "SKIP — minio not installed"; exit 0; }
 
 echo "=== 1. control class: bad_framerate (fully offline) ==="
-bash "$WEB/scripts/proficiency.sh" --class bad_framerate --out "$WORK/ctl" >/tmp/prof-ctl.log 2>&1 \
-  || { echo "FAIL: control run"; tail -5 /tmp/prof-ctl.log; exit 1; }
+bash "$WEB/scripts/proficiency.sh" --class bad_framerate --out "$WORK/ctl" >$TT/prof-ctl.log 2>&1 \
+  || { echo "FAIL: control run"; tail -5 $TT/prof-ctl.log; exit 1; }
 "$PY" - "$WORK/ctl/proficiency-bad_framerate.json" <<'PYEOF'
 import json, sys
 doc = json.load(open(sys.argv[1]))
@@ -40,7 +41,7 @@ PYEOF
 echo "=== 2. text-lane scoring branches (mock model, two modes) ==="
 # mode-file-driven mock: 'stable' transcribes identical text everywhere;
 # 'mutate' returns a mutated string after the first crop of every track.
-MODEFILE="$MODEFILE" REQLOG="$REQLOG" "$PY" - <<'PYEOF' >/tmp/profmock.log 2>&1 &
+MODEFILE="$MODEFILE" REQLOG="$REQLOG" "$PY" - <<'PYEOF' >$TT/profmock.log 2>&1 &
 import json, os, re
 from http.server import BaseHTTPRequestHandler, HTTPServer
 MODEFILE, REQLOG = os.environ["MODEFILE"], os.environ["REQLOG"]
@@ -91,7 +92,7 @@ run_text() { # $1=mode $2=outdir
   GMI_API_KEY=mock GMI_BASE_URL=http://localhost:8010 GMI_MULTIMODAL_MODEL=mock-primary \
   AI_QC_MIN_INTERVAL=0 \
   bash "$WEB/scripts/proficiency.sh" --class rendered_text_mutation --out "$2" \
-    >/tmp/prof-text-$1.log 2>&1 || { echo "FAIL: text run ($1)"; tail -5 /tmp/prof-text-$1.log; exit 1; }
+    >$TT/prof-text-$1.log 2>&1 || { echo "FAIL: text run ($1)"; tail -5 $TT/prof-text-$1.log; exit 1; }
 }
 run_text stable "$WORK/stable"
 run_text mutate "$WORK/mutate"
@@ -139,7 +140,7 @@ print("  citation ✓ (draft UNCALIBRATED; exact EXACT; mismatch names keys)")
 PYEOF
 
 echo "=== 5. dirty-worktree refusal (isolated temp repo) ==="
-SCRATCH_REPO=$(mktemp -d)
+SCRATCH_REPO=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 ( cd "$SCRATCH_REPO" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
   echo dirty > uncommitted.txt )
 set +e
@@ -154,7 +155,7 @@ echo "$OUT" | grep -q "refusing to publish from a dirty worktree" && [ "$RC" != 
 rm -rf "$SCRATCH_REPO"
 
 echo "=== 6. --publish writes WORM manifest (MinIO object-lock) ==="
-MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 >/tmp/prof-minio.log 2>&1 &
+MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 >$TT/prof-minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://localhost:9000/minio/health/live; do sleep 0.3; done
 "$PY" - <<PYEOF
 import boto3; from botocore.config import Config
@@ -163,13 +164,13 @@ s3 = boto3.client("s3", endpoint_url="http://localhost:9000", region_name="us-ea
                   config=Config(s3={"addressing_style": "path"}))
 s3.create_bucket(Bucket="$BUCKET", ObjectLockEnabledForBucket=True)
 PYEOF
-CLEAN_REPO=$(mktemp -d)
+CLEAN_REPO=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 ( cd "$CLEAN_REPO" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 WAYSTATION_REPO_DIR="$CLEAN_REPO" MANIFEST_LOCK_DAYS=1 \
 B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 B2_KEY_ID=minioadmin \
 B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true \
 bash "$WEB/scripts/proficiency.sh" --class bad_framerate --publish --out "$WORK/pub" \
-  >/tmp/prof-pub.log 2>&1 || { echo "FAIL: publish run"; tail -8 /tmp/prof-pub.log; exit 1; }
+  >$TT/prof-pub.log 2>&1 || { echo "FAIL: publish run"; tail -8 $TT/prof-pub.log; exit 1; }
 rm -rf "$CLEAN_REPO"
 "$PY" - <<PYEOF
 import boto3, json, sys; from botocore.config import Config

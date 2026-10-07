@@ -8,19 +8,20 @@
 # period, not an object whose row has a malformed id, and nothing at all in
 # dry-run mode, which is the default.
 set -euo pipefail
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 GW=8800 MIN=9020 BUCKET=waystation-purge-proof
-WORK=$(mktemp -d)
-LOG=/tmp/purge-gateway.log
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
+LOG=$TT/purge-gateway.log
 cleanup(){ { lsof -ti:$GW; lsof -ti:$MIN; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 command -v minio >/dev/null || { echo "SKIP - minio not installed"; exit 0; }
 [ -x "$PY" ] || { echo "SKIP - pipeline venv not built"; exit 0; }
 
 MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-  minio server "$WORK/minio" --address :$MIN >/tmp/purge-minio.log 2>&1 &
+  minio server "$WORK/minio" --address :$MIN >$TT/purge-minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$MIN/minio/health/live; do sleep .2; done
 
 s3py(){ "$PY" - "$@" <<PY

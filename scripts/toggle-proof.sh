@@ -7,24 +7,25 @@
 #   T3  no options sent   → everything runs (back-compat default)
 # Plus: /uploads/sidecar-url rejects non-.srt/.vtt filenames.
 set -u
+TT="${TMPDIR:-/tmp}"; TT="${TT%/}"; export TT   # this run's own temp area: the proof runner points TMPDIR at a private directory
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
-DATA=$(mktemp -d); WORK=$(mktemp -d)
+DATA=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX"); WORK=$(mktemp -d "${TMPDIR:-/tmp}/proof.XXXXXX")
 SECRET=evsecret; SHARED=ps; BUCKET=waystation-test
 export B2_S3_ENDPOINT=http://localhost:9000 B2_REGION=us-east-1 B2_KEY_ID=minioadmin B2_APP_KEY=minioadmin B2_BUCKET=$BUCKET B2_FORCE_PATH_STYLE=true
 cleanup(){ { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$DATA" "$WORK"; }
 trap cleanup EXIT
 { lsof -ti:8787; lsof -ti:8000; lsof -ti:9000; } 2>/dev/null | xargs kill -9 2>/dev/null || true
 
-MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 --console-address :9011 >/tmp/minio.log 2>&1 &
+MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin minio server "$DATA" --address :9000 --console-address :9011 >$TT/minio.log 2>&1 &
 until curl -sf -o /dev/null --max-time 1 http://localhost:9000/minio/health/live; do sleep 0.3; done
 ( cd "$WEB/gateway" && CDN_BASE=https://cdn.test CDN_TOKEN_SECRET=dev B2_EVENT_SIGNING_SECRET=$SECRET \
    DEV_TRIGGER_ON_COMPLETE=true \
    PIPELINE_URL=http://localhost:8000 PIPELINE_SHARED_SECRET=$SHARED GATEWAY_PUBLIC_URL=http://localhost:8787 PORT=8787 \
-   npx tsx src/server.ts >/tmp/gw.log 2>&1 ) &
+   npx tsx src/server.ts >$TT/gw.log 2>&1 ) &
 until curl -sf -o /dev/null --max-time 1 http://localhost:8787/; do sleep 0.3; done
-( cd "$WEB/pipeline" && PIPELINE_SHARED_SECRET=$SHARED ./.venv/bin/uvicorn worker:app --port 8000 >/tmp/pipe.log 2>&1 ) &
+( cd "$WEB/pipeline" && PIPELINE_SHARED_SECRET=$SHARED ./.venv/bin/uvicorn worker:app --port 8000 >$TT/pipe.log 2>&1 ) &
 until curl -sf -o /dev/null --max-time 1 http://localhost:8000/healthz; do sleep 0.3; done
 echo "✓ stack up"
 
@@ -36,7 +37,7 @@ except Exception: pass
 PYEOF
 
 ffmpeg -y -f lavfi -i testsrc=duration=3:size=640x360:rate=15 -f lavfi -i sine=frequency=440:duration=3 \
-  -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$WORK/clip.mp4" >/tmp/ff.log 2>&1
+  -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$WORK/clip.mp4" >$TT/ff.log 2>&1
 cat > "$WORK/caps.srt" <<'SRT'
 1
 00:00:00,200 --> 00:00:01,400
@@ -51,6 +52,7 @@ SRT
 # with options), i.e. exactly what client/src/uploader.ts does.
 send() { # $1=tid-logfile-tag $2=optionsJSON-or-"null" $3=sidecar-or-""
   "$PY" - "$1" "$2" "$3" "$WORK/clip.mp4" <<'PYEOF'
+TT = __import__("os").environ["TT"]
 import json, sys, urllib.request, subprocess
 tag, opts_json, sidecar, clip = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 GW = "http://localhost:8787/api"
@@ -61,12 +63,12 @@ data = open(clip,"rb").read()
 up = post("/uploads", {"filename":"clip.mp4","contentType":"video/mp4","size":len(data)})
 key, uid = up["key"], up["uploadId"]
 tid = key.split("/")[1]
-open(f"/tmp/sse-cmd-{tag}","w").write(tid)
+open(f"{TT}/sse-cmd-{tag}","w").write(tid)
 # subscribe to SSE before completing
-sse = subprocess.Popen(["curl","-N","-s",f"{GW}/progress/{tid}"], stdout=open(f"/tmp/sse-{tag}.log","w"))
+sse = subprocess.Popen(["curl","-N","-s",f"{GW}/progress/{tid}"], stdout=open(f"{TT}/sse-{tag}.log","w"))
 import time
 for _ in range(50):
-    if "subscribed" in open(f"/tmp/sse-{tag}.log").read(): break
+    if "subscribed" in open(f"{TT}/sse-{tag}.log").read(): break
     time.sleep(0.2)
 urls = post("/uploads/parts", {"key":key,"uploadId":uid,"partNumbers":[1]})["urls"]
 req = urllib.request.Request(urls["1"], data, method="PUT"); urllib.request.urlopen(req)
@@ -83,7 +85,7 @@ PYEOF
 # the clip is read from this run's own $WORK (mktemp), never from a fixed shared path
 
 wait_sse() { # $1=tag $2=needle
-  for i in $(seq 1 120); do grep -q "$2" "/tmp/sse-$1.log" && return 0; sleep 0.5; done; return 1
+  for i in $(seq 1 120); do grep -q "$2" "$TT/sse-$1.log" && return 0; sleep 0.5; done; return 1
 }
 
 echo "— T1: transfer only (all off) —"
@@ -95,16 +97,16 @@ BODY="{\"events\":[{\"eventType\":\"b2:ObjectCreated:Upload\",\"objectName\":\"$
 SIG="v1=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')"
 curl -sS -o /dev/null -X POST http://localhost:8787/api/events/b2 -H "content-type: application/json" -H "X-Bz-Event-Notification-Signature: $SIG" --data-raw "$BODY"
 sleep 2
-echo "✓ T1 skipped ($(grep -c pipeline_skipped /tmp/sse-t1.log) skips, $(grep -c pipeline_started /tmp/sse-t1.log || true) starts)"
+echo "✓ T1 skipped ($(grep -c pipeline_skipped $TT/sse-t1.log) skips, $(grep -c pipeline_started $TT/sse-t1.log || true) starts)"
 
 echo "— T2: caption QC only —"
 T2=$(send t2 '{"qc_av":false,"qc_captions":true,"qc_ai":false,"thumbnail":false,"summarize":false}' "$WORK/caps.srt")
-wait_sse t2 pipeline_complete || { echo "FAIL: T2 never completed"; tail -5 /tmp/pipe.log; exit 1; }
+wait_sse t2 pipeline_complete || { echo "FAIL: T2 never completed"; tail -5 $TT/pipe.log; exit 1; }
 echo "✓ T2 completed"
 
 echo "— T3: no options (default = all on) —"
 T3=$(send t3 'null' "")
-wait_sse t3 pipeline_complete || { echo "FAIL: T3 never completed"; tail -5 /tmp/pipe.log; exit 1; }
+wait_sse t3 pipeline_complete || { echo "FAIL: T3 never completed"; tail -5 $TT/pipe.log; exit 1; }
 echo "✓ T3 completed"
 
 echo "— sidecar-url validation —"
@@ -127,6 +129,7 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8787/api/
 
 echo "=== assertions ==="
 "$PY" - "$T1" "$T2" "$T3" <<'PYEOF'
+TT = __import__("os").environ["TT"]
 import boto3, json, sys; from botocore.config import Config
 t1, t2, t3 = sys.argv[1:4]
 s3=boto3.client("s3",endpoint_url="http://localhost:9000",region_name="us-east-1",aws_access_key_id="minioadmin",aws_secret_access_key="minioadmin",config=Config(s3={"addressing_style":"path"}))
@@ -137,7 +140,7 @@ ok = True
 # T1: transfer-only → nothing derived, and the event path never started a run
 d1 = derivs(t1); print(f"  T1 derivatives: {d1 or '(none)'}")
 if d1: print("  FAIL: transfer-only produced derivatives"); ok = False
-sse1 = open("/tmp/sse-t1.log").read()
+sse1 = open(TT + "/sse-t1.log").read()
 if "pipeline_started" in sse1: print("  FAIL: transfer-only pipeline ran"); ok = False
 if sse1.count("pipeline_skipped") < 2: print("  FAIL: event path did not skip via stored options"); ok = False
 # T2: caption QC only
@@ -151,7 +154,7 @@ caps = {"captions_present","caption_timing","caption_readability"}
 print(f"  T2 checks: {sorted(names)}")
 if names & av: print("  FAIL: AV checks ran while qc_av=false"); ok = False
 if not caps <= names: print("  FAIL: caption checks missing"); ok = False
-sse2 = open("/tmp/sse-t2.log").read()
+sse2 = open(TT + "/sse-t2.log").read()
 skipped = [json.loads(l[6:])["step"] for l in sse2.splitlines() if l.startswith("data:") and '"step_skipped"' in l]
 print(f"  T2 steps skipped: {skipped}")
 if not {"thumbnail","summarize"} <= set(skipped): print("  FAIL: skip events missing"); ok = False
