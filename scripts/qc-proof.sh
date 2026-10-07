@@ -117,7 +117,30 @@ for tid in ("$TID_A","$TID_B"):
     if n!=1: print("  FAIL: sidecar event triggered a pipeline run"); ok=False
 ua=usage("$TID_A")["totals"]
 print("  metering (clean):", {k:f'{v["units"]} {v["unit"]}' for k,v in ua.items()})
-if "qc" not in ua or "thumbnail" not in ua: print("  FAIL: metering missing entries"); ok=False
+if "qc" not in ua: print("  FAIL: metering missing the qc entry"); ok=False
+# Poster billing contract (pipeline/worker.py, since 61b0105): a poster is billed only
+# when a GMI call was made. This stack has no GMI key, so the poster is the free
+# deterministic fallback: the poster object must exist, the step must say it made no
+# model call, it must carry no billable block, and the ledger must hold no thumbnail
+# charge. (The billed, AI-selected case is scripts/thumbnail-metering-proof.sh.)
+def sse_events(tid):
+    out=[]
+    for line in open(f"$TT/sse-{tid}.log").read().splitlines():
+        if line.startswith("data:"):
+            try: out.append(json.loads(line[5:]))
+            except ValueError: pass
+    return out
+for tid in ("$TID_A","$TID_B"):
+    thumbs=[e for e in sse_events(tid) if e.get("step")=="thumbnail" and e.get("type")=="step_done"]
+    if len(thumbs)!=1: print(f"  FAIL: {tid[:8]} expected one thumbnail step_done, got {len(thumbs)}"); ok=False; continue
+    t=thumbs[0]
+    if t.get("selection_method")!="deterministic_fallback": print(f"  FAIL: {tid[:8]} selection_method={t.get('selection_method')!r}"); ok=False
+    if t.get("gmi_model_calls")!=0: print(f"  FAIL: {tid[:8]} gmi_model_calls={t.get('gmi_model_calls')!r}"); ok=False
+    if "billable" in t: print(f"  FAIL: {tid[:8]} free fallback poster carries a billable block"); ok=False
+    try: s3.head_object(Bucket="$BUCKET",Key=f"derivatives/{tid}/thumb.jpg")
+    except Exception as e: print(f"  FAIL: {tid[:8]} poster object missing: {e}"); ok=False
+    if "thumbnail" in usage(tid)["totals"]: print(f"  FAIL: {tid[:8]} ledger charges a thumbnail for a free fallback poster"); ok=False
+print("  thumbnail (both clips): deterministic_fallback, 0 model calls, no billable block, no ledger charge, poster present")
 print("PASS ✓  AV QC + caption QC + sidecar filter + metering" if ok else "FAIL")
 sys.exit(0 if ok else 1)
 PYEOF
