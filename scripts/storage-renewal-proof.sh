@@ -17,7 +17,10 @@ WEB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PY="$WEB/pipeline/.venv/bin/python"
 GW=8799 MIN=9019 BUCKET=waystation-renewal-proof TTL=2
 WORK=$(mktemp -d)
-cleanup(){ { lsof -ti:$GW; lsof -ti:$MIN; } 2>/dev/null | xargs kill -9 2>/dev/null || true; rm -rf "$WORK"; }
+OWNED=()
+killtree(){ local c; for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done; kill -9 "$1" 2>/dev/null || true; }
+# Only processes THIS script started are signalled, never "whatever listens on the port".
+cleanup(){ for p in ${OWNED[@]+"${OWNED[@]}"}; do killtree "$p"; done; rm -rf "$WORK"; }
 trap cleanup EXIT
 command -v minio >/dev/null || { echo "SKIP - minio not installed"; exit 0; }
 [ -x "$PY" ] || { echo "SKIP - pipeline venv not built"; exit 0; }
@@ -30,6 +33,7 @@ SECRET=$(printf '%s\n' "$OUT" | sed -n "s/.*WAYSTATION_SESSION_SECRET='\(.*\)'.*
 
 MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
   minio server "$WORK/minio" --address :$MIN >/tmp/renewal-minio.log 2>&1 &
+OWNED+=($!)
 until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$MIN/minio/health/live; do sleep .2; done
 "$PY" - <<PY
 import boto3
@@ -50,7 +54,8 @@ PY
   B2_BUCKET=$BUCKET B2_REGION=us-east-1 B2_FORCE_PATH_STYLE=true \
   PIPELINE_SHARED_SECRET=proof-secret B2_EVENT_SIGNING_SECRET=event-secret \
   DEV_TRIGGER_ON_COMPLETE=false \
-  npx tsx src/server.ts >/tmp/renewal-gateway.log 2>&1 & )
+  npx tsx src/server.ts >/tmp/renewal-gateway.log 2>&1 & echo $! >"$WORK/gw.pid" )
+OWNED+=($(cat "$WORK/gw.pid"))
 until curl -sf -o /dev/null --max-time 1 http://127.0.0.1:$GW/; do sleep .2; done
 
 ORIGIN=https://orbitolive.com SENDER="$WORK/sender.cookie" RECIPIENT="$WORK/recipient.cookie"

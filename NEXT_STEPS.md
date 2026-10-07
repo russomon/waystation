@@ -32,9 +32,9 @@
    - **Done When**: ledger events feed Stripe or Lago meters, and upload ceilings are expressed per owner and in bytes instead of a global daily count (ADR-028). Today `MAX_DAILY_JOBS` is a global count that gives the twenty-first sender an opaque refusal.
    - **Blocked By**: A pricing decision from the owner.
 
-7. **[P2] Make the proof suite safe to run unattended and green**
-   - **Target**: `scripts/*-proof.sh`, `scripts/run-proofs.mjs`, `scripts/proof-review.json`
-   - **Done When**: the proofs stop binding fixed ports (8787, 8000, 9000, others) and killing whatever listens on them, so the runner's port refusal is no longer needed; the four docker proofs (`archive-tools-docker`, `broadcast-qc-docker`, `compute`, `docker`) have been inspected and run in an isolated project, and `node scripts/run-proofs.mjs --docker` prints `ACCEPTED`. `scripts/qc-proof.sh` currently FAILS on `main` as well as on the review branch ("metering missing entries": the usage ledger lacks a `thumbnail` entry); diagnose it as part of this item. The runner exists; the latest local result is in `docs/reviews/2026-10-06-security-and-proof-hardening.md`.
+7. **[P2] Finish making the proof suite green and self-contained**
+   - **Target**: `scripts/*-proof.sh`, `scripts/run-proofs.mjs`
+   - **Done When**: the proofs stop binding fixed ports (8787, 8000, 9000, others) and killing whatever listens on them (they should kill only the process IDs they started, and use fixed `/tmp` log paths no longer); `scripts/qc-proof.sh` is diagnosed and fixed (it fails identically on `main` at `b16a109`: "metering missing entries", no `thumbnail` ledger entry); the four docker proofs (`archive-tools-docker`, `broadcast-qc-docker`, `compute`, `docker`) have been inspected and run with `--docker` in an isolated project; and `node scripts/run-proofs.mjs --docker` prints `ACCEPTED`. The runner already enforces its limits with a sandbox; the latest local result is in `docs/reviews/2026-10-06-security-and-proof-hardening.md`.
    - **Blocked By**: Owner approval to build and run the worker image on the shared Docker daemon (it also hosts unrelated containers).
 
 8. **[P2] Owner confirmations of earlier work**

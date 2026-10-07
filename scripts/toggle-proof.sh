@@ -50,14 +50,14 @@ SRT
 # Upload through the REAL gateway flow (initiate → presigned PUT → complete
 # with options), i.e. exactly what client/src/uploader.ts does.
 send() { # $1=tid-logfile-tag $2=optionsJSON-or-"null" $3=sidecar-or-""
-  "$PY" - "$1" "$2" "$3" <<'PYEOF'
+  "$PY" - "$1" "$2" "$3" "$WORK/clip.mp4" <<'PYEOF'
 import json, sys, urllib.request, subprocess
-tag, opts_json, sidecar = sys.argv[1], sys.argv[2], sys.argv[3]
+tag, opts_json, sidecar, clip = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 GW = "http://localhost:8787/api"
 def post(p, body):
     r = urllib.request.urlopen(urllib.request.Request(GW+p, json.dumps(body).encode(), {"content-type":"application/json"}))
     return json.loads(r.read())
-data = open(f"/tmp/toggle-work/clip.mp4","rb").read()
+data = open(clip,"rb").read()
 up = post("/uploads", {"filename":"clip.mp4","contentType":"video/mp4","size":len(data)})
 key, uid = up["key"], up["uploadId"]
 tid = key.split("/")[1]
@@ -80,7 +80,7 @@ post("/uploads/complete", body)
 print(tid)
 PYEOF
 }
-rm -rf /tmp/toggle-work; mkdir -p /tmp/toggle-work; cp "$WORK/clip.mp4" /tmp/toggle-work/
+# the clip is read from this run's own $WORK (mktemp), never from a fixed shared path
 
 wait_sse() { # $1=tag $2=needle
   for i in $(seq 1 120); do grep -q "$2" "/tmp/sse-$1.log" && return 0; sleep 0.5; done; return 1

@@ -31,8 +31,19 @@
 - **Findings, not fixed**: the email `fromEmail` is unverified; `publicBaseUrl` can fall back to the `Origin` header.
 
 ### 4. Proof runner
-- `scripts/run-proofs.mjs` (`npm run proofs`): discovers `*-proof.sh`; reports `PASS`/`FAIL`/`SKIP`/`NOT_RUN`; a full pass alone prints `ACCEPTED`; skips and not-runs print `INCOMPLETE, NOT AN ACCEPTANCE` (exit 2); failures exit 1; `--only`/`--skip` is labelled a selection. It scans each script and refuses it without `--docker`, `--external`, `--credentials` or `--destructive`, refuses when a port the script would bind or terminate is in use (several proofs kill whatever listens on 8787, 8000 and 9000), and runs scripts with a scrubbed environment. Reviews of benign scan hits (`agentic-qc`, `toggle`) live in `scripts/proof-review.json`, bound to the script hash.
-- **Tests**: 25 in `scripts/test/run-proofs.test.mjs`, covering pass, fail, skip, partial skip, exit 0 with FAIL, timeout, opt-in refusal, port refusal, credential scrubbing, reviews, acceptance and exit codes. Two mutations (skips accepted; exit code ignored) were caught.
+- `scripts/run-proofs.mjs` (`npm run proofs`): discovers `*-proof.sh`; reports `PASS`/`FAIL`/`SKIP`/`NOT_RUN`; a full pass alone prints `ACCEPTED`; skips and not-runs print `INCOMPLETE, NOT AN ACCEPTANCE` (exit 2); failures exit 1; `--only`/`--skip` is labelled a selection.
+- **Enforcement, not text scanning** (after review finding 2): each script runs inside a macOS `sandbox-exec` profile that allows network to this machine only, blocks the Docker/Colima sockets, confines file writes to the repository (never `.git` or `.env*`), a private per-run temp dir and the system temp area (nothing under `/tmp` can be unlinked), blocks reads of `.env*` and cloud/SSH credential directories, and permits signals only to processes inside the sandbox. With no sandbox available every script is `NOT_RUN`; there is no unsandboxed mode. `--docker` and `--external` lift the socket and network limits. The old text scan survives only as an early refusal for docker/external use; a clean scan authorizes nothing, and the review-exemption file was deleted.
+- **Ports**: a script is `NOT_RUN` while a port it names listens on IPv4 **or** IPv6 loopback (after review finding 4).
+- The sandbox reaches this machine's own addresses but no other host; Docker proofs need an explicit `--docker`.
+
+## Repairs after review (findings at `344bb02`)
+
+| Finding | Repair | Evidence |
+|---|---|---|
+| 1. `DECISIONS.md` was erased | **My error**: a one-line Python edit opened the file for writing before reading it, truncating it in the item-3 commit. Restored from `276df3a`, ADR-040/041 re-added; ADR-001..037 are byte-identical to `main` except ADR-031's added pointer to ADR-040. | New `scripts/test/context-refs.test.mjs`: at least 41 ADRs, consecutive ids, every ADR has Status/Decision/Rationale/Invariant/Date in order, every `ADR-NNN` cited in tracked docs exists. |
+| 2. Safety gate failed open | Replaced the scan gate with OS enforcement (above). | Real-sandbox tests: a connect hidden in a variable is refused with `EPERM` while loopback works; a nested helper script is equally confined; deleting a directory via a variable under `$HOME` or `/tmp` fails; writes to `$HOME`, `.git` and `.env` reads fail; a foreign process survives a `kill -9` while the script's own child can be signalled. Four weakenings of the profile (network, unlink, signals, IPv6 probe) were each caught. |
+| 3. `toggle` deleted `/tmp/toggle-work` | `proof-review.json` deleted. `toggle-proof.sh` now reads its clip from its own `mktemp` directory and removes nothing outside it. | The sandbox would also refuse the old `rm`. `toggle` passes in both suite runs. |
+| 4. IPv6 listeners missed; port-wide kills | Port preflight probes `127.0.0.1` and `::1`. The sandbox prevents signalling strangers. `upload-recovery`, `mediated-download` and `storage-renewal` proofs now signal only process trees they started (the other proofs still `lsof`-kill by port; the sandbox makes that harmless, and NEXT_STEPS item 7 keeps the cleanup). | Deterministic IPv4/IPv6 probe tests, plus a real `::1` listener test (skipped where `::1` is unavailable; it ran here). |
 
 ## Validation run (all local; no live service, credential or production access)
 
@@ -40,14 +51,13 @@
 |---|---|
 | `( cd gateway && npx tsc --noEmit )` | pass |
 | `( cd gateway && npm test )` | 16 of 16 pass |
-| `node --test scripts/test/run-proofs.test.mjs` | 25 of 25 pass |
-| `npm -w client run build` | pass |
-| pipeline `import worker` check | pass |
-| `node scripts/run-proofs.mjs` (whole suite, once, at `c324342` plus the then-uncommitted runner) | **44 passed, 1 failed, 0 skipped, 4 not run of 49: FAILED, not an acceptance** |
+| `node --test scripts/test/*.test.mjs` (`npm run test:runner`) | 38 of 38 pass (34 runner incl. real-sandbox enforcement, 4 decision-record checks) |
+| `npm -w client run build`, pipeline `import worker` | pass (before the repairs; no source touched since) |
+| `node scripts/run-proofs.mjs` (whole suite, **sandboxed**, rerun after the repairs) | **44 passed, 1 failed, 0 skipped, 4 not run of 49: FAILED, not an acceptance** (the same result as the earlier unsandboxed run) |
 
-- **Failed**: `qc` (`scripts/qc-proof.sh`: "metering missing entries", no `thumbnail` ledger entry). It fails identically on a detached worktree of `main` at `b16a109` (created and removed by this session), so it predates these changes. Not diagnosed.
-- **Not run**: `archive-tools-docker`, `broadcast-qc-docker`, `compute`, `docker`. They need Docker; the daemon here also hosts unrelated containers and two of them build the full worker image. They need `--docker` and owner approval (NEXT_STEPS item 7).
-- **Unverified**: no live deployment, no real Cloudflare/Stripe/Resend/B2 behaviour, no browser UI, no test of the email or `/admin/stats` routes, and the proofs touched here ran once, not repeatedly.
+- **Failed**: `qc` (`scripts/qc-proof.sh`: "metering missing entries", no `thumbnail` ledger entry). It fails identically on a detached worktree of `main` at `b16a109`, so it predates these changes. Not diagnosed.
+- **Not run**: `archive-tools-docker`, `broadcast-qc-docker`, `compute`, `docker`. They need Docker; the daemon also hosts unrelated containers and two of them build the full worker image. They need `--docker` and owner approval (NEXT_STEPS item 7).
+- **Unverified**: no live deployment, no real Cloudflare/Stripe/Resend/B2 behaviour, no browser UI, no test of the email or `/admin/stats` routes. Sandbox enforcement is verified on macOS only; elsewhere the runner refuses to run anything.
 
 ## Deployment prerequisites (not executed)
 1. Confirm `WAYSTATION_PUBLIC_API_ORIGIN` (`https://api.orbitolive.com` in both compose files) matches the tunnel hostname; without a valid https origin the gateway will not start.

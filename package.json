@@ -12,6 +12,6 @@
     "build:wasm": "cd crates/blake3-outboard && wasm-pack build --target web --out-dir pkg",
     "build:wasm:node": "cd crates/blake3-outboard && wasm-pack build --target nodejs --out-dir pkg-node",
     "proofs": "node scripts/run-proofs.mjs",
-    "test:runner": "node --test scripts/test/run-proofs.test.mjs"
+    "test:runner": "node --test scripts/test/*.test.mjs"
   }
 }

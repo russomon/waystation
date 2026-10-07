@@ -2,29 +2,40 @@
 // Discovery-based proof runner.
 //
 //   node scripts/run-proofs.mjs [--list] [--only a,b] [--skip a,b]
-//        [--docker] [--external] [--credentials] [--destructive]
-//        [--timeout SECONDS] [--json FILE] [--dir DIR]
+//        [--docker] [--external] [--timeout SECONDS] [--json FILE] [--dir DIR]
 //
-// It discovers `*-proof.sh` under scripts/ (or --dir), runs them one at a time
-// in a scrubbed environment, and reports each as exactly one of:
+// It discovers `*-proof.sh` under scripts/ (or --dir), runs them one at a time,
+// and reports each as exactly one of:
 //
 //   PASS     exit 0, no SKIP line, no FAIL line
 //   FAIL     non-zero exit, a timeout, or exit 0 while printing a FAIL line
 //   SKIP     the script ran but declared it skipped (missing tool, partial run)
 //   NOT_RUN  the runner refused to start it (see the reason)
 //
-// "Ends in -proof.sh" does not make a script safe. Before running, each script
-// is scanned and the run is refused (NOT_RUN) unless the matching opt-in flag is
-// given:
-//   --docker       uses docker / colima (builds or runs containers)
-//   --external     contacts a non-loopback host or runs a cloud/provider CLI
-//   --credentials  reads an env file or credential store
-//   --destructive  deletes outside its own temp dir, or force-kills by name
-// A scan hit that is benign for one exact script (say, a command that only
-// appears inside a string literal) can be recorded in scripts/proof-review.json,
-// bound to that script's sha256; editing the script invalidates the review.
-// and it is also refused when a port it would bind or terminate is already in
-// use, because several scripts kill whatever listens on their ports.
+// SAFETY MODEL. A proof script is arbitrary shell, and a text scan of it cannot
+// prove it harmless (a URL or a path can sit in a variable, a script can call
+// another script). So nothing here relies on reading the script. Every script
+// runs inside an OS sandbox (macOS sandbox-exec) that ENFORCES the limits:
+//
+//   * network: loopback only. No other host is reachable; nothing is "approved"
+//     by the text of the script. (--external lifts this.)
+//   * docker: the Docker/Colima sockets are unreachable. (--docker lifts this.)
+//   * file writes: only the repository, a private per-run temp directory,
+//     /dev, the system temp area, and package caches. Home, other projects
+//     and `.git` are not writable; files under /tmp cannot be unlinked, so a
+//     script cannot delete a directory it did not create in its own temp dir.
+//   * file reads: `.env*`, ~/.aws, ~/.ssh, ~/.config/gcloud, ~/.docker and
+//     ~/.netrc are unreadable, so an unset B2 endpoint cannot load credentials.
+//   * signals: a script may signal only processes inside its own sandbox, so a
+//     `lsof -ti:PORT | xargs kill` cannot terminate a process it did not start.
+//
+// If the sandbox is unavailable (not macOS, or sandbox-exec cannot be applied),
+// every script is NOT_RUN: there is no unsandboxed mode. The old text scan
+// remains only as an early, friendlier refusal for docker and external-network
+// use; it is never what authorizes a run.
+//
+// A script is also refused (NOT_RUN) when a port it names is already in use on
+// either IPv4 or IPv6 loopback, so it does not collide with a running stack.
 //
 // Acceptance is never implied by a partial result. Exit codes:
 //   0  every discovered script PASSED (a full-suite acceptance), or, with
@@ -33,10 +44,10 @@
 //   2  no FAIL, but at least one SKIP or NOT_RUN: INCOMPLETE, not an acceptance
 //   3  usage or internal error
 
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -51,43 +62,25 @@ export function discover(dir) {
     .map((f) => path.join(dir, f));
 }
 
-// ───────── static scan ─────────
+// ───────── advisory scan (never an authorization) ─────────
 
-const stripComments = (text) =>
-  text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+const stripComments = (text) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
 
-const LOOPBACK = String.raw`(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0|host\.docker\.internal)`;
-
-/** Pure: what a script needs permission for, and which ports it touches. */
+/** Pure. Early, friendly refusal for docker / external use, plus the ports a
+ *  script names. A clean scan authorizes nothing: the sandbox is the control. */
 export function scan(text) {
   const code = stripComments(text);
   const needs = new Set();
   const why = [];
   const flag = (need, reason) => { needs.add(need); why.push(`${need}: ${reason}`); };
-
   if (/(^|[\s;&|(])(docker|colima|docker-compose|podman)(\s|$)/m.test(code)) flag("docker", "uses docker/colima");
-
-  // A fetch of a non-loopback literal host. `.test`, `.example`, `.invalid` and
-  // `.localhost` are reserved names, used in the proofs as config values only.
+  const loopback = String.raw`(?:127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0|host\.docker\.internal)`;
   const reserved = String.raw`[^/\s"']*\.(?:test|example|invalid|localhost)\b`;
-  const hostRe = new RegExp(String.raw`\b(?:curl|wget)\b[^\n]*?https?://(?!${LOOPBACK}|${reserved})[A-Za-z0-9]`, "m");
-  const pyRe = new RegExp(String.raw`\b(?:urlopen|requests\.(?:get|post)|httpx\.|fetch)\(\s*[f]?["']https?://(?!${LOOPBACK}|${reserved})[A-Za-z0-9]`, "m");
+  const hostRe = new RegExp(String.raw`\b(?:curl|wget)\b[^\n]*?https?://(?!${loopback}|${reserved})[A-Za-z0-9]`, "m");
+  const pyRe = new RegExp(String.raw`\b(?:urlopen|requests\.(?:get|post)|httpx\.|fetch)\(\s*[f]?["']https?://(?!${loopback}|${reserved})[A-Za-z0-9]`, "m");
   if (hostRe.test(code) || pyRe.test(code)) flag("external", "fetches a non-loopback host");
   if (/(^|[\s;&|(])(aws|b2|gcloud|wrangler|cloudflared|stripe|ssh|scp|rsync|sftp|gh)\s/m.test(code))
     flag("external", "runs a cloud/provider/remote CLI");
-
-  if (/(^|[\s;&|(])(source|\.)\s+[^\s;]*\.env\b(?!\.example)/m.test(code)
-      || /\b(?:cat|less|more|grep|cp|mv)\s+[^\s;|]*\.env\b(?!\.example)/m.test(code)
-      || /--env-file|\bset\s+-a\b|~\/\.aws|\.aws\/credentials|\.netrc|\.ssh\//.test(code))
-    flag("credentials", "reads an env file or credential store");
-
-  if (/\brm\s+-[a-zA-Z]*[rR][a-zA-Z]*\s+(?:["']?(?:\/|~|\.\.|\$HOME|\$\{HOME\}))/m.test(code)
-      || /\b(?:pkill|killall)\b/.test(code)
-      || /\bdocker\s+(?:volume|system|network)\s+(?:rm|prune)/.test(code)
-      || /\bgit\s+(?:reset\s+--hard|clean\s+-[a-z]*f|push|checkout\s+--|stash\s+drop)/.test(code)
-      || /\bsudo\b|\bsysctl\b|\bpfctl\b|\bifconfig\b/.test(code))
-    flag("destructive", "deletes outside its temp dir, force-kills by name, or changes git/host state");
-
   return { needs: [...needs].sort(), why, ports: portsOf(code) };
 }
 
@@ -105,8 +98,8 @@ export function portsOf(code) {
   return [...ports].sort((a, b) => a - b);
 }
 
-/** True when something already listens on 127.0.0.1:port or [::1]:port. */
-export function portInUse(port, host = "127.0.0.1") {
+/** True when something accepts a connection on host:port. */
+export function probe(port, host) {
   return new Promise((resolve) => {
     const s = net.connect({ port, host });
     const done = (v) => { s.destroy(); resolve(v); };
@@ -114,6 +107,14 @@ export function portInUse(port, host = "127.0.0.1") {
     s.once("connect", () => done(true));
     s.once("error", () => done(false));
   });
+}
+
+/** A port is in use if EITHER loopback family has a listener. IPv4 alone is not
+ *  enough: a process bound to ::1 is invisible to a 127.0.0.1 probe. The probe is
+ *  injectable so both families are covered by deterministic tests. */
+export async function portInUse(port, probeFn = probe) {
+  for (const host of ["127.0.0.1", "::1"]) if (await probeFn(port, host)) return true;
+  return false;
 }
 
 // ───────── result classification ─────────
@@ -157,17 +158,69 @@ export function summarize(results, { discovered, selected }) {
   return { counts, verdict, exitCode, acceptance: exitCode === 0 && !partial && selected > 0 };
 }
 
+// ───────── the sandbox ─────────
+
+const q = (p) => JSON.stringify(p); // SBPL string literal
+
+/** Pure: the SBPL profile that ENFORCES the limits described at the top. */
+export function buildProfile({ repo, runTmp, home, docker = false, external = false }) {
+  const rules = [
+    "(version 1)",
+    "(allow default)",
+    // network
+    ...(external ? [] : [
+      "(deny network-outbound)",
+      '(allow network-outbound (remote ip "localhost:*"))',
+      "(allow network-outbound (remote unix-socket))",
+    ]),
+    ...(docker ? [] : [
+      '(deny network-outbound (remote unix-socket (path-regex #"docker[^/]*\\.sock$")))',
+      '(deny network-outbound (remote unix-socket (path-regex #"/\\.colima/")))',
+      '(deny network-outbound (remote unix-socket (path-regex #"/\\.docker/")))',
+    ]),
+    // signals: only inside this sandbox
+    "(deny signal)",
+    "(allow signal (target same-sandbox))",
+    // writes
+    "(deny file-write*)",
+    `(allow file-write* (subpath ${q(repo)}) (subpath ${q(runTmp)}) (subpath "/dev")` +
+      ` (subpath "/private/var/folders") (subpath "/private/tmp")` +
+      ` (subpath ${q(path.join(home, ".npm"))}) (subpath ${q(path.join(home, "Library/Caches"))})` +
+      ` (subpath ${q(path.join(home, ".cache"))}))`,
+    // nothing under /tmp (the run's own temp dir is elsewhere) may be unlinked
+    '(deny file-write-unlink (subpath "/private/tmp"))',
+    // never writable, even inside the repo
+    `(deny file-write* (subpath ${q(path.join(repo, ".git"))}) (regex #"/\\.env[^/]*$"))`,
+    // credentials unreadable
+    `(deny file-read* (subpath ${q(path.join(home, ".aws"))}) (subpath ${q(path.join(home, ".ssh"))})` +
+      ` (subpath ${q(path.join(home, ".config/gcloud"))}) (subpath ${q(path.join(home, ".docker"))})` +
+      ` (literal ${q(path.join(home, ".netrc"))}) (regex #"/\\.env[^/]*$"))`,
+    // .env.example stays readable (it holds no secret)
+    `(allow file-read* (literal ${q(path.join(repo, ".env.example"))}))`,
+  ];
+  return rules.join("\n");
+}
+
+/** Can sandbox-exec actually apply a profile here? (It cannot be nested.) */
+export function sandboxAvailable() {
+  if (process.platform !== "darwin") return { ok: false, reason: "sandbox enforcement is only implemented for macOS (sandbox-exec)" };
+  const r = spawnSync("sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"], { stdio: "ignore" });
+  if (r.error || r.status !== 0) return { ok: false, reason: "sandbox-exec cannot be applied in this environment (already sandboxed?)" };
+  return { ok: true, reason: "" };
+}
+
 // ───────── execution ─────────
 
 /** Only these variables reach a proof. Ambient credentials never do. */
-const ENV_ALLOW = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "TERM", "JAVA_HOME",
+const ENV_ALLOW = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TERM", "JAVA_HOME",
   "HOMEBREW_PREFIX", "HOMEBREW_CELLAR", "HOMEBREW_REPOSITORY"];
-export function scrubbedEnv(source = process.env) {
+export function scrubbedEnv(source = process.env, runTmp) {
   const env = {};
   for (const k of ENV_ALLOW) if (source[k] !== undefined) env[k] = source[k];
-  // A gateway started without B2_S3_ENDPOINT loads the repository .env, which
-  // holds real credentials. Pre-setting these (to an unroutable loopback port)
-  // keeps that path closed for any script; proofs override them as they need.
+  if (runTmp) env.TMPDIR = runTmp;
+  // Belt and braces with the file-read denial: a gateway started without
+  // B2_S3_ENDPOINT would try to load the repository .env. Pre-setting these keeps
+  // that path closed; proofs override them as they need.
   env.B2_S3_ENDPOINT = "http://127.0.0.1:9";
   env.B2_KEY_ID = "runner-synthetic";
   env.B2_APP_KEY = "runner-synthetic";
@@ -175,12 +228,16 @@ export function scrubbedEnv(source = process.env) {
   return env;
 }
 
-export function runScript(file, { timeoutMs, cwd, env = scrubbedEnv(), keepBytes = 8192 }) {
+export function runScript(file, { timeoutMs, cwd, repo, docker = false, external = false, keepBytes = 8192 }) {
   return new Promise((resolve) => {
     const started = Date.now();
     let output = "";
     let timedOut = false;
-    const child = spawn("bash", [file], { cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    const runTmp = realpathSync(mkdtempSync(path.join(os.tmpdir(), "proof-run-")));
+    const home = process.env.HOME ?? os.homedir();
+    const profile = buildProfile({ repo, runTmp, home, docker, external });
+    const child = spawn("sandbox-exec", ["-p", profile, "bash", file],
+      { cwd, env: scrubbedEnv(process.env, runTmp), stdio: ["ignore", "pipe", "pipe"], detached: true });
     const take = (b) => { output += b.toString("utf8"); if (output.length > 4_000_000) output = output.slice(-2_000_000); };
     child.stdout.on("data", take);
     child.stderr.on("data", take);
@@ -189,60 +246,38 @@ export function runScript(file, { timeoutMs, cwd, env = scrubbedEnv(), keepBytes
       timedOut = true; killGroup("SIGTERM");
       setTimeout(() => killGroup("SIGKILL"), 10_000).unref();
     }, timeoutMs);
-    child.on("error", (e) => { clearTimeout(timer); resolve({ code: null, signal: null, timedOut, output: String(e), ms: Date.now() - started, tail: String(e) }); });
-    child.on("close", (code, signal) => {
+    const finish = (code, signal) => {
       clearTimeout(timer);
+      killGroup("SIGKILL"); // anything the script left running inside its own group
+      try { rmSync(runTmp, { recursive: true, force: true }); } catch { /* our own temp dir; best effort */ }
       resolve({ code, signal, timedOut, output, ms: Date.now() - started, tail: output.slice(-keepBytes) });
-    });
+    };
+    child.on("error", (e) => { output += String(e); finish(null, null); });
+    child.on("close", finish);
   });
 }
 
 export const nameOf = (file) => path.basename(file).replace(/-proof\.sh$/, "");
 
-export const sha256 = (text) => createHash("sha256").update(text).digest("hex");
-
-/** Decide whether to run a script, from its scan, the opt-in flags and an optional
- *  human review. A review is a recorded judgment that a scan hit is benign for
- *  THIS exact script (bound to its sha256), for example a string literal that the
- *  scanner mistook for a command. Editing the script invalidates it. */
-export async function gate(scanResult, flags, inUse = portInUse, review = null, hash = "") {
-  const missing = [];
-  let stale = false;
-  for (const need of scanResult.needs) {
-    if (flags[need]) continue;
-    if (review && Array.isArray(review.allow) && review.allow.includes(need)) {
-      if (review.sha256 === hash) continue;
-      stale = true;
-    }
-    missing.push(need);
-  }
-  if (missing.length) {
-    const detail = scanResult.why.filter((w) => missing.includes(w.split(":")[0])).join("; ");
-    return { run: false, reason: stale
-      ? `reviewed exception is stale: the script changed since it was reviewed (${detail})`
-      : `needs --${missing.join(" --")} (${detail})` };
-  }
+/** Decide whether to start a script. The scan only refuses early; it never authorizes. */
+export async function gate(scanResult, flags, inUse = portInUse) {
+  const missing = scanResult.needs.filter((n) => !flags[n]);
+  if (missing.length)
+    return { run: false, reason: `needs --${missing.join(" --")} (${scanResult.why.filter((w) => missing.includes(w.split(":")[0])).join("; ")})` };
   for (const p of scanResult.ports)
-    if (await inUse(p)) return { run: false, reason: `port ${p} is already in use; the script would bind or terminate its owner` };
+    if (await inUse(p)) return { run: false, reason: `port ${p} is already in use (IPv4 or IPv6 loopback); not starting a script that binds it` };
   return { run: true, reason: "" };
-}
-
-export function loadReviews(file) {
-  if (!file || !existsSync(file)) return {};
-  const data = JSON.parse(readFileSync(file, "utf8"));
-  return data && typeof data === "object" ? data : {};
 }
 
 // ───────── CLI ─────────
 
 export function parseArgs(argv) {
-  const o = { list: false, only: [], skip: [], docker: false, external: false, credentials: false, destructive: false,
-    timeout: 900, json: null, dir: null };
+  const o = { list: false, only: [], skip: [], docker: false, external: false, timeout: 900, json: null, dir: null };
   const need = (i, name) => { if (i + 1 >= argv.length) throw new Error(`${name} needs a value`); return argv[i + 1]; };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--list") o.list = true;
-    else if (["--docker", "--external", "--credentials", "--destructive"].includes(a)) o[a.slice(2)] = true;
+    else if (a === "--docker" || a === "--external") o[a.slice(2)] = true;
     else if (a === "--only") { o.only = need(i, a).split(",").filter(Boolean); i++; }
     else if (a === "--skip") { o.skip = need(i, a).split(",").filter(Boolean); i++; }
     else if (a === "--timeout") { o.timeout = Number(need(i, a)); i++; if (!(o.timeout > 0)) throw new Error("--timeout must be a positive number of seconds"); }
@@ -256,16 +291,16 @@ export function parseArgs(argv) {
 
 const matches = (name, terms) => terms.some((t) => name === t || name.includes(t));
 
-export async function main(argv, { out = (s) => process.stdout.write(s + "\n"), inUse = portInUse } = {}) {
+export async function main(argv, { out = (s) => process.stdout.write(s + "\n"), inUse = portInUse, sandbox = sandboxAvailable() } = {}) {
   let opts;
   try { opts = parseArgs(argv); } catch (e) { out(`error: ${e.message}`); return 3; }
   if (opts.help) {
-    out("usage: node scripts/run-proofs.mjs [--list] [--only a,b] [--skip a,b] [--docker] [--external] [--credentials] [--destructive] [--timeout S] [--json FILE] [--dir DIR]");
+    out("usage: node scripts/run-proofs.mjs [--list] [--only a,b] [--skip a,b] [--docker] [--external] [--timeout S] [--json FILE] [--dir DIR]");
     return 0;
   }
   const here = path.dirname(fileURLToPath(import.meta.url));
   const dir = path.resolve(opts.dir ?? here);
-  const repo = path.resolve(dir, opts.dir ? "." : "..");
+  const repo = realpathSync(path.resolve(dir, opts.dir ? "." : ".."));
   let files;
   try { files = discover(dir); } catch (e) { out(`error: cannot read ${dir}: ${e.message}`); return 3; }
   const discovered = files.length;
@@ -274,27 +309,28 @@ export async function main(argv, { out = (s) => process.stdout.write(s + "\n"), 
   const selectedFiles = files.filter((f) =>
     (opts.only.length === 0 || matches(nameOf(f), opts.only)) && !matches(nameOf(f), opts.skip));
 
-  let reviews;
-  try { reviews = loadReviews(path.join(dir, "proof-review.json")); } catch (e) { out(`error: proof-review.json is not valid JSON: ${e.message}`); return 3; }
   const results = [];
   for (const file of selectedFiles) {
     const name = nameOf(file);
-    const text = readFileSync(file, "utf8");
-    const sc = scan(text);
+    const sc = scan(readFileSync(file, "utf8"));
     if (opts.list) {
-      const rv = reviews[name];
-      const reviewed = rv && rv.sha256 === sha256(text) ? ` reviewed=[${(rv.allow ?? []).join(",")}]` : rv ? " review=STALE" : "";
-      out(`${name.padEnd(28)} needs=[${sc.needs.join(",")}] ports=[${sc.ports.join(",")}]${reviewed}`);
+      out(`${name.padEnd(28)} needs=[${sc.needs.join(",")}] ports=[${sc.ports.join(",")}]`);
       continue;
     }
-    const g = await gate(sc, opts, inUse, reviews[name] ?? null, sha256(text));
+    if (!sandbox.ok) {
+      const reason = `no enforcement available: ${sandbox.reason}`;
+      results.push({ name, status: STATUS.NOT_RUN, reason, ms: 0 });
+      out(`NOT_RUN  ${name}  (${reason})`);
+      continue;
+    }
+    const g = await gate(sc, opts, inUse);
     if (!g.run) {
       results.push({ name, status: STATUS.NOT_RUN, reason: g.reason, ms: 0 });
       out(`NOT_RUN  ${name}  (${g.reason})`);
       continue;
     }
     out(`running  ${name} ...`);
-    const r = await runScript(file, { timeoutMs: opts.timeout * 1000, cwd: repo });
+    const r = await runScript(file, { timeoutMs: opts.timeout * 1000, cwd: repo, repo, docker: opts.docker, external: opts.external });
     const c = classifyResult(r);
     results.push({ name, status: c.status, reason: c.reason, ms: r.ms, tail: c.status === STATUS.PASS ? undefined : r.tail });
     out(`${c.status.padEnd(8)} ${name}  ${(r.ms / 1000).toFixed(1)}s${c.reason ? `  (${c.reason})` : ""}`);
