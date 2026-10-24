@@ -165,8 +165,13 @@ folder is a parent `transfers` row with no object; each file is a member
 transfer whose password, expiry, revocation and download allowance come from the
 folder (`accessTransferId` in `db.ts`). `GET /transfers/:folderId` lists the tree;
 the delivery page (`folderDelivery.ts`) rebuilds it with `showDirectoryPicker`
-where available, each file through the same verified ranged download, and links
-every file to its own page.
+where available, each file through the same verified ranged download. Single
+files are saved from the same page (a save dialog and the verified download, or
+the plain mediated link where there is no dialog); a member has no page of its
+own, and its link redirects to the folder. Chrome will not grant a site write
+access to the whole of Desktop, Documents, Downloads or the home folder, so the
+page tells the recipient to choose or create a folder inside one; an empty
+picked folder receives the tree directly.
 
 ## Persistence and state
 

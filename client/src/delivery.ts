@@ -304,6 +304,12 @@ export async function renderDelivery(id: string, root: HTMLElement) {
       renderFolder(got, root);
       return;
     }
+    if (got.parentId) {
+      // A file from a folder has no page of its own: its download lives in the
+      // folder view, so an old or hand-made member link lands there instead.
+      location.replace(`?t=${encodeURIComponent(got.parentId)}`);
+      return;
+    }
     t = got;
   } catch (error) {
     if (error instanceof GatewayError && error.code === "recipient_password_required") {
@@ -335,14 +341,6 @@ export async function renderDelivery(id: string, root: HTMLElement) {
 
   root.textContent = "";
   const card = el(`<div class="deliv"></div>`);
-  if (t.parentId) {
-    // A single file opened from a folder link: the way back to the whole folder.
-    const back = document.createElement("a");
-    back.className = "back-link";
-    back.href = `?t=${encodeURIComponent(t.parentId)}`;
-    back.textContent = "← Back to the folder";
-    card.append(back);
-  }
   if (thumb) card.append(el(`<img class="thumb" src="${thumb.url}" alt="preview" />`));
   if (thumbSelection) {
     const selectionStatus = el(`<p class="meta"></p>`);

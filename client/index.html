@@ -53,7 +53,13 @@
       .queue-file { min-width: 0; }
       .queue-file strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .queue-file span { color: var(--mut); font-size: 12.5px; }
-      .pick-folder { margin: -.3rem 0 .7rem; font-size: 13px; }
+      .pick-folder { display: flex; align-items: center; justify-content: center; gap: .55rem; width: 100%;
+                     min-height: 48px; margin: -.2rem 0 .7rem; padding: .65rem 1.2rem; border: 2px dashed #cbd5e1;
+                     border-radius: 8px; background: transparent; color: inherit; font: inherit; font-size: 15px;
+                     font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s; }
+      .pick-folder:hover:not([disabled]) { border-color: var(--blue); }
+      .pick-folder:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+      .pick-folder[disabled] { cursor: not-allowed; opacity: .55; }
       .queue-tree { margin-top: .25rem; font-size: 12.5px; color: var(--mut); }
       .queue-tree summary { cursor: pointer; }
       .queue-tree ul { margin: .3rem 0 0; padding-left: 1rem; max-height: 12rem; overflow: auto; }
@@ -130,13 +136,18 @@
       .dlprog { margin-top: .7rem; }
       .folder-deliv h1 { margin: 0 0 .2rem; font-size: 1.35rem; overflow-wrap: anywhere; }
       .folder-tree { list-style: none; margin: 1rem 0 0; padding: 0; border-top: 1px solid var(--line); }
-      .folder-tree li { display: flex; align-items: center; gap: .6rem; padding: .35rem 0; border-bottom: 1px solid var(--line); min-width: 0; }
+      .folder-tree li { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; padding: .35rem 0; border-bottom: 1px solid var(--line); min-width: 0; }
       .folder-tree .folder-dir { font-weight: 600; }
       .folder-tree .folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .folder-tree .meta { margin: 0; white-space: nowrap; }
       .folder-tree .meta.bad { color: #ef4444; }
       .btn.small { min-height: 0; padding: .3rem .8rem; font-size: 13px; }
-      .back-link { display: inline-block; margin-bottom: .6rem; font-size: 13px; }
+      .folder-hint { margin: .5rem 0 0; font-size: 13px; }
+      .folder-files { margin-top: 1.2rem; }
+      .folder-files summary { cursor: pointer; font-weight: 600; padding: .3rem 0; }
+      .folder-files summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+      .folder-tree .fileprog { flex-basis: 100%; }
+      .folder-tree .fileprog .dlrow { margin-top: .2rem; font-size: 12px; }
       @media (max-width: 560px) { .folder-tree li { flex-wrap: wrap; } .folder-tree .folder-name { flex-basis: 100%; } }
       .dlbar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
       .dlbar span { display: block; height: 100%; width: 0; background: var(--blue); transition: width .2s linear; }
@@ -179,7 +190,8 @@
       .card, .deliv { border-color: var(--line); border-radius: 8px; background: var(--surface);
                       box-shadow: 0 18px 60px rgba(0,0,0,.2); }
       .mode-switch button[aria-selected="true"] { color: var(--black); background: var(--amber-light); }
-      .pick { border-color: #5b5548; }
+      .pick, .pick-folder { border-color: #5b5548; }
+      .pick-folder svg { color: var(--amber-light); }
       .pick.has-file, .pick.dragging { border-color: var(--blue); background: #242012; }
       .pick.disabled { background: var(--bg); }
       .remove-file:hover { color: #fca5a5; background: #321818; }
@@ -301,6 +313,8 @@
       .progress-track:first-child .progress-bar span { background: var(--green); }
       .share-link { display: grid; grid-template-columns: minmax(0, 1fr) 42px; gap: .5rem;
                     align-items: center; margin-top: .7rem; }
+      .share-label { grid-column: 1 / -1; margin-bottom: -.25rem; font-weight: 600; color: var(--amber-light); }
+      .share-label .muted { font-weight: 400; color: var(--mut); }
       .share-link a { overflow-wrap: anywhere; font: 12.5px/1.5 'IBM Plex Mono', monospace; }
       .preview-note { margin: 0 0 .9rem; padding: .6rem .8rem; border: 1px solid var(--blue); border-radius: 6px;
                       background: #242012; color: var(--amber-light); font: 13px/1.45 'IBM Plex Mono', monospace; }
@@ -412,8 +426,8 @@
           <strong id="pickTitle">Choose or drop files</strong>
           <span class="muted" id="fname">Select files or drag them here to calculate transfer cost</span>
         </label>
-        <p class="pick-folder"><button type="button" class="link-btn" id="pickFolder">Or choose a whole folder</button>
-          <input id="folderIn" type="file" webkitdirectory multiple hidden /></p>
+        <button type="button" class="pick-folder" id="pickFolder">Or choose a whole folder</button>
+        <input id="folderIn" type="file" webkitdirectory multiple hidden />
         <ul class="queue" id="fileQueue" aria-label="Files ready to send" hidden></ul>
         <p class="queue-note" id="queueNote" aria-live="polite"></p>
 
@@ -539,7 +553,7 @@
              the upload runs) and auto-sends when the upload completes; also usable
              manually. Optional — "copy the link" above always works. -->
         <div class="email-form" id="emailForm" hidden>
-          <div class="email-head">Email the download link</div>
+          <div class="email-head">Email the download link <span class="muted">(optional)</span></div>
           <p class="field-help" id="emailIntro">Enter recipients and we'll email the link when your upload finishes. You can also just copy the link above.</p>
           <label class="field-label" for="emailFrom">Your email</label>
           <input id="emailFrom" type="email" autocomplete="email" placeholder="you@example.com" />

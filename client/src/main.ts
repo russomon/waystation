@@ -1,4 +1,4 @@
-import { Check, Copy, Eye, EyeOff, createElement as createIcon } from "lucide";
+import { Check, Copy, Eye, EyeOff, Folder, createElement as createIcon } from "lucide";
 import { loadStripe, type Stripe, type StripeElements } from "@stripe/stripe-js";
 import {
   createSession, endSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, gwPost, recipientLink,
@@ -802,6 +802,7 @@ if (tid) {
     if (fileIn.files) addFiles(fileIn.files);
   };
   const folderIn = $<HTMLInputElement>("#folderIn");
+  pickFolderBtn.prepend(icon(Folder));
   pickFolderBtn.addEventListener("click", () => { if (!sending) folderIn.click(); });
   folderIn.onchange = () => {
     const picked = folderIn.files;
@@ -949,6 +950,13 @@ if (tid) {
   const appendShareLink = (row: HTMLDivElement, link: string): void => {
     const wrap = document.createElement("div");
     wrap.className = "share-link";
+    const label = document.createElement("div");
+    label.className = "share-label";
+    label.append("Download link ");
+    const hint = document.createElement("span");
+    hint.className = "muted";
+    hint.textContent = "— send this to your recipient";
+    label.append(hint);
     const anchor = document.createElement("a");
     anchor.href = link;
     anchor.textContent = link;
@@ -976,7 +984,7 @@ if (tid) {
         copied.textContent = "Could not copy. Select the link to copy it manually.";
       }
     };
-    wrap.append(anchor, copyButton, copied);
+    wrap.append(label, anchor, copyButton, copied);
     row.append(wrap);
   };
 
