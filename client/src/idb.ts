@@ -11,10 +11,12 @@
 // version is safe whether the database is new, at v1 with only uploads, or
 // already current.
 const DB = "waystation";
-const VERSION = 2;
+const VERSION = 3;
 
 export const UPLOADS = "uploads";
 export const DOWNLOADS = "downloads";
+/** Whole-folder downloads: the destination directory and which files are done. */
+export const FOLDER_DOWNLOADS = "folderDownloads";
 
 export function db(): Promise<IDBDatabase> {
   return new Promise((res, rej) => {
@@ -23,6 +25,7 @@ export function db(): Promise<IDBDatabase> {
       const d = r.result;
       if (!d.objectStoreNames.contains(UPLOADS)) d.createObjectStore(UPLOADS, { keyPath: "fp" });
       if (!d.objectStoreNames.contains(DOWNLOADS)) d.createObjectStore(DOWNLOADS, { keyPath: "transferId" });
+      if (!d.objectStoreNames.contains(FOLDER_DOWNLOADS)) d.createObjectStore(FOLDER_DOWNLOADS, { keyPath: "folderId" });
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);

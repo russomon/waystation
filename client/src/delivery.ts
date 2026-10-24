@@ -13,10 +13,14 @@ import {
   type DownloadResume,
 } from "./downloadResume.js";
 import { pool } from "./uploader.js";
+import { renderFolder, type FolderListing } from "./folderDelivery.js";
 
 interface Asset { key: string; url: string; mime: string; size: number; }
-interface Transfer {
+export interface Transfer {
+  kind?: "file";
   transferId: string;
+  /** Set for a file inside a folder. */
+  parentId?: string | null;
   original: Asset & { filename: string };
   blake3Root: string | null;
   verificationMode?: "range" | "root";
@@ -35,7 +39,7 @@ const fmt = formatBytes;
 
 /** Duration as m:ss, or h:mm:ss past an hour. A 26 GB download runs for tens of
  *  minutes, so "1847s" is not a useful thing to show a person. */
-const hms = (secs: number): string => {
+export const hms = (secs: number): string => {
   if (!Number.isFinite(secs) || secs < 0) return "—";
   const s = Math.round(secs);
   const h = Math.floor(s / 3600);
@@ -84,7 +88,7 @@ const VERIFY_OUTBOARD_MAX = 256 << 20;
 /** Fetch the bao outboard if it is small enough to hold, else null with a
  *  reason. Never throws: verification is a bonus, and failing to get the
  *  sidecar must not stop a download that would otherwise work. */
-async function loadOutboard(url: string): Promise<{ outboard: Uint8Array } | { skip: string }> {
+export async function loadOutboard(url: string): Promise<{ outboard: Uint8Array } | { skip: string }> {
   try {
     const head = await fetch(url, { headers: { Range: "bytes=0-0" } });
     const len = Number(head.headers.get("content-range")?.split("/")[1] ?? 0);
@@ -124,7 +128,7 @@ async function drain(
  *
  *  `onProgress` receives the TOTAL bytes written so far, not a delta, because a
  *  fallback restarts from zero and the caller must be able to follow it down. */
-async function saveToDisk(
+export async function saveToDisk(
   url: string,
   total: number,
   writable: any,
@@ -214,7 +218,7 @@ async function saveToDisk(
  *  handle, so it says nothing useful about an external drive or another
  *  partition. A confident wrong prediction is worse than none — so this reports
  *  the fact at the moment it becomes one. */
-const isOutOfSpace = (e: unknown): boolean => {
+export const isOutOfSpace = (e: unknown): boolean => {
   const err = e as { name?: string; message?: string };
   return String(err?.name ?? "") === "QuotaExceededError"
     || /no space|not enough space|disk full|insufficient|quota/.test(String(err?.message ?? "").toLowerCase());
@@ -295,7 +299,12 @@ export async function renderDelivery(id: string, root: HTMLElement) {
   root.textContent = "Loading transfer…";
   let t: Transfer;
   try {
-    t = await gwGet(`/transfers/${id}`);
+    const got: Transfer | FolderListing = await gwGet(`/transfers/${id}`);
+    if (got.kind === "folder") {
+      renderFolder(got, root);
+      return;
+    }
+    t = got;
   } catch (error) {
     if (error instanceof GatewayError && error.code === "recipient_password_required") {
       renderUnlock(id, root);
@@ -326,6 +335,14 @@ export async function renderDelivery(id: string, root: HTMLElement) {
 
   root.textContent = "";
   const card = el(`<div class="deliv"></div>`);
+  if (t.parentId) {
+    // A single file opened from a folder link: the way back to the whole folder.
+    const back = document.createElement("a");
+    back.className = "back-link";
+    back.href = `?t=${encodeURIComponent(t.parentId)}`;
+    back.textContent = "← Back to the folder";
+    card.append(back);
+  }
   if (thumb) card.append(el(`<img class="thumb" src="${thumb.url}" alt="preview" />`));
   if (thumbSelection) {
     const selectionStatus = el(`<p class="meta"></p>`);

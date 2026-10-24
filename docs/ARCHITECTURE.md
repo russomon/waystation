@@ -158,11 +158,21 @@ revocation takes effect on the next request rather than whenever a signature
 happens to lapse. The gateway still never touches file bytes: it redirects,
 storage serves.
 
+**Folders (ADR-042).** The sender declares the tree (`POST /folders`: every
+relative path and size), uploads each file through the ordinary multipart routes
+naming its folder and path, then seals it (`POST /folders/:id/complete`). The
+folder is a parent `transfers` row with no object; each file is a member
+transfer whose password, expiry, revocation and download allowance come from the
+folder (`accessTransferId` in `db.ts`). `GET /transfers/:folderId` lists the tree;
+the delivery page (`folderDelivery.ts`) rebuilds it with `showDirectoryPicker`
+where available, each file through the same verified ranged download, and links
+every file to its own page.
+
 ## Persistence and state
 
 SQLite in the `control` Docker volume at `/data`. Tables `transfers`,
-`uploads`, `meter_events`, `access_codes`, `payment_orders` and
-`download_grants`, at **schema v7**, migrated in place via `PRAGMA user_version`
+`uploads`, `meter_events`, `access_codes`, `payment_orders`,
+`download_grants` and `folder_files`, at **schema v8**, migrated in place via `PRAGMA user_version`
 (`gateway/src/db.ts`). `transfers.owner_id` and `uploads.owner_id` name the
 sender code that created the row; `transfers.revoked_at` / `purged_at` drive the
 storage purge.

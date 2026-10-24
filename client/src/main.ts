@@ -1,13 +1,14 @@
 import { Check, Copy, Eye, EyeOff, createElement as createIcon } from "lucide";
 import { loadStripe, type Stripe, type StripeElements } from "@stripe/stripe-js";
 import {
-  createSession, endSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, recipientLink,
+  createSession, endSession, FORCED_COMPUTE, GatewayError, gwEventSource, gwGet, gwPost, recipientLink,
   paymentQuote, startCheckout, claimPaymentSession, sendTransferEmail,
 } from "./config.js";
 import { copyText } from "./clipboard.js";
 import { appendUniqueFiles, fileIdentity } from "./fileQueue.js";
 import { formatBytes, formatUsd } from "./format.js";
 import { uploadFile, type Progress, type ServiceOptions } from "./uploader.js";
+import { foldersFromInput, isFolder, walkDropped, type FolderItem, type QueueItem } from "./folders.js";
 import { renderDelivery } from "./delivery.js";
 import { mountAdmin } from "./admin.js";
 import { rememberTransfer, recentTransfers, clearRecentTransfers } from "./recentTransfers.js";
@@ -115,6 +116,7 @@ if (tid) {
   // ── sender view ──
   const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
   const fileIn = $<HTMLInputElement>("#file");
+  const pickFolderBtn = $<HTMLButtonElement>("#pickFolder");
   const capIn = $<HTMLInputElement>("#capfile");
   const genIn = $<HTMLInputElement>("#genfile");
   const pickMaster = $("#pickMaster");
@@ -175,7 +177,7 @@ if (tid) {
   const emailStatus = $("#emailStatus");
   type SenderMode = "transfer" | "qc";
   let mode: SenderMode = "transfer";
-  let queuedFiles: File[] = [];
+  let queuedFiles: QueueItem[] = [];
   let sending = false;
   let comped = false;   // access-code / admin / dev session → uploads are free
   let paid = false;     // authorized to upload: comped, or a claimed paid order
@@ -287,10 +289,33 @@ if (tid) {
       const details = document.createElement("div");
       details.className = "queue-file";
       const name = document.createElement("strong");
-      name.textContent = file.name;
+      name.textContent = isFolder(file) ? `📁 ${file.name}` : file.name;
       const size = document.createElement("span");
-      size.textContent = formatBytes(file.size);
+      size.textContent = isFolder(file)
+        ? `${file.files.length} file${file.files.length === 1 ? "" : "s"} · ${formatBytes(file.size)}` +
+          (file.skipped ? ` · ${file.skipped} empty or system file${file.skipped === 1 ? "" : "s"} left out` : "")
+        : formatBytes(file.size);
       details.append(name, size);
+      if (isFolder(file)) {
+        // The tree, collapsed: what the recipient will see before downloading.
+        const tree = document.createElement("details");
+        tree.className = "queue-tree";
+        const summary = document.createElement("summary");
+        summary.textContent = "Show files";
+        const list = document.createElement("ul");
+        for (const f of file.files.slice(0, 500)) {
+          const li = document.createElement("li");
+          li.textContent = `${f.path} · ${formatBytes(f.file.size)}`;
+          list.append(li);
+        }
+        if (file.files.length > 500) {
+          const li = document.createElement("li");
+          li.textContent = `…and ${file.files.length - 500} more`;
+          list.append(li);
+        }
+        tree.append(summary, list);
+        details.append(tree);
+      }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "remove-file";
@@ -307,7 +332,10 @@ if (tid) {
     }
 
     const count = queuedFiles.length;
-    if (mode === "qc" && count > 1)
+    const hasFolder = queuedFiles.some(isFolder);
+    if (mode === "qc" && hasFolder)
+      queueNote.textContent = "Folders can be sent in Transfer mode only. Switch to Transfer, or remove the folder.";
+    else if (mode === "qc" && count > 1)
       queueNote.textContent = `${count} masters queued. Captions and manifests are available for single-master QC only.`;
     else if (count > 0)
       queueNote.textContent = `${count} ${count === 1 ? "file" : "files"} ready · ${formatBytes(queuedFiles.reduce((sum, file) => sum + file.size, 0))} total`;
@@ -321,14 +349,15 @@ if (tid) {
       ? "Pause"
       : resuming
         ? "Resume send"
-        : count > 1 ? `Send ${count} files` : "Send file(s)";
+        : count > 1 ? `Send ${count} items` : hasFolder ? "Send folder" : "Send file(s)";
     const previewLocked = mode === "qc" && qcPreview && !sending;
     if (previewLocked) queueNote.textContent = count
       ? "QC uploads aren't open yet. Switch to Transfer to send these files."
       : "QC uploads aren't open yet.";
-    sendBtn.disabled = !sending && count === 0;
+    sendBtn.disabled = !sending && (count === 0 || (mode === "qc" && hasFolder));
     if (previewLocked) sendBtn.disabled = true; // never while sending: previewLocked requires !sending
     fileIn.disabled = sending || previewLocked;
+    pickFolderBtn.disabled = sending || previewLocked;
     pickMaster.classList.toggle("disabled", sending || previewLocked);
     modeTransfer.disabled = sending;
     modeQc.disabled = sending;
@@ -424,6 +453,7 @@ if (tid) {
       downloadsSelect.disabled = true;
       weeksSelect.disabled = true;
       fileIn.disabled = true;             // lock the queue so the paid amount can't drift
+      pickFolderBtn.disabled = true;
       pickMaster.classList.add("disabled");
       payActions.hidden = true;
       cardForm.hidden = false;
@@ -484,6 +514,7 @@ if (tid) {
     downloadsSelect.disabled = false;
     weeksSelect.disabled = false;
     fileIn.disabled = false;
+    pickFolderBtn.disabled = false;
     pickMaster.classList.remove("disabled");
     payCard.disabled = false;
     elements = null;
@@ -745,15 +776,37 @@ if (tid) {
     renderQueue();
   }
 
-  const addFiles = (incoming: FileList | File[]): void => {
+  const addFiles = (incoming: FileList | QueueItem[]): void => {
     if (sending) return;
     queuedFiles = appendUniqueFiles(queuedFiles, Array.from(incoming));
     fileIn.value = "";
     renderQueue();
   };
+  /** A folder that cannot be sent (an unsafe name, a duplicate) is refused
+   *  whole, with the reason, rather than silently sent without the bad file. */
+  const addFolders = (build: () => FolderItem[] | Promise<{ folders: FolderItem[]; files: File[] }>): void => {
+    if (sending) return;
+    Promise.resolve(build())
+      .then((r) => Array.isArray(r) ? { folders: r, files: [] as File[] } : r)
+      .then(({ folders, files }) => {
+        if (!folders.length && !files.length) {
+          queueNote.textContent = "That folder has no files that can be sent (empty files are left out).";
+          return;
+        }
+        addFiles([...folders, ...files]);
+      })
+      .catch((e) => { queueNote.textContent = (e as Error).message || "That folder could not be read."; });
+  };
 
   fileIn.onchange = () => {
     if (fileIn.files) addFiles(fileIn.files);
+  };
+  const folderIn = $<HTMLInputElement>("#folderIn");
+  pickFolderBtn.addEventListener("click", () => { if (!sending) folderIn.click(); });
+  folderIn.onchange = () => {
+    const picked = folderIn.files;
+    if (picked?.length) addFolders(() => foldersFromInput(picked));
+    folderIn.value = "";
   };
   pickMaster.addEventListener("dragenter", (event) => {
     event.preventDefault();
@@ -769,7 +822,14 @@ if (tid) {
   pickMaster.addEventListener("drop", (event) => {
     event.preventDefault();
     pickMaster.classList.remove("dragging");
-    if (event.dataTransfer?.files.length) addFiles(event.dataTransfer.files);
+    // Directories only show up through webkitGetAsEntry, and the DataTransfer
+    // is readable only during this event, so the entries are taken now and
+    // walked afterwards.
+    const entries = Array.from(event.dataTransfer?.items ?? [])
+      .map((i) => (i.kind === "file" ? i.webkitGetAsEntry?.() : null))
+      .filter((e): e is FileSystemEntry => !!e);
+    if (entries.some((e) => e.isDirectory)) addFolders(() => walkDropped(entries));
+    else if (event.dataTransfer?.files.length) addFiles(event.dataTransfer.files);
   });
 
   const qcPreviewNote = $("#qcPreviewNote");
@@ -792,7 +852,7 @@ if (tid) {
     senderTag.textContent = transfer
       ? "Send large files securely and share them."
       : "Send mastered media with deterministic and AI-assisted QC.";
-    pickTitle.textContent = transfer ? "Choose or drop files" : "Choose or drop master files";
+    pickTitle.textContent = transfer ? "Choose or drop files or folders" : "Choose or drop master files";
     fname.textContent = transfer
       ? "Select files or drag them here to calculate transfer cost"
       : "Select one or more video or audio masters, or drag them here";
@@ -826,7 +886,7 @@ if (tid) {
     return s;
   };
 
-  const resultRow = (file: File): {
+  const resultRow = (file: { name: string }): {
     row: HTMLDivElement;
     status: HTMLSpanElement;
     updateProgress: (progress: Progress) => void;
@@ -927,7 +987,7 @@ if (tid) {
   let sendAbort: AbortController | null = null;
   // Files a paused batch left behind, held by identity so that removing them
   // or queueing different ones returns the button to "Send file".
-  let pausedFiles = new Set<File>();
+  let pausedFiles = new Set<QueueItem>();
   // A no-password send is easy to do by accident and the password is the only
   // thing gating the link, so the first click arms a confirm and the second sends.
   let pwConfirmArmed = false;
@@ -935,6 +995,59 @@ if (tid) {
     if (pwConfirmArmed) { pwConfirmArmed = false; renderQueue(); }
     passwordHelp.textContent = PASSWORD_HELP;
   });
+
+  /** Send one folder: declare the tree, upload each file through the ordinary
+   *  resumable uploader, then seal it into a link. A paused folder keeps its id
+   *  and the paths already sent, so Resume picks up at the next file. Files go
+   *  one at a time (each already runs six parallel part uploads), which also
+   *  keeps the folder inside the gateway's in-flight upload limit. */
+  async function sendFolder(
+    folder: FolderItem, password: string, status: HTMLElement,
+    onProgress: (p: Progress) => void, signal: AbortSignal,
+  ): Promise<{ transferId: string }> {
+    if (!folder.folderId) {
+      const r = await gwPost("/folders", {
+        name: folder.name,
+        files: folder.files.map((f) => ({ path: f.path, size: f.file.size })),
+      });
+      folder.folderId = r.folderId as string;
+    }
+    const folderId = folder.folderId;
+    const total = folder.size;
+    let finished = folder.files.filter((f) => folder.done.has(f.path)).reduce((n, f) => n + f.file.size, 0);
+    for (const [i, f] of folder.files.entries()) {
+      if (folder.done.has(f.path)) continue;
+      status.textContent = `Uploading file ${i + 1} of ${folder.files.length} · ${f.path}`;
+      try {
+        await uploadFile(
+          f.file,
+          { mode: "transfer", folder: { folderId, relativePath: f.path } },
+          (p) => onProgress({
+            ...p, total,
+            hashBytes: finished + p.hashBytes,
+            uploadedBytes: finished + p.uploadedBytes,
+            upload: p.upload === "complete" ? "uploading" : p.upload,
+            integrity: p.integrity === "complete" ? "hashing" : p.integrity,
+          }),
+          signal,
+        );
+      } catch (e) {
+        // Already in from an earlier attempt whose reply was lost: count it.
+        if (!(e instanceof GatewayError && e.code === "already_uploaded")) throw e;
+      }
+      folder.done.add(f.path);
+      finished += f.file.size;
+    }
+    status.textContent = "Creating the folder link…";
+    await gwPost(`/folders/${encodeURIComponent(folderId)}/complete`, {
+      recipientPassword: password || undefined,
+    });
+    onProgress({
+      total, hashBytes: total, uploadedBytes: total,
+      integrity: "complete", upload: "complete", message: "Transfer complete",
+    });
+    return { transferId: folderId };
+  }
 
   sendBtn.onclick = async () => {
     sendBtn.classList.remove("blink"); // the post-payment cue has served its purpose
@@ -976,8 +1089,8 @@ if (tid) {
     const password = recipientPassword.value;
     lastSendHadPassword = password.trim().length > 0;
     emailSent = false; // a fresh batch → a fresh email opportunity
-    const failed: File[] = [];
-    const paused: File[] = [];
+    const failed: QueueItem[] = [];
+    const paused: QueueItem[] = [];
     const emailBatch: { id: string; name: string }[] = [];
     logEl.replaceChildren();
     renderQueue();
@@ -986,12 +1099,14 @@ if (tid) {
       const file = files[index];
       const { row, status, updateProgress } = resultRow(file);
       try {
-        const { transferId } = await uploadFile(
-          file,
-          { mode: selectedMode, captions, genManifest, options, recipientPassword: password },
-          updateProgress,
-          sendAbort.signal,
-        );
+        const { transferId } = isFolder(file)
+          ? await sendFolder(file, password, status, updateProgress, sendAbort.signal)
+          : await uploadFile(
+            file,
+            { mode: selectedMode, captions, genManifest, options, recipientPassword: password },
+            updateProgress,
+            sendAbort.signal,
+          );
 
         const link = recipientLink(transferId);
         appendShareLink(row, link);
@@ -999,6 +1114,10 @@ if (tid) {
         renderRecent();
         emailBatch.push({ id: transferId, name: file.name });
 
+        if (isFolder(file)) {
+          status.textContent = `Uploaded · ${file.files.length} file${file.files.length === 1 ? "" : "s"} · ready to share`;
+          continue;
+        }
         if (!serviceRequested(options)) {
           status.textContent = "Uploaded · ready to share · no QC requested";
           continue;
@@ -1056,7 +1175,9 @@ if (tid) {
       ? `${sent} sent · ${paused.length} paused — click Send to resume`
       : failed.length
         ? `${sent} sent · ${failed.length} ready to retry`
-        : `${sent} ${sent === 1 ? "file" : "files"} sent`;
+        : files.some(isFolder)
+          ? `${sent} ${sent === 1 ? "item" : "items"} sent`
+          : `${sent} ${sent === 1 ? "file" : "files"} sent`;
     logEl.append(summary);
     queuedFiles = [...paused, ...failed];
     pausedFiles = new Set(paused);

@@ -16,7 +16,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 // :memory: is the default so dev and the proof suite stay clean and isolated.
 // Production must set a real path on a persistent volume — and fails closed
@@ -198,6 +198,31 @@ function migrate(): void {
     db.prepare(`UPDATE transfers SET revoked_at = ? WHERE revoked = 1 AND revoked_at IS NULL`)
       .run(new Date().toISOString());
   }
+  if (current < 8) {
+    // Folder transfers (folders.ts, ADR-042). A folder is a transfers row with
+    // kind = 'folder' and no object; its files are ordinary transfers carrying
+    // parent_id. folder_files is the manifest the sender declared up front: the
+    // only paths that may ever be uploaded into the folder, each bound to the
+    // member transfer that claimed it.
+    const cols = (table: string) =>
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
+    if (!cols("transfers").includes("kind"))
+      db.exec(`ALTER TABLE transfers ADD COLUMN kind TEXT NOT NULL DEFAULT 'file'`);
+    if (!cols("transfers").includes("parent_id")) db.exec(`ALTER TABLE transfers ADD COLUMN parent_id TEXT`);
+    if (!cols("transfers").includes("display_name")) db.exec(`ALTER TABLE transfers ADD COLUMN display_name TEXT`);
+    if (!cols("uploads").includes("parent_id")) db.exec(`ALTER TABLE uploads ADD COLUMN parent_id TEXT`);
+    if (!cols("uploads").includes("relative_path")) db.exec(`ALTER TABLE uploads ADD COLUMN relative_path TEXT`);
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_transfers_parent ON transfers(parent_id);
+      CREATE TABLE IF NOT EXISTS folder_files (
+        folder_id   TEXT NOT NULL,
+        path        TEXT NOT NULL,
+        size        INTEGER NOT NULL,
+        transfer_id TEXT,
+        PRIMARY KEY (folder_id, path)
+      );
+    `);
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 migrate();
@@ -219,11 +244,19 @@ export interface TransferRow {
   /** How many downloads the link may serve. undefined/NULL = unlimited (comped,
    *  admin, or pre-feature transfers); a finite count is set for PAID transfers. */
   downloadsAllowed?: number;
+  /** 'folder' for a folder's parent row (no object); 'file' otherwise. */
+  kind?: "file" | "folder";
+  /** A folder member's parent folder id. Access is decided by the parent. */
+  parentId?: string;
+  /** Folder name, for kind = 'folder'. */
+  displayName?: string;
+  /** Lifecycle state; a folder is 'uploading' until every file is in, then 'ready'. */
+  state?: string;
 }
 
 const insertTransfer = db.prepare(`
-  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at, password_hash, owner_id, downloads_allowed)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO transfers (transfer_id, object_key, blake3_root, verification_mode, options_json, created_at, expires_at, password_hash, owner_id, downloads_allowed, parent_id)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(transfer_id) DO UPDATE SET
     object_key  = excluded.object_key,
     blake3_root = COALESCE(excluded.blake3_root, transfers.blake3_root),
@@ -233,7 +266,8 @@ const insertTransfer = db.prepare(`
     options_json = COALESCE(excluded.options_json, transfers.options_json),
     password_hash = COALESCE(excluded.password_hash, transfers.password_hash),
     owner_id      = COALESCE(excluded.owner_id, transfers.owner_id),
-    downloads_allowed = COALESCE(excluded.downloads_allowed, transfers.downloads_allowed)
+    downloads_allowed = COALESCE(excluded.downloads_allowed, transfers.downloads_allowed),
+    parent_id     = COALESCE(transfers.parent_id, excluded.parent_id)
 `);
 const selectTransfer = db.prepare(`SELECT * FROM transfers WHERE transfer_id = ?`);
 
@@ -249,6 +283,7 @@ export function saveTransfer(transferId: string, meta: TransferRow): void {
     meta.passwordHash ?? null,
     meta.ownerId ?? null,
     meta.downloadsAllowed ?? null,
+    meta.parentId ?? null,
   );
 }
 
@@ -280,6 +315,12 @@ export function setRecipientState(
     transferId,
     new Date().toISOString(),
   );
+  // A folder's files share its fate, so the storage purge (which reads each
+  // member's own row) reclaims them on the same schedule.
+  const t = getTransfer(transferId);
+  if (t?.kind === "folder")
+    for (const m of listFolderMembers(transferId))
+      setRecipientState(m.transferId, { expiresAt: t.expiresAt ?? null, revoked: !!t.revoked });
 }
 
 // ── storage purge candidates (purge.ts) ──
@@ -309,8 +350,21 @@ export function capabilityRevoked(transferId: string): boolean {
   const t = getTransfer(transferId);
   if (!t) return false;
   if (t.revoked) return true;
-  return !!t.expiresAt && Date.now() > t.expiresAt;
+  if (t.expiresAt && Date.now() > t.expiresAt) return true;
+  // A folder member is exactly as alive as its folder, and a folder is not a
+  // link at all until every file is in: a half-sent folder must not open.
+  if (t.kind === "folder" && t.state !== "ready") return true;
+  if (t.parentId) {
+    const parent = getTransfer(t.parentId);
+    return !parent || capabilityRevoked(t.parentId);
+  }
+  return false;
 }
+
+/** The transfer whose password, unlock cookie and download allowance govern
+ *  this one: the parent folder for a member, itself otherwise. */
+export const accessTransferId = (transferId: string): string =>
+  getTransfer(transferId)?.parentId ?? transferId;
 
 export function getTransfer(transferId: string): TransferRow | undefined {
   const row = selectTransfer.get(transferId) as any;
@@ -327,6 +381,10 @@ export function getTransfer(transferId: string): TransferRow | undefined {
     passwordHash: row.password_hash ?? undefined,
     ownerId: row.owner_id ?? undefined,
     downloadsAllowed: row.downloads_allowed ?? undefined,
+    kind: row.kind === "folder" ? "folder" : "file",
+    parentId: row.parent_id ?? undefined,
+    displayName: row.display_name ?? undefined,
+    state: row.state ?? undefined,
   };
 }
 
@@ -350,12 +408,16 @@ export interface UploadRow {
   verificationMode: "range" | "root";
   state: string;
   createdAt: number;
+  /** Folder this file belongs to, and its path inside it (folder uploads only). */
+  parentId?: string;
+  relativePath?: string;
 }
 
 const insertUpload = db.prepare(`
   INSERT INTO uploads (object_key, upload_id, transfer_id, session_id, owner_id, filename,
-                       content_type, declared_size, part_size, part_count, verification_mode, state, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                       content_type, declared_size, part_size, part_count, verification_mode, state, created_at,
+                       parent_id, relative_path)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
 `);
 const selectUpload = db.prepare(`SELECT * FROM uploads WHERE object_key = ? AND upload_id = ?`);
 const updateUploadState = db.prepare(
@@ -374,11 +436,15 @@ const updateUploadState = db.prepare(
 const countActive = db.prepare(
   `SELECT COUNT(*) AS n FROM uploads WHERE session_id = ? AND state = 'active' AND created_at >= ?`,
 );
+// A folder is ONE job however many files it holds: its members collapse onto
+// their parent id, so the per-session and daily caps count folders, not files.
 const countSince = db.prepare(
-  `SELECT COUNT(*) AS n FROM uploads WHERE session_id = ? AND state = 'complete' AND created_at >= ?`,
+  `SELECT COUNT(DISTINCT COALESCE(parent_id, transfer_id)) AS n FROM uploads
+   WHERE session_id = ? AND state = 'complete' AND created_at >= ?`,
 );
 const countAllSince = db.prepare(
-  `SELECT COUNT(*) AS n FROM uploads WHERE state = 'complete' AND created_at >= ?`,
+  `SELECT COUNT(DISTINCT COALESCE(parent_id, transfer_id)) AS n FROM uploads
+   WHERE state = 'complete' AND created_at >= ?`,
 );
 
 export function createUpload(u: Omit<UploadRow, "state" | "createdAt">): void {
@@ -388,6 +454,7 @@ export function createUpload(u: Omit<UploadRow, "state" | "createdAt">): void {
     u.declaredSize ?? null, u.partSize ?? null, u.partCount ?? null,
     u.verificationMode,
     new Date().toISOString(),
+    u.parentId ?? null, u.relativePath ?? null,
   );
 }
 
@@ -426,6 +493,7 @@ function rowToUpload(r: any): UploadRow {
     partSize: r.part_size ?? undefined, partCount: r.part_count ?? undefined,
     verificationMode: r.verification_mode ?? "range",
     state: r.state, createdAt: Date.parse(r.created_at),
+    parentId: r.parent_id ?? undefined, relativePath: r.relative_path ?? undefined,
   };
 }
 
@@ -443,6 +511,72 @@ export const completedSince = (sessionId: string, sinceIso: string): number =>
 /** Completed uploads across all sessions since an ISO timestamp (daily cap). */
 export const completedSinceAll = (sinceIso: string): number =>
   Number((countAllSince.get(sinceIso) as { n: number }).n);
+
+// ── folders (folders.ts, ADR-042) ──
+
+const insertFolder = db.prepare(`
+  INSERT INTO transfers (transfer_id, object_key, verification_mode, created_at, owner_id, kind, display_name, state)
+  VALUES (?, '', 'root', ?, ?, 'folder', ?, 'uploading')
+`);
+const insertFolderFile = db.prepare(`INSERT INTO folder_files (folder_id, path, size) VALUES (?, ?, ?)`);
+const selectFolderFile = db.prepare(`SELECT * FROM folder_files WHERE folder_id = ? AND path = ?`);
+const selectFolderFiles = db.prepare(`SELECT * FROM folder_files WHERE folder_id = ? ORDER BY path`);
+const claimFolderFileStmt = db.prepare(`UPDATE folder_files SET transfer_id = ? WHERE folder_id = ? AND path = ?`);
+const updateFolderReady = db.prepare(`
+  UPDATE transfers SET state = 'ready', expires_at = ?, password_hash = ?, downloads_allowed = ?
+  WHERE transfer_id = ? AND kind = 'folder' AND state = 'uploading'
+`);
+
+/** Create a folder and its declared manifest in one transaction. */
+export function createFolder(folderId: string, name: string, ownerId: string | null,
+  files: { path: string; size: number }[]): void {
+  db.exec("BEGIN");
+  try {
+    insertFolder.run(folderId, new Date().toISOString(), ownerId, name);
+    for (const f of files) insertFolderFile.run(folderId, f.path, f.size);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
+
+export interface FolderFileRow { path: string; size: number; transferId?: string }
+const toFolderFile = (r: any): FolderFileRow =>
+  ({ path: r.path, size: Number(r.size), transferId: r.transfer_id ?? undefined });
+
+export const getFolderFile = (folderId: string, path: string): FolderFileRow | undefined => {
+  const r = selectFolderFile.get(folderId, path);
+  return r ? toFolderFile(r) : undefined;
+};
+
+export const listFolderFiles = (folderId: string): FolderFileRow[] =>
+  (selectFolderFiles.all(folderId) as any[]).map(toFolderFile);
+
+/** Bind a declared path to the member transfer that is uploading it. */
+export const claimFolderFile = (folderId: string, path: string, transferId: string): void => {
+  claimFolderFileStmt.run(transferId, folderId, path);
+};
+
+/** Members that have a completed transfer, in path order. */
+export const listFolderMembers = (folderId: string): { path: string; size: number; transferId: string }[] =>
+  listFolderFiles(folderId)
+    .filter((f): f is FolderFileRow & { transferId: string } => !!f.transferId && !!getTransfer(f.transferId))
+    .map((f) => ({ path: f.path, size: f.size, transferId: f.transferId }));
+
+/** uploading -> ready, once. Returns false if the folder was not uploading. */
+export function markFolderReady(folderId: string, o: {
+  expiresAt?: number; passwordHash?: string; downloadsAllowed?: number;
+}): boolean {
+  const info = updateFolderReady.run(
+    o.expiresAt ? new Date(o.expiresAt).toISOString() : null,
+    o.passwordHash ?? null, o.downloadsAllowed ?? null, folderId);
+  if (Number(info.changes) === 0) return false;
+  // Members carry the folder's expiry so the purge reclaims them with it.
+  for (const m of listFolderMembers(folderId))
+    setRecipientState(m.transferId, { expiresAt: o.expiresAt ?? null });
+  return true;
+}
 
 // ── access codes (named sender identities) ──
 //

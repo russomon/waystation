@@ -35,6 +35,9 @@ export interface SendExtras {
   genManifest?: File | null;  // source Genblaze manifest → prompt-adherence QC
   options?: ServiceOptions;
   recipientPassword?: string;
+  /** Set when this file is part of a folder: the folder's id and the file's
+   *  path inside it. The folder, not the file, carries password and expiry. */
+  folder?: { folderId: string; relativePath: string };
 }
 
 export async function uploadFile(
@@ -43,7 +46,11 @@ export async function uploadFile(
   onProgress: (p: Progress) => void,
   signal?: AbortSignal,
 ) {
-  const fp = `${file.name}:${file.size}:${file.lastModified}`; // stable local resume key
+  // Stable local resume key. A folder member is keyed by its folder and path too:
+  // two files called "notes.txt" in different subfolders are different uploads.
+  const fp = extras.folder
+    ? `folder:${extras.folder.folderId}:${extras.folder.relativePath}:${file.size}:${file.lastModified}`
+    : `${file.name}:${file.size}:${file.lastModified}`;
   const progress: Progress = {
     total: file.size, hashBytes: 0, uploadedBytes: 0,
     integrity: "preparing", upload: "preparing", message: "Preparing secure transfer",
@@ -60,6 +67,7 @@ export async function uploadFile(
     const r = await post("/uploads", {
       filename: file.name, contentType: file.type || "application/octet-stream", size: file.size,
       mode: extras.mode ?? "transfer",
+      ...(extras.folder ? { folderId: extras.folder.folderId, relativePath: extras.folder.relativePath } : {}),
     });
     st = {
       fp, key: r.key, uploadId: r.uploadId, partSize: r.partSize, partCount: r.partCount,

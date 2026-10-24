@@ -53,6 +53,11 @@
       .queue-file { min-width: 0; }
       .queue-file strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .queue-file span { color: var(--mut); font-size: 12.5px; }
+      .pick-folder { margin: -.3rem 0 .7rem; font-size: 13px; }
+      .queue-tree { margin-top: .25rem; font-size: 12.5px; color: var(--mut); }
+      .queue-tree summary { cursor: pointer; }
+      .queue-tree ul { margin: .3rem 0 0; padding-left: 1rem; max-height: 12rem; overflow: auto; }
+      .queue-tree li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .remove-file { width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent;
                      color: var(--mut); font: 20px/1 system-ui, sans-serif; cursor: pointer; }
       .remove-file:hover { color: #b91c1c; background: #fef2f2; }
@@ -123,6 +128,16 @@
          page has to say how far along it is and roughly how long is left —
          a spinner would be indistinguishable from a hang. */
       .dlprog { margin-top: .7rem; }
+      .folder-deliv h1 { margin: 0 0 .2rem; font-size: 1.35rem; overflow-wrap: anywhere; }
+      .folder-tree { list-style: none; margin: 1rem 0 0; padding: 0; border-top: 1px solid var(--line); }
+      .folder-tree li { display: flex; align-items: center; gap: .6rem; padding: .35rem 0; border-bottom: 1px solid var(--line); min-width: 0; }
+      .folder-tree .folder-dir { font-weight: 600; }
+      .folder-tree .folder-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .folder-tree .meta { margin: 0; white-space: nowrap; }
+      .folder-tree .meta.bad { color: #ef4444; }
+      .btn.small { min-height: 0; padding: .3rem .8rem; font-size: 13px; }
+      .back-link { display: inline-block; margin-bottom: .6rem; font-size: 13px; }
+      @media (max-width: 560px) { .folder-tree li { flex-wrap: wrap; } .folder-tree .folder-name { flex-basis: 100%; } }
       .dlbar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
       .dlbar span { display: block; height: 100%; width: 0; background: var(--blue); transition: width .2s linear; }
       .dlrow { display: flex; justify-content: space-between; gap: 1rem; margin-top: .35rem;
@@ -397,6 +412,8 @@
           <strong id="pickTitle">Choose or drop files</strong>
           <span class="muted" id="fname">Select files or drag them here to calculate transfer cost</span>
         </label>
+        <p class="pick-folder"><button type="button" class="link-btn" id="pickFolder">Or choose a whole folder</button>
+          <input id="folderIn" type="file" webkitdirectory multiple hidden /></p>
         <ul class="queue" id="fileQueue" aria-label="Files ready to send" hidden></ul>
         <p class="queue-note" id="queueNote" aria-live="polite"></p>
 

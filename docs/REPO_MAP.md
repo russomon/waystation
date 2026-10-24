@@ -19,11 +19,11 @@ SETUP.md                   B2 / GMI account setup for a fresh environment
 ## Source
 
 ```
-gateway/src/               Hono/Node control plane — 18 modules
+gateway/src/               Hono/Node control plane — 19 modules
   server.ts                  entry point: app assembly, CORS, boot banner
   routes.ts                  every HTTP route
   auth.ts                    access codes, sessions, recipient unlock
-  db.ts                      SQLite schema + migrations (schema v7)
+  db.ts                      SQLite schema + migrations (schema v8)
   s3.ts                      B2 presigning and multipart bookkeeping
   limits.ts                  size ceilings, service policy, verification mode
   events.ts  pipeline.ts     B2 webhook · worker dispatch
@@ -34,12 +34,15 @@ gateway/src/               Hono/Node control plane — 18 modules
   purge.ts                   storage purge of expired/revoked transfers
   publicOrigin.ts            trusted public API origin for download links (ADR-038)
   ownership.ts               who may use an in-progress upload (ADR-039)
+  folders.ts                 folder manifests and relative-path rules (ADR-042)
 gateway/test/              node:test unit tests (`npm test` in gateway/)
 
-client/src/                Vite + TypeScript browser app — 15 modules
+client/src/                Vite + TypeScript browser app — 17 modules
   main.ts                    the sender
   admin.ts                   Manage access codes panel (admin session only)
   delivery.ts                the recipient page: mediated, parallel, resumable, verified download
+  folderDelivery.ts          a folder link: the tree, per-file links, rebuild-the-folder download
+  folders.ts                 sender folder picking/drop, path checks shared with the recipient
   uploader.ts                resumable multipart, concurrency 6, pool()
   resumeStore.ts downloadResume.ts idb.ts   resume bookkeeping in IndexedDB
   ranges.ts                  range plan (1024-aligned, inclusive ends)

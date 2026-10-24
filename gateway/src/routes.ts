@@ -53,8 +53,18 @@ import {
   consumeOrderBudget,
   claimDownloadGrant,
   getGrant,
+  countGrants,
+  accessTransferId,
+  createFolder,
+  getFolderFile,
+  claimFolderFile,
+  listFolderFiles,
+  listFolderMembers,
+  markFolderReady,
   type UploadRow,
 } from "./db.js";
+import { validateFolderManifest, validateFolderName, validateRelativePath } from "./folders.js";
+import { randomUUID } from "node:crypto";
 import {
   ACCEPT_UPLOADS,
   ACTIVE_UPLOAD_WINDOW_MS,
@@ -451,6 +461,7 @@ api.post("/transfers/email", requireSession, enforceOrigin, limiter("email", 20,
   const base = new URL(publicBaseUrl(c));
   const links: { name: string; url: string }[] = [];
   let hasPassword = false;
+  let anyFolder = false;
   let cap = Infinity;
   for (const { id, name } of entries) {
     const t = getTransfer(id);
@@ -458,7 +469,10 @@ api.post("/transfers/email", requireSession, enforceOrigin, limiter("email", 20,
     const ownerOk = session?.admin || (!!session?.ownerId && t.ownerId === session.ownerId);
     if (!ownerOk) return c.json({ error: "That transfer isn’t yours to send.", code: "not_owner" }, 403);
     if (t.revoked) return c.json({ error: "That transfer has been revoked.", code: "revoked" }, 409);
+    if (t.kind === "folder" && t.state !== "ready")
+      return c.json({ error: "That folder hasn’t finished uploading.", code: "folder_incomplete" }, 409);
     if (t.passwordHash) hasPassword = true;
+    if (t.kind === "folder") anyFolder = true;
     cap = Math.min(cap, t.downloadsAllowed ?? COMPED_RECIPIENT_CAP);
     const u = new URL(base.toString());
     u.searchParams.set("t", id);
@@ -467,7 +481,7 @@ api.post("/transfers/email", requireSession, enforceOrigin, limiter("email", 20,
   if (to.length > cap)
     return c.json({ error: `This transfer can be emailed to at most ${cap} recipient${cap === 1 ? "" : "s"}.`, code: "too_many_recipients", cap }, 400);
 
-  const subject = subjectRaw || `${fromEmail} sent you ${links.length === 1 ? "a file" : "files"} via OrbiStation`;
+  const subject = subjectRaw || `${fromEmail} sent you ${links.length === 1 ? (anyFolder ? "a folder" : "a file") : "files"} via OrbiStation`;
   try {
     // BCC the sender so they keep a copy (and a durable record of the link).
     await sendLinkEmail({ to, bcc: [fromEmail], replyTo: fromEmail, subject, message, links, hasPassword });
@@ -508,27 +522,22 @@ const ownedByKey = (c: Context, key: unknown) =>
     ? ownUpload(c, getUploadByKey(key))
     : { fail: c.json({ error: "key is required.", code: "bad_request" }, 400) };
 
-api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_000), async (c) => {
-  // Cost controls run BEFORE anything is created on the object store, so a
-  // refused request leaves no remote multipart state to clean up and incurs
-  // no spend. Rate limiting bounds requests; these bound exposure.
+/** The job-level cost controls shared by a single upload and a folder. They run
+ *  BEFORE anything is created on the object store, so a refused request leaves
+ *  no remote multipart state to clean up and incurs no spend. Rate limiting
+ *  bounds requests; these bound exposure. A folder member skips them — its
+ *  folder already passed them once, as one job (POST /folders). */
+function jobQuotaRefusal(c: Context): Response | undefined {
   if (!ACCEPT_UPLOADS)
     return c.json(
       { error: "This deployment is not accepting new uploads right now.", code: "uploads_paused" },
       503,
     );
   const sid = sessionIdOf(c) ?? "anonymous";
-  const activeSince = new Date(Date.now() - ACTIVE_UPLOAD_WINDOW_MS).toISOString();
-  if (activeUploadCount(sid, activeSince) >= MAX_ACTIVE_UPLOADS_PER_SESSION)
-    return c.json(
-      { error: `At most ${MAX_ACTIVE_UPLOADS_PER_SESSION} uploads may be in flight at once.`, code: "too_many_active" },
-      429,
-    );
   // A paid session is bounded by its prepaid byte budget, not by the QC-era job
   // caps (those existed to cap GMI spend when every completed upload fired the
   // pipeline). Comped and access-code sessions still hit the caps.
-  const orderId = sessionOf(c)?.orderId;
-  if (!orderId) {
+  if (!sessionOf(c)?.orderId) {
     const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
     if (completedSince(sid, dayAgo) >= MAX_JOBS_PER_SESSION)
       return c.json(
@@ -541,8 +550,111 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
         429,
       );
   }
+  return undefined;
+}
 
+// ───────── folders (ADR-042) ─────────
+//
+// The sender declares the whole tree up front: every relative path and size.
+// That manifest is the only set of paths that may ever be uploaded into the
+// folder, it is priced and reserved against a paid budget once, and the folder
+// counts as ONE job against the session and daily caps however many files it
+// holds. The files then go up through the ordinary upload routes, each naming
+// its folder and path; the folder becomes a link only at POST /folders/:id/complete.
+
+/** The caller's own folder, still taking files — or a neutral 404, the same
+ *  answer ownUpload gives, so another sender's folder id reveals nothing. */
+function ownFolder(c: Context, folderId: unknown) {
+  const t = typeof folderId === "string" && folderId ? getTransfer(folderId) : undefined;
+  const s = sessionOf(c);
+  const mine = !!t && t.kind === "folder" &&
+    (!authEnabled || (!!t.ownerId && !!s?.ownerId && t.ownerId === s.ownerId));
+  if (!mine) return { fail: c.json({ error: "Folder not found.", code: "not_found" }, 404) };
+  return { folder: t!, folderId: folderId as string };
+}
+
+api.post("/folders", requireSession, enforceOrigin, limiter("initiate", 30, 60_000), async (c) => {
+  const refused = jobQuotaRefusal(c);
+  if (refused) return refused;
   const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const name = validateFolderName(body.name);
+  if ("error" in name) return c.json({ error: name.error, code: name.code }, name.status);
+  const manifest = validateFolderManifest(body.files);
+  if ("error" in manifest) return c.json({ error: manifest.error, code: manifest.code }, manifest.status);
+  for (const f of manifest.files) {
+    const v = verificationModeForSize(f.size);
+    if ("error" in v) return c.json({ error: v.error, code: v.code }, v.status);
+  }
+  // The whole folder is reserved against a paid budget at once, so a folder
+  // that does not fit is refused before any file is sent, never half-way.
+  const orderId = sessionOf(c)?.orderId;
+  if (orderId && !consumeOrderBudget(orderId, manifest.totalBytes))
+    return c.json(
+      { error: "This exceeds the data you paid for. Start a new checkout for the additional files.", code: "insufficient_paid_budget" },
+      402,
+    );
+  const folderId = randomUUID();
+  createFolder(folderId, name.name, sessionOf(c)?.ownerId ?? null, manifest.files);
+  return c.json({ folderId, fileCount: manifest.files.length, totalBytes: manifest.totalBytes });
+});
+
+api.post("/folders/:id/complete", requireSession, enforceOrigin, async (c) => {
+  const owned = ownFolder(c, c.req.param("id"));
+  if ("fail" in owned) return owned.fail;
+  const b = await c.req.json().catch(() => ({}) as Record<string, any>);
+  const pw = recipientPasswordFrom(c, b.recipientPassword);
+  if ("fail" in pw) return pw.fail;
+  if (owned.folder.state === "ready") return c.json({ ok: true, alreadyComplete: true });
+  const missing = listFolderFiles(owned.folderId).filter((f) =>
+    !f.transferId || getUploadByTransferId(f.transferId)?.state !== "complete" || !getTransfer(f.transferId));
+  if (missing.length)
+    return c.json({
+      error: `${missing.length} file${missing.length === 1 ? " has" : "s have"} not finished uploading.`,
+      code: "folder_incomplete", missing: missing.slice(0, 20).map((f) => f.path),
+    }, 409);
+  const link = linkTermsFor(c);
+  markFolderReady(owned.folderId, {
+    expiresAt: link.expiresAt,
+    passwordHash: pw.password ? hashAccessCode(pw.password) : undefined,
+    downloadsAllowed: link.downloadsAllowed,
+  });
+  return c.json({ ok: true });
+});
+
+api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_000), async (c) => {
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  // A folder member names its folder and path. Both are checked against the
+  // manifest the owner declared, before B2 has a multipart to clean up.
+  let member: { folderId: string; path: string } | undefined;
+  if (body.folderId !== undefined) {
+    const owned = ownFolder(c, body.folderId);
+    if ("fail" in owned) return owned.fail;
+    if (owned.folder.state !== "uploading")
+      return c.json({ error: "This folder has already been sent.", code: "folder_sealed" }, 409);
+    const rel = validateRelativePath(body.relativePath);
+    if ("error" in rel) return c.json({ error: rel.error, code: rel.code }, rel.status);
+    const declared = getFolderFile(owned.folderId, rel.path);
+    if (!declared || declared.size !== Number(body.size))
+      return c.json({ error: "That file is not part of this folder.", code: "not_in_folder" }, 400);
+    // Re-initiating a path is allowed only while its earlier upload is
+    // unfinished (a lost initiate response, a fresh start after a failure).
+    if (declared.transferId && getUploadByTransferId(declared.transferId)?.state === "complete")
+      return c.json({ error: "That file has already been uploaded.", code: "already_uploaded" }, 409);
+    body.filename = rel.segments[rel.segments.length - 1];
+    member = { folderId: owned.folderId, path: rel.path };
+  } else {
+    const refused = jobQuotaRefusal(c);
+    if (refused) return refused;
+  }
+  const sid = sessionIdOf(c) ?? "anonymous";
+  const activeSince = new Date(Date.now() - ACTIVE_UPLOAD_WINDOW_MS).toISOString();
+  if (activeUploadCount(sid, activeSince) >= MAX_ACTIVE_UPLOADS_PER_SESSION)
+    return c.json(
+      { error: `At most ${MAX_ACTIVE_UPLOADS_PER_SESSION} uploads may be in flight at once.`, code: "too_many_active" },
+      429,
+    );
+  const orderId = sessionOf(c)?.orderId;
+
   // Which tab the sender is on. In preview only the admin may start a QC
   // upload; refused here, before B2 has a multipart to clean up.
   const mode = body.mode === undefined ? "transfer" : body.mode;
@@ -550,6 +662,8 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
     return c.json({ error: "mode must be transfer or qc.", code: "bad_request" }, 400);
   if (mode === "qc" && QC_MODE === "preview" && !sessionOf(c)?.admin)
     return c.json({ error: "QC uploads aren't open yet — use Transfer.", code: "qc_preview" }, 403);
+  if (member && mode !== "transfer")
+    return c.json({ error: "Folders can only be sent in Transfer mode.", code: "bad_request" }, 400);
   const name = validateFilename(body.filename);
   if ("error" in name) return c.json({ error: name.error, code: name.code }, name.status);
   const sized = validateSize(body.size);
@@ -561,7 +675,8 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
   // BEFORE any B2 multipart exists, so a refused request leaves no remote state.
   // The multipart plan is sized from the declared size, so charging it here bounds
   // what can actually land in the bucket. A batch draws down one shared budget.
-  if (orderId && !consumeOrderBudget(orderId, sized.size))
+  // A folder member was reserved with its whole folder.
+  if (orderId && !member && !consumeOrderBudget(orderId, sized.size))
     return c.json(
       { error: "This exceeds the data you paid for. Start a new checkout for the additional files.", code: "insufficient_paid_budget" },
       402,
@@ -581,7 +696,9 @@ api.post("/uploads", requireSession, enforceOrigin, limiter("initiate", 30, 60_0
     filename: name.filename, contentType,
     declaredSize: sized.size, partSize: out.partSize, partCount: out.partCount,
     verificationMode: verification.verificationMode,
+    parentId: member?.folderId, relativePath: member?.path,
   });
+  if (member) claimFolderFile(member.folderId, member.path, out.transferId);
   return c.json({ ...out, verificationMode: verification.verificationMode });
 });
 
@@ -657,24 +774,55 @@ const sanitizeOptions = (o?: Record<string, unknown>): Record<string, boolean | 
   return clean;
 };
 
+/** The recipient password a sender sets on a new link (a file, or a folder). */
+function recipientPasswordFrom(c: Context, raw: unknown): { fail: Response } | { password?: string } {
+  if (raw !== undefined && typeof raw !== "string")
+    return { fail: c.json({ error: "Password must be text.", code: "bad_password" }, 400) };
+  if (typeof raw === "string" && raw.length > 128)
+    return { fail: c.json({ error: "Password must be 128 characters or fewer.", code: "bad_password" }, 400) };
+  // New transfers only: a password, when set, is at least MIN_RECIPIENT_PASSWORD
+  // characters. Existing transfers keep whatever they were created with — unlock
+  // deliberately does not apply this, or older links would stop opening.
+  if (typeof raw === "string" && raw.length > 0 && raw.length < MIN_RECIPIENT_PASSWORD)
+    return { fail: c.json(
+      { error: `Password must be at least ${MIN_RECIPIENT_PASSWORD} characters.`, code: "bad_password" }, 400) };
+  return { password: typeof raw === "string" && raw.length > 0 ? raw : undefined };
+}
+
+/** What a new link is entitled to. Paid links carry what the sender paid for;
+ *  the ORDER is the source of truth, so a client cannot inflate either value.
+ *    * downloads_allowed = chosen + the hidden bonus download (enforcedDownloads);
+ *      the sender only ever saw/paid for the chosen count.
+ *    * expiry = the weeks they bought, as weeks*7 + 1 day.
+ *  Comped/admin transfers leave downloads unset (NULL = unlimited) and keep the
+ *  deployment-wide default expiry — the pre-feature behaviour. */
+function linkTermsFor(c: Context): { downloadsAllowed?: number; expiresAt?: number } {
+  const payOrder = sessionOf(c)?.orderId ? getOrder(sessionOf(c)!.orderId!) : undefined;
+  return {
+    downloadsAllowed: payOrder ? enforcedDownloads(payOrder.downloads) : undefined,
+    expiresAt: payOrder
+      ? Date.now() + linkExpiryDays(payOrder.weeks) * 86_400_000
+      : RECIPIENT_LINK_TTL_DAYS > 0
+        ? Date.now() + RECIPIENT_LINK_TTL_DAYS * 86_400_000
+        : undefined,
+  };
+}
+
 api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   const b = await c.req.json().catch(() => ({}) as Record<string, any>);
   const owned = ownedByPair(c, b.key, b.uploadId);
   if ("fail" in owned) return owned.fail;
-  if (b.recipientPassword !== undefined && typeof b.recipientPassword !== "string")
-    return c.json({ error: "Password must be text.", code: "bad_password" }, 400);
-  if (typeof b.recipientPassword === "string" && b.recipientPassword.length > 128)
-    return c.json({ error: "Password must be 128 characters or fewer.", code: "bad_password" }, 400);
-  // New transfers only: a password, when set, is at least MIN_RECIPIENT_PASSWORD
-  // characters. Existing transfers keep whatever they were created with — unlock
-  // deliberately does not apply this, or older links would stop opening.
-  if (typeof b.recipientPassword === "string" && b.recipientPassword.length > 0
-      && b.recipientPassword.length < MIN_RECIPIENT_PASSWORD)
-    return c.json(
-      { error: `Password must be at least ${MIN_RECIPIENT_PASSWORD} characters.`, code: "bad_password" }, 400);
-  const recipientPassword = typeof b.recipientPassword === "string" && b.recipientPassword.length > 0
-    ? b.recipientPassword
-    : undefined;
+  const pw = recipientPasswordFrom(c, b.recipientPassword);
+  if ("fail" in pw) return pw.fail;
+  // A folder member's password, expiry and allowance are its folder's, set at
+  // POST /folders/:id/complete; anything sent with the file is ignored.
+  const parentId = owned.row.parentId;
+  if (parentId) {
+    const claimed = owned.row.relativePath ? getFolderFile(parentId, owned.row.relativePath) : undefined;
+    if (claimed?.transferId !== owned.row.transferId)
+      return c.json({ error: "This upload was replaced by a newer one for the same file.", code: "superseded" }, 409);
+  }
+  const recipientPassword = parentId ? undefined : pw.password;
   // Idempotent: a retried completion must not re-assemble on B2 or re-meter
   // the transfer. The first call wins; later calls acknowledge without work.
   if (owned.row.state === "complete")
@@ -685,26 +833,18 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
   const transferId = owned.row.transferId;
   // Unknown and retired options (including legacy self_heal) never enter the
   // transfer store or dispatch payload.
-  const requested = sanitizeOptions(b.options as Record<string, unknown> | undefined);
+  // Folder members are transfer-only, whatever the request says: QC is a
+  // single-master service and a folder must never fan out into N pipeline runs.
+  const requested = parentId
+    ? Object.fromEntries(SERVICE_KEYS.map((k) => [k, false]))
+    : sanitizeOptions(b.options as Record<string, unknown> | undefined);
   // Service allowlist: a disabled service is forced OFF in the stored options,
   // not merely hidden in the UI — the API is authoritative. Applied before the
   // record is written so the policy survives a restart and the B2 event path
   // sees the same decision.
   const { options, disabled } = applyServicePolicy(requested, bytes);
-  // Paid links carry what the sender paid for; the ORDER is the source of truth,
-  // so a client cannot inflate either value by sending a larger number here.
-  //   * downloads_allowed = chosen + the hidden bonus download (enforcedDownloads);
-  //     the sender only ever saw/paid for the chosen count.
-  //   * expiry = the weeks they bought, as weeks*7 + 1 day.
-  // Comped/admin transfers leave downloads unset (NULL = unlimited) and keep the
-  // deployment-wide default expiry — the pre-feature behaviour.
-  const payOrder = sessionOf(c)?.orderId ? getOrder(sessionOf(c)!.orderId!) : undefined;
-  const downloadsAllowed = payOrder ? enforcedDownloads(payOrder.downloads) : undefined;
-  const expiresAt = payOrder
-    ? Date.now() + linkExpiryDays(payOrder.weeks) * 86_400_000
-    : RECIPIENT_LINK_TTL_DAYS > 0
-      ? Date.now() + RECIPIENT_LINK_TTL_DAYS * 86_400_000
-      : undefined;
+  // See linkTermsFor: the order, never the request, decides these.
+  const { downloadsAllowed, expiresAt } = linkTermsFor(c);
   // Always record — the event path needs `options` even without a hash root.
   saveTransfer(transferId, {
     key: owned.row.objectKey,
@@ -716,6 +856,7 @@ api.post("/uploads/complete", requireSession, enforceOrigin, async (c) => {
     passwordHash: recipientPassword ? hashAccessCode(recipientPassword) : undefined,
     ownerId: owned.row.ownerId ?? undefined,
     downloadsAllowed,
+    parentId,
   });
   // Report the skip honestly rather than silently dropping a requested service.
   if (disabled.length)
@@ -762,7 +903,11 @@ const belongsToTransfer = (key: string, id: string): boolean =>
 // The unlock cookie is the ONLY proof accepted, and every request it authorizes
 // slides it forward, so a browser that keeps downloading (renewing its storage
 // URL every hour) stays unlocked, while a copied link is useless anywhere else.
-const recipientGate = (c: Context, id: string): Response | undefined => {
+//
+// A folder member is gated by its FOLDER: the recipient enters the password
+// once, for the folder, and that unlock opens every file in it.
+const recipientGate = (c: Context, requestedId: string): Response | undefined => {
+  const id = accessTransferId(requestedId);
   const transfer = getTransfer(id);
   if (!transfer?.passwordHash) return undefined;
   if (hasRecipientUnlock(c, id)) {
@@ -798,7 +943,8 @@ const UNLOCK_FAILURE_LIMIT = 20;
 const UNLOCK_FAILURE_WINDOW_MS = 60 * 60_000;
 api.post("/transfers/:id/unlock", enforceOrigin, limiter("recipient-unlock", 10, 60_000),
   globalLimiter("recipient-unlock", 60, 60_000), async (c) => {
-  const id = c.req.param("id");
+  // A file inside a folder is unlocked by its folder's password.
+  const id = accessTransferId(c.req.param("id"));
   if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
   const transfer = getTransfer(id);
   if (!transfer) return c.json({ error: "not found" }, 404);
@@ -891,8 +1037,10 @@ api.get("/transfers/:id/original", async (c) => {
   let grant: string | undefined;
   let continuation: string | undefined;
   let continuing = false;
-  const transfer = getTransfer(id);
-  const allowed = transfer?.downloadsAllowed;
+  // A folder member's allowance is its folder's, applied to each file on its
+  // own (ADR-042): every file may be downloaded that many times, alone or as
+  // part of the whole folder. Grants stay keyed by the member's id.
+  const allowed = getTransfer(accessTransferId(id))?.downloadsAllowed;
   if (typeof allowed === "number") {
     const presented = c.req.query("grant") || getDownloadGrantCookie(c, id);
     const held = presented ? getGrant(presented) : undefined;
@@ -1009,6 +1157,29 @@ api.get("/transfers/:id", async (c) => {
   if (capabilityRevoked(id)) return c.json({ error: "not found" }, 404);
   const locked = recipientGate(c, id);
   if (locked) return locked;
+  const record = getTransfer(id);
+  if (record?.kind === "folder") {
+    // The tree, before anything is downloaded: every path and size, plus what
+    // each file has left of the allowance. Per-file detail (verification
+    // material, a fresh storage source) comes from GET /transfers/<member id>,
+    // which the same unlock opens.
+    const allowed = record.downloadsAllowed;
+    const files = [];
+    for (const m of listFolderMembers(id)) {
+      const url = mediatedDownloadUrl(c, m.transferId);
+      if (!url)
+        return c.json({ error: "Download links are not configured on this server.", code: "public_origin_unconfigured" }, 503);
+      files.push({
+        transferId: m.transferId, path: m.path, size: m.size, url,
+        downloadsLeft: typeof allowed === "number" ? Math.max(0, allowed - countGrants(m.transferId)) : null,
+      });
+    }
+    return c.json({
+      kind: "folder", transferId: id, name: record.displayName ?? "Folder",
+      fileCount: files.length, totalBytes: files.reduce((n, f) => n + f.size, 0),
+      downloadsAllowed: allowed ?? null, files,
+    });
+  }
   // Same classification the mediated download route uses — one definition of
   // what "the master" is, so the two can never disagree about which object a
   // download serves.
@@ -1027,7 +1198,11 @@ api.get("/transfers/:id", async (c) => {
   if (!mediatedUrl)
     return c.json({ error: "Download links are not configured on this server.", code: "public_origin_unconfigured" }, 503);
   return c.json({
+    kind: "file",
     transferId: id,
+    // Set for a file inside a folder; the delivery page uses it to know the
+    // download allowance is per file.
+    parentId: transfer?.parentId ?? null,
     // The original is signed with a Content-Disposition override so browsers
     // SAVE it rather than opening it in the media player. Derivatives keep
     // inline disposition — the page renders the thumbnail and fetches the QC
@@ -1122,5 +1297,13 @@ api.get("/transfers/:id/usage", requireSession, (c) => {
   const owner = getTransfer(id)?.ownerId;
   const mine = !authEnabled || session?.admin || (!!owner && owner === session?.ownerId);
   if (!mine) return c.json({ error: "not found" }, 404);
-  return c.json(usageFor(id));
+  if (getTransfer(id)?.kind !== "folder") return c.json(usageFor(id));
+  // A folder's ledger is its files' ledgers combined.
+  const events = listFolderMembers(id).flatMap((m) => usageFor(m.transferId).events);
+  const totals: Record<string, { units: number; unit: string }> = {};
+  for (const e of events) {
+    const t = (totals[e.event] ??= { units: 0, unit: e.unit });
+    t.units = Number((t.units + e.units).toFixed(6));
+  }
+  return c.json({ events, totals });
 });

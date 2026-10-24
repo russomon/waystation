@@ -176,6 +176,11 @@ part ETags — no cross-origin Expose-Headers needed (works on MinIO and B2).
   download, and a working **Verify provenance** button (re-hashes the
   original + derivatives, compares to the manifest). Endpoint
   `GET /api/transfers/:id`; proven by `scripts/delivery-proof.sh`.
+- ✅ **Folder transfers** — drop or pick a whole folder and send ONE link.
+  The recipient sees the tree, downloads any single file, or (Chrome/Edge)
+  rebuilds the folder in one step; every file keeps the verified, resumable
+  download and the allowance applies per file (ADR-042). Proven locally by
+  `scripts/folder-transfer-proof.sh`; not yet deployed.
 - ✅ **Named sender access codes, self-administered.** The environment code
   is the admin; it opens a *Manage access codes* panel that issues per-client
   codes (shown once, stored as scrypt hashes) and revokes them with effect on
