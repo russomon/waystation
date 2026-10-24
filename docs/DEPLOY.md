@@ -722,6 +722,25 @@ The full-QC host was spun down. Production now runs the **transfer-only** stack.
 | Gateway image | `1c3c81e18b4e` — **restored from B2**, not rebuilt |
 | Measured at idle | 523 MB of 955 used · gateway 94 MiB, cloudflared 16 MiB · CPU 0.36% |
 
+### Folder-transfer gateway release — 2026-10-24
+
+- Source `d656dd6` on `main` (folder transfers, ADR-042, plus the merged
+  trusted-API-origin and owner-based upload-recovery changes). The host checkout
+  moved from `codex/hosted-waystation-mvp` (`81e07c1`) to `main`; no local diffs.
+  Portal: OrbitWebsite `de43a2e`, client pinned to `d656dd6`,
+  `verify-waystation-release.sh` PASS, published after the gateway.
+- Rebuilt and recreated **gateway only** (`docker-compose.transfer.yml up -d
+  --no-deps gateway`); healthy within 30 s. Cloudflared untouched
+  (`7d107bc6d419`). `WAYSTATION_PUBLIC_API_ORIGIN` is
+  `https://api.orbitolive.com`, the tunnel hostname; the gateway booted with it.
+- Pre-deploy WAL-safe backup: `/home/waystation/control-pre-d656dd6.db`,
+  118,784 bytes, mode 600, SHA-256 prefix `213ef6ee84d09be4`, schema v7,
+  integrity ok. Contains live capabilities — keep on host.
+- Schema v7 → v8 in place; integrity ok; rows preserved (22 transfers,
+  24 uploads, 45 meter events, 10 grants, 4 access codes; 0 folder files).
+  Public checks: `/healthz` 200, unauthenticated `POST /api/uploads` and
+  `POST /api/folders` 401, unknown transfer 404.
+
 ### B2 application key narrowed — 2026-09-30
 
 - The gateway's key (`waystation`, …`003`) was bucket-restricted to `OrBucket`

@@ -2,20 +2,20 @@
 
 ## Active Queue
 
-1. **[P1] Review, merge and deploy folder transfers**
-   - **Target**: branch `claude/orbistation-folder-transfers` (`gateway/src/folders.ts`, `gateway/src/db.ts` schema v8, `gateway/src/routes.ts`, `client/src/folders.ts`, `client/src/folderDelivery.ts`, `client/src/main.ts`), ADR-042
-   - **Done When**: the owner has reviewed and merged the branch; someone has sent a real folder from the sender page in Chrome (pick and drag-drop) and in Safari, and downloaded it via "Download folder…" into a real directory, which a native dialog prevented automating. Then the GATEWAY is deployed (schema v8 migrates in place; back up with `VACUUM INTO` first), and only after that the client is exported with `scripts/export-client.sh` and the website published. A new client against the old gateway would fail every folder send.
-   - **Blocked By**: Owner review and merge; manual browser check; deployment approval.
+1. **[P1] Live-check folder transfers (deployed 2026-10-24)**
+   - **Target**: `https://orbitolive.com/orbistation/` (client `d656dd6`), gateway `d656dd6` schema v8, ADR-042
+   - **Done When**: the owner has sent a real folder on the live site in Chrome (pick and drag-drop) and Safari, downloaded it with "Download entire folder…" into a real directory and compared it, and saved one file from "Download individual files".
+   - **Blocked By**: Owner browser test.
 
 2. **[P1] Deploy the trusted API-origin change (merged)**
    - **Target**: branch `claude/orbistation-security-and-proof-hardening` (`gateway/src/publicOrigin.ts`, `gateway/src/routes.ts`, both compose files, `docs/DEPLOY.md`)
    - **Done When**: the owner has reviewed and merged the branch; before the gateway rebuild the operator has confirmed `WAYSTATION_PUBLIC_API_ORIGIN` in the compose files matches the tunnel hostname (the gateway refuses to start without a valid https origin); after deployment a forged-header request through the real tunnel (one outward request, owner-authorized) returns the configured origin and a download still works. Replaces the open `X-Forwarded-Host` question.
-   - **Blocked By**: Merged to `main` on 2026-10-24 at the owner's direction, without the separate independent review of `143aef5`. Remaining: operator deployment prerequisites in `docs/DEPLOY.md`. Nothing here is deployed.
+   - **Blocked By**: Deployed 2026-10-24 with `d656dd6` (origin confirmed as the tunnel hostname; the gateway booted with it). Remaining: the owner-authorized forged-header check through the real tunnel.
 
 3. **[P1] Deploy owner-based upload recovery (merged)**
    - **Target**: same branch (`gateway/src/ownership.ts`, `ownUpload` in `gateway/src/routes.ts`)
    - **Done When**: reviewed and merged; after deployment a sender whose session lapsed resumes an upload (owner-authorized check). Known remainder: the QC-only `progressGate` still compares the originating session id, and the quota counters stay session-keyed.
-   - **Blocked By**: Merged to `main` on 2026-10-24 (owner-directed); deployment only.
+   - **Blocked By**: Deployed 2026-10-24 with `d656dd6`. Remaining: the owner-authorized lapsed-session resume check.
 
 4. **[P2] Record operator facts for the live features**
    - **Target**: `docs/DEPLOY.md`, `docs/HOSTED_FEATURES.md`
