@@ -42,6 +42,8 @@ import {
   adminBySender,
   adminTransferPage,
   type AdminLinkFilter,
+  type AdminTransferSort,
+  ADMIN_TRANSFER_SORTS,
   touchAccessCode,
   completedSinceAll,
   capabilityRevoked,
@@ -273,7 +275,8 @@ api.get("/admin/stats", requireAdmin, limiter("admin", 30, 60_000), (c) => {
 
 // Paged listing of top-level transfers (a folder is one row) with filename,
 // sender, size, downloads and link status. ?window=24h|7d|all, ?status=all|active|
-// expiring|expired|revoked|uploading, ?offset, ?limit (<= 100). Read-only.
+// expiring|expired|revoked|uploading, ?sort=when|name|sender|size|downloads|expires|status,
+// ?dir=asc|desc, ?offset, ?limit (<= 100). Read-only.
 const LINK_FILTERS: readonly AdminLinkFilter[] = ["all", "active", "expiring", "expired", "revoked", "uploading"];
 api.get("/admin/transfers", requireAdmin, limiter("admin", 60, 60_000), (c) => {
   const w = c.req.query("window");
@@ -286,7 +289,13 @@ api.get("/admin/transfers", requireAdmin, limiter("admin", 60, 60_000), (c) => {
   };
   const limit = clamp(c.req.query("limit"), 25, 1, 100);
   const offset = clamp(c.req.query("offset"), 0, 0, 1_000_000);
-  return c.json({ status, limit, offset, ...adminTransferPage(new Date(sinceMs).toISOString(), status, limit, offset) });
+  const sq = c.req.query("sort") as AdminTransferSort | undefined;
+  const sort: AdminTransferSort = sq && ADMIN_TRANSFER_SORTS.includes(sq) ? sq : "when";
+  const dir = c.req.query("dir") === "asc" ? "asc" : "desc";
+  return c.json({
+    status, limit, offset, sort, dir,
+    ...adminTransferPage(new Date(sinceMs).toISOString(), status, limit, offset, sort, dir),
+  });
 });
 
 // ───────── payments (pay-per-gig checkout) ─────────

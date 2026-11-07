@@ -38,6 +38,7 @@ Configuration is listed by **name only**. Values are never recorded here.
 - An **unfinished uploads** list, oldest first, saying whether each one still holds an in-flight upload slot (younger than `ACTIVE_UPLOAD_WINDOW_HOURS`).
 - A **paged transfers list** (`GET /admin/transfers?window&status&limit&offset`, limit <= 100, default 25) with filename, sender, size, downloads used/allowed, link expiry and status, filterable by active / expiring / expired / revoked / folders still uploading, with a "Load more" button.
 - The 8 most recent paid orders.
+- **Sortable columns.** Every column header on these tables is a button: click to sort, click again to reverse (arrow and `aria-sort` show the state). The transfers list sorts on the gateway (`?sort=when|name|sender|size|downloads|expires|status&dir=asc|desc`, whitelisted, stable across pages, links with no expiry always last) because it is paged; the smaller tables, including the access-codes list, sort in the browser.
 
 **Reading the numbers.** A folder is one row and one job; its size is the sum of its files and its downloads the sum of grants on its files (grants are issued against member ids). Size comes from the `transfer` meter event written when an upload completes, so a transfer that never completed reads 0; sizes are formatted in kB/MB/GB so a small file no longer shows as "0.00 GB". The per-session job cap is not reported because it is keyed to a login session and resets with each new one; only the deployment-wide cap is.
 

@@ -25,6 +25,34 @@ const when = (iso: string | null): string =>
     ? new Date(iso).toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : "never";
 
+type SortDir = "asc" | "desc";
+type SortKey = string | number;
+
+/** Make a header cell a sort control. `dir` is the current direction when this
+ *  column is the sorted one, else null. A real <button> so it is reachable and
+ *  operable from the keyboard; aria-sort tells assistive tech the state. */
+function sortableHeader(th: HTMLElement, text: string, dir: SortDir | null, onClick: () => void): void {
+  th.replaceChildren();
+  th.setAttribute("aria-sort", dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none");
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "sort-btn";
+  b.append(document.createTextNode(text));
+  const arrow = document.createElement("span");
+  arrow.className = "sort-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+  arrow.textContent = dir === "asc" ? " ▲" : dir === "desc" ? " ▼" : "";
+  b.append(arrow);
+  b.onclick = onClick;
+  th.append(b);
+}
+
+/** Compare two sort keys: numbers numerically, text case-insensitively. */
+const compareKeys = (a: SortKey, b: SortKey): number =>
+  typeof a === "number" && typeof b === "number"
+    ? a - b
+    : String(a).localeCompare(String(b), undefined, { sensitivity: "base", numeric: true });
+
 export function mountAdmin(root: HTMLDetailsElement): void {
   const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
   const label = $<HTMLInputElement>("#codeLabel");
@@ -42,7 +70,42 @@ export function mountAdmin(root: HTMLDetailsElement): void {
   };
   const note = (text: string) => { msg.textContent = text; msg.classList.remove("bad"); };
 
-  const render = (codes: CodeRow[]) => {
+  // Client-side sort: the code list is small and arrives whole.
+  const CODE_COLS: { text: string; key: (c: CodeRow) => SortKey; first: SortDir }[] = [
+    { text: "Label", key: (c) => c.label, first: "asc" },
+    { text: "Created", key: (c) => Date.parse(c.createdAt) || 0, first: "desc" },
+    { text: "Last used", key: (c) => (c.lastUsedAt ? Date.parse(c.lastUsedAt) : 0), first: "desc" },
+    { text: "Transfers", key: (c) => c.transfers, first: "desc" },
+    { text: "Status", key: (c) => (c.revokedAt ? 1 : 0), first: "asc" },
+  ];
+  let codeRows: CodeRow[] = [];
+  let codeSort: { col: number; dir: SortDir } | null = null;
+  const codeHeads = Array.from(table.tHead!.rows[0].cells);
+  const paintCodeHeads = () => {
+    CODE_COLS.forEach((c, i) => sortableHeader(
+      codeHeads[i], c.text, codeSort?.col === i ? codeSort.dir : null,
+      () => {
+        codeSort = codeSort?.col === i
+          ? { col: i, dir: codeSort.dir === "asc" ? "desc" : "asc" }
+          : { col: i, dir: c.first };
+        render(codeRows);
+      },
+    ));
+  };
+
+  const render = (codesIn: CodeRow[]) => {
+    codeRows = codesIn;
+    const codes = codeSort
+      ? codesIn
+          .map((c, i) => ({ c, i }))
+          .sort((x, y) => {
+            const k = CODE_COLS[codeSort!.col].key;
+            const d = compareKeys(k(x.c), k(y.c));
+            return (codeSort!.dir === "asc" ? d : -d) || x.i - y.i;
+          })
+          .map((x) => x.c)
+      : codesIn;
+    paintCodeHeads();
     body.replaceChildren();
     table.hidden = codes.length === 0;
     empty.hidden = codes.length > 0;
@@ -171,7 +234,10 @@ export function mountAdmin(root: HTMLDetailsElement): void {
     d.append(v, l);
     return d;
   };
-  const miniTable = (title: string, head: string[], rows: string[][]): HTMLElement => {
+  /** A small read-only table. With `keys` (one sort key per cell, parallel to
+   *  `rows`) every header sorts the rows client-side; without, it is static.
+   *  Numeric columns open largest-first, text columns A-Z. */
+  const miniTable = (title: string, head: string[], rows: string[][], keys?: SortKey[][]): HTMLElement => {
     const wrap = document.createElement("div");
     const h = document.createElement("h4"); h.textContent = title; wrap.append(h);
     if (!rows.length) {
@@ -181,14 +247,34 @@ export function mountAdmin(root: HTMLDetailsElement): void {
     }
     const t = document.createElement("table");
     const thead = document.createElement("thead"); const htr = document.createElement("tr");
-    for (const x of head) { const th = document.createElement("th"); th.textContent = x; htr.append(th); }
+    const ths = head.map((x) => { const th = document.createElement("th"); th.textContent = x; htr.append(th); return th; });
     thead.append(htr);
     const tb = document.createElement("tbody");
-    for (const r of rows) {
-      const tr = document.createElement("tr");
-      for (const cell of r) { const td = document.createElement("td"); td.textContent = cell; tr.append(td); }
-      tb.append(tr);
-    }
+    let sort: { col: number; dir: SortDir } | null = null;
+    const paint = () => {
+      const order = rows.map((_, i) => i);
+      if (keys && sort) {
+        const { col, dir } = sort;
+        order.sort((x, y) => {
+          const d = compareKeys(keys[x][col], keys[y][col]);
+          return (dir === "asc" ? d : -d) || x - y;
+        });
+      }
+      tb.replaceChildren();
+      for (const i of order) {
+        const tr = document.createElement("tr");
+        for (const cell of rows[i]) { const td = document.createElement("td"); td.textContent = cell; tr.append(td); }
+        tb.append(tr);
+      }
+      if (keys) ths.forEach((th, c) => sortableHeader(th, head[c], sort?.col === c ? sort.dir : null, () => {
+        const numeric = typeof keys[0][c] === "number";
+        sort = sort?.col === c
+          ? { col: c, dir: sort.dir === "asc" ? "desc" : "asc" }
+          : { col: c, dir: numeric ? "desc" : "asc" };
+        paint();
+      }));
+    };
+    paint();
     t.append(thead, tb); wrap.append(t);
     return wrap;
   };
@@ -203,6 +289,21 @@ export function mountAdmin(root: HTMLDetailsElement): void {
   const xferFilter = $<HTMLSelectElement>("#xferFilter");
   const PAGE = 25;
   let xferOffset = 0;
+  // Sorting is the gateway's job: the list is paged, so sorting only the rows
+  // already loaded would show a misleading order. Defaults match the gateway's.
+  type XferSort = "when" | "name" | "sender" | "size" | "downloads" | "expires" | "status";
+  const XFER_COLS: { text: string; key: XferSort; first: SortDir }[] = [
+    { text: "When", key: "when", first: "desc" },
+    { text: "File", key: "name", first: "asc" },
+    { text: "Sender", key: "sender", first: "asc" },
+    { text: "Size", key: "size", first: "desc" },
+    { text: "Downloads", key: "downloads", first: "desc" },
+    { text: "Link expires", key: "expires", first: "asc" },
+    { text: "Status", key: "status", first: "asc" },
+  ];
+  let xferSort: XferSort = "when";
+  let xferDir: SortDir = "desc";
+  let xferReq = 0; // drops a slow response that a newer click has superseded
 
   const pill = (status: string): HTMLElement => {
     const s = document.createElement("span");
@@ -235,8 +336,14 @@ export function mountAdmin(root: HTMLDetailsElement): void {
     xferList.replaceChildren();
     const t = document.createElement("table");
     const thead = document.createElement("thead"); const htr = document.createElement("tr");
-    for (const x of ["When", "File", "Sender", "Size", "Downloads", "Link expires", "Status"]) {
-      const th = document.createElement("th"); th.textContent = x; htr.append(th);
+    for (const c of XFER_COLS) {
+      const th = document.createElement("th");
+      sortableHeader(th, c.text, xferSort === c.key ? xferDir : null, () => {
+        if (xferSort === c.key) xferDir = xferDir === "asc" ? "desc" : "asc";
+        else { xferSort = c.key; xferDir = c.first; }
+        void loadTransfers(false);
+      });
+      htr.append(th);
     }
     thead.append(htr); tb = document.createElement("tbody"); t.append(thead, tb); xferList.append(t);
     return tb;
@@ -244,8 +351,10 @@ export function mountAdmin(root: HTMLDetailsElement): void {
   const loadTransfers = async (append: boolean): Promise<void> => {
     try {
       if (!append) xferOffset = 0;
-      const q = `window=${statWindow}&status=${xferFilter.value}&limit=${PAGE}&offset=${xferOffset}`;
+      const req = ++xferReq;
+      const q = `window=${statWindow}&status=${xferFilter.value}&sort=${xferSort}&dir=${xferDir}&limit=${PAGE}&offset=${xferOffset}`;
       const r = await gwGet(`/admin/transfers?${q}`);
+      if (req !== xferReq) return;
       if (!append) xferList.replaceChildren();
       if (!r.rows.length && !append) {
         const p = document.createElement("p"); p.className = "muted";
@@ -311,21 +420,30 @@ export function mountAdmin(root: HTMLDetailsElement): void {
       const bySender: string[][] = (s.bySender ?? []).map((r: any) => [
         r.owner, String(r.transfers), size(r.gb), String(r.downloads), when(r.lastAt),
       ]);
+      const bySenderKeys: SortKey[][] = (s.bySender ?? []).map((r: any) => [
+        r.owner, r.transfers, r.gb, r.downloads, r.lastAt ? Date.parse(r.lastAt) : 0,
+      ]);
       const unfinished: string[][] = (s.unfinished ?? []).map((r: any) => [
         when(r.createdAt), r.name, r.owner, r.sizeBytes == null ? "—" : formatBytes(r.sizeBytes),
         r.holdsSlot ? "yes — counts toward the in-flight cap" : "no — older than 24 h",
+      ]);
+      const unfinishedKeys: SortKey[][] = (s.unfinished ?? []).map((r: any) => [
+        Date.parse(r.createdAt), r.name, r.owner, r.sizeBytes ?? -1, r.holdsSlot ? 1 : 0,
       ]);
       const byGw = Object.entries(s.payments.byGateway ?? {})
         .map(([g, v]: [string, any]) => `${g} ${v.orders}`).join(" · ");
       const recentO: string[][] = (s.recentOrders ?? []).map((r: any) => [
         when(r.paidAt), r.gateway, formatUsd(r.amountCents), `${r.downloads} dl · ${r.weeks} wk`, size(r.gb),
       ]);
+      const recentOKeys: SortKey[][] = (s.recentOrders ?? []).map((r: any) => [
+        r.paidAt ? Date.parse(r.paidAt) : 0, r.gateway, r.amountCents, r.downloads * 100 + r.weeks, r.gb,
+      ]);
       statExtra.replaceChildren(
-        miniTable("By sender", ["Sender", "Transfers", "Size", "Downloads", "Last transfer"], bySender),
-        miniTable("Unfinished uploads", ["Started", "File", "Sender", "Declared size", "Holds an upload slot?"], unfinished),
+        miniTable("By sender", ["Sender", "Transfers", "Size", "Downloads", "Last transfer"], bySender, bySenderKeys),
+        miniTable("Unfinished uploads", ["Started", "File", "Sender", "Declared size", "Holds an upload slot?"], unfinished, unfinishedKeys),
       );
       statRecent.replaceChildren(
-        miniTable(`Recent paid orders${byGw ? ` — ${byGw}` : ""}`, ["When", "Method", "Amount", "Bought", "Size"], recentO),
+        miniTable(`Recent paid orders${byGw ? ` — ${byGw}` : ""}`, ["When", "Method", "Amount", "Bought", "Size"], recentO, recentOKeys),
       );
       await loadTransfers(false);
     } catch (e) { fail(e); }

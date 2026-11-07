@@ -1117,8 +1117,13 @@ export function adminBySender(sinceIso: string): AdminExtras["bySender"] {
 
 /** One page of top-level transfers, newest first, optionally filtered by link status.
  *  Status is derived in SQL from the same rule as linkStatus() so paging is exact. */
+export type AdminTransferSort = "when" | "name" | "sender" | "size" | "downloads" | "expires" | "status";
+export const ADMIN_TRANSFER_SORTS: readonly AdminTransferSort[] =
+  ["when", "name", "sender", "size", "downloads", "expires", "status"];
+
 export function adminTransferPage(
   sinceIso: string, filter: AdminLinkFilter, limit: number, offset: number,
+  sort: AdminTransferSort = "when", dir: "asc" | "desc" = "desc",
 ): { rows: AdminTransferRow[]; total: number } {
   const nowIso = new Date().toISOString();
   const soonIso = new Date(Date.now() + EXPIRING_SOON_MS).toISOString();
@@ -1137,10 +1142,32 @@ export function adminTransferPage(
   })();
   const base = `FROM transfers t WHERE t.parent_id IS NULL AND t.created_at >= ? ${where.sql}`;
   const total = Number((db.prepare(`SELECT COUNT(*) AS n ${base}`).get(sinceIso, ...where.args) as { n: number }).n);
+  // ORDER BY comes from a fixed map keyed by a validated name — never from the
+  // request text — so no caller-supplied string reaches the SQL. Every sort ends
+  // with created_at and transfer_id so equal values keep a stable order across pages.
+  const d = dir === "asc" ? "ASC" : "DESC";
+  const statusCase = `CASE WHEN t.revoked = 1 THEN 'revoked'
+      WHEN t.kind = 'folder' AND t.state = 'uploading' THEN 'uploading'
+      WHEN t.expires_at IS NOT NULL AND t.expires_at <= ? THEN 'expired'
+      WHEN t.expires_at IS NOT NULL AND t.expires_at <= ? THEN 'expiring'
+      ELSE 'active' END`;
+  const keys: Record<AdminTransferSort, { sql: string; args: string[] }> = {
+    when: { sql: `t.created_at ${d}`, args: [] },
+    name: { sql: `LOWER(${FILE_NAME}) ${d}`, args: [] },
+    sender: { sql: `LOWER(COALESCE(${OWNER_LABEL}, t.owner_id, '')) ${d}`, args: [] },
+    size: { sql: `${SIZE_GB} ${d}`, args: [] },
+    downloads: { sql: `${DL_USED} ${d}`, args: [] },
+    // Links with no expiry sort last in either direction.
+    expires: { sql: `(t.expires_at IS NULL) ASC, t.expires_at ${d}`, args: [] },
+    status: { sql: `${statusCase} ${d}`, args: [nowIso, soonIso] },
+  };
+  const key = keys[sort] ?? keys.when;
+  const orderBy = `${key.sql}, t.created_at DESC, t.transfer_id`;
+  const orderArgs = key.args;
   const rows = db.prepare(`
     SELECT t.transfer_id, t.created_at, t.expires_at, t.revoked, t.kind, t.state, t.downloads_allowed, t.owner_id,
            ${FILE_NAME} AS name, ${SIZE_GB} AS gb, ${DL_USED} AS used, ${OWNER_LABEL} AS owner_label
-    ${base} ORDER BY t.created_at DESC LIMIT ? OFFSET ?`).all(sinceIso, ...where.args, limit, offset) as any[];
+    ${base} ORDER BY ${orderBy} LIMIT ? OFFSET ?`).all(sinceIso, ...where.args, ...orderArgs, limit, offset) as any[];
   const now = Date.now();
   return {
     total,

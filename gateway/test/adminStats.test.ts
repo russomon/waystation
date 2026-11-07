@@ -156,3 +156,46 @@ test("daily series is 30 zero-filled UTC days ending today, and sums to recent a
   const total = daily.reduce((a, d) => a + d.transfers, 0);
   assert.equal(total, 7); // every fixture transfer is within 30 days; folder counts once
 });
+
+test("sorting: every key orders correctly in both directions and pages stay consistent", () => {
+  const since = new Date(0).toISOString();
+  const ids = (sort: any, dir: "asc" | "desc", limit = 50, offset = 0) =>
+    adminTransferPage(since, "all", limit, offset, sort, dir).rows;
+  const nonDecreasing = <T>(xs: T[], f: (x: T) => string | number) =>
+    xs.every((x, i) => i === 0 || f(xs[i - 1]) <= f(x));
+
+  const size = ids("size", "desc");
+  assert.ok(nonDecreasing([...size].reverse(), (r) => r.gb));
+  assert.equal(size[0].transferId, "f1"); // 5 GB folder is the largest
+  assert.ok(nonDecreasing(ids("size", "asc"), (r) => r.gb));
+
+  assert.ok(nonDecreasing(ids("name", "asc"), (r) => r.name.toLowerCase()));
+  assert.ok(nonDecreasing([...ids("name", "desc")].reverse(), (r) => r.name.toLowerCase()));
+
+  assert.ok(nonDecreasing(ids("sender", "asc"), (r) => r.owner.toLowerCase()));
+  assert.ok(nonDecreasing(ids("downloads", "asc"), (r) => r.downloadsUsed));
+  assert.equal(ids("downloads", "desc")[0].downloadsUsed, 2);
+
+  assert.ok(nonDecreasing(ids("when", "asc"), (r) => r.createdAt));
+  assert.ok(nonDecreasing([...ids("when", "desc")].reverse(), (r) => r.createdAt));
+
+  // Links with no expiry sort last whichever way the column is sorted.
+  const expAsc = ids("expires", "asc"), expDesc = ids("expires", "desc");
+  assert.equal(expAsc[expAsc.length - 1].expiresAt, null);
+  assert.equal(expDesc[expDesc.length - 1].expiresAt, null);
+  assert.ok(nonDecreasing(expAsc.filter((r) => r.expiresAt), (r) => r.expiresAt!));
+
+  // Status sorts alphabetically by the derived label.
+  assert.ok(nonDecreasing(ids("status", "asc"), (r) => r.status === "expiring" ? "expiring" : r.status));
+
+  // Paging under a non-default sort neither repeats nor drops rows.
+  const p = [0, 3, 6].flatMap((o) => ids("name", "asc", 3, o).map((r) => r.transferId));
+  assert.deepEqual(p, ids("name", "asc").map((r) => r.transferId));
+  assert.equal(new Set(p).size, 7);
+
+  // An unknown key falls back to newest-first rather than reaching the SQL.
+  assert.deepEqual(
+    adminTransferPage(since, "all", 50, 0, "name; DROP TABLE transfers" as any, "desc").rows.map((r) => r.transferId),
+    ids("when", "desc").map((r) => r.transferId),
+  );
+});
