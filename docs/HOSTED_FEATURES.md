@@ -30,11 +30,22 @@ Configuration is listed by **name only**. Values are never recorded here.
 
 ## Admin activity dashboard
 
-**What it does.** The "Manage access codes" panel (admin session only) has an activity section with a window toggle (24 h, 7 d, all). `GET /api/admin/stats?window=24h|7d|all` returns read-only aggregates from the existing meter and payments ledgers: completed transfers, GB uploaded, GB egressed, downloads (grants), active uploads, payments (paid orders, revenue, pending, per-gateway split), and the 8 most recent transfers and paid orders. Download counts are exact; GB downloaded is the once-per-download egress meter, not a byte-accurate count.
+**What it does.** The "Manage access codes" panel (admin session only) has an activity section with a window toggle (24 h, 7 d, all). `GET /admin/stats?window=24h|7d|all` returns read-only aggregates from the existing meter, upload, grant and payments tables:
 
-**Source.** `gateway/src/routes.ts` (`/admin/stats`), `gateway/src/db.ts` (`adminStats`), `client/src/admin.ts`, `client/index.html` (`#adminStats`).
+- Tiles: completed transfers, uploaded size, downloads (grants), approximate egress, paid orders and revenue, **jobs in the last 24 h against the deployment's daily job cap**, link lifecycle counts (active, expiring within 3 days, expired, revoked) and unfinished uploads.
+- A 30-day, zero-filled **transfers-per-day** chart (UTC days; the window toggle does not apply to it).
+- A **by-sender** table (transfers, size, downloads, last transfer) that honours the window.
+- An **unfinished uploads** list, oldest first, saying whether each one still holds an in-flight upload slot (younger than `ACTIVE_UPLOAD_WINDOW_HOURS`).
+- A **paged transfers list** (`GET /admin/transfers?window&status&limit&offset`, limit <= 100, default 25) with filename, sender, size, downloads used/allowed, link expiry and status, filterable by active / expiring / expired / revoked / folders still uploading, with a "Load more" button.
+- The 8 most recent paid orders.
 
-**Rules.** `requireAdmin` (neutral 404 for anyone else), 30 requests/minute. It adds no tracking of its own.
+**Reading the numbers.** A folder is one row and one job; its size is the sum of its files and its downloads the sum of grants on its files (grants are issued against member ids). Size comes from the `transfer` meter event written when an upload completes, so a transfer that never completed reads 0; sizes are formatted in kB/MB/GB so a small file no longer shows as "0.00 GB". The per-session job cap is not reported because it is keyed to a login session and resets with each new one; only the deployment-wide cap is.
+
+**Privacy.** Filenames are now shown to the operator. They were already stored in `uploads.filename`; nothing new is recorded, and still no recipient identity, IP address or location.
+
+**Source.** `gateway/src/routes.ts` (`/admin/stats`, `/admin/transfers`), `gateway/src/db.ts` (`adminStats`, `adminExtras`, `adminBySender`, `adminTransferPage`), `client/src/admin.ts`, `client/index.html` (`#adminStats`), `gateway/test/adminStats.test.ts`.
+
+**Rules.** `requireAdmin` (neutral 404 for anyone else); `/admin/stats` 30 requests/minute, `/admin/transfers` 60 requests/minute. It adds no tracking of its own.
 
 **Configuration.** None beyond the admin access code (`WAYSTATION_ACCESS_CODE_HASH`).
 

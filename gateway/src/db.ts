@@ -982,3 +982,174 @@ export function adminStats(sinceIso: string): AdminStats {
     })),
   };
 }
+
+// ── admin: extended views (per-sender, daily series, link lifecycle, listing) ──
+//
+// Still read-only aggregates over the existing tables; nothing new is recorded.
+// A folder is ONE job however many files it holds, so every query here walks
+// top-level transfers only (parent_id IS NULL) and rolls a folder's members up
+// into it. Download grants are issued against a folder's MEMBER ids (routes.ts),
+// so a folder's download count is the sum over its files.
+//
+// Size comes from the 'transfer' meter event written at complete — exact bytes
+// / 1e9 — which is why an incomplete transfer reads 0 and a small file reads
+// 0.00 GB when formatted in whole gigabytes (the client formats MB/kB).
+
+const MEMBERS = `SELECT c.transfer_id FROM transfers c WHERE c.parent_id = t.transfer_id`;
+const SIZE_GB = `COALESCE((SELECT SUM(m.units) FROM meter_events m
+  WHERE m.event = 'transfer' AND (m.transfer_id = t.transfer_id OR m.transfer_id IN (${MEMBERS}))), 0)`;
+const DL_USED = `(SELECT COUNT(*) FROM download_grants g
+  WHERE g.transfer_id = t.transfer_id OR g.transfer_id IN (${MEMBERS}))`;
+const OWNER_LABEL = `(SELECT label FROM access_codes a WHERE a.code_id = t.owner_id)`;
+const FILE_NAME = `COALESCE(t.display_name,
+  (SELECT u.filename FROM uploads u WHERE u.transfer_id = t.transfer_id ORDER BY u.created_at LIMIT 1))`;
+
+export const EXPIRING_SOON_MS = 3 * 86_400_000;
+
+export type AdminLinkStatus = "active" | "expiring" | "expired" | "revoked" | "uploading";
+export type AdminLinkFilter = "all" | AdminLinkStatus;
+
+export interface AdminTransferRow {
+  transferId: string;
+  createdAt: string;
+  expiresAt: string | null;
+  name: string;
+  kind: "file" | "folder";
+  owner: string;
+  gb: number;
+  downloadsUsed: number;
+  downloadsAllowed: number | null;
+  status: AdminLinkStatus;
+}
+
+export interface AdminExtras {
+  bySender: { owner: string; transfers: number; gb: number; downloads: number; lastAt: string | null }[];
+  /** Last 30 UTC days, oldest first, zero-filled. */
+  daily: { day: string; transfers: number; gb: number }[];
+  /** Whole-deployment link lifecycle counts (not windowed). */
+  links: { active: number; expiringSoon: number; expired: number; revoked: number };
+  /** Uploads that started and never completed, oldest first. */
+  unfinished: {
+    createdAt: string; name: string; sizeBytes: number | null; owner: string; holdsSlot: boolean;
+  }[];
+}
+
+const linkStatus = (r: {
+  revoked: number; expires_at: string | null; kind: string | null; state: string | null;
+}, nowMs: number): AdminLinkStatus => {
+  if (r.revoked) return "revoked";
+  if (r.kind === "folder" && r.state === "uploading") return "uploading";
+  if (r.expires_at) {
+    const exp = Date.parse(r.expires_at);
+    if (exp <= nowMs) return "expired";
+    if (exp - nowMs <= EXPIRING_SOON_MS) return "expiring";
+  }
+  return "active";
+};
+
+const xs = {
+  bySender: db.prepare(`
+    SELECT t.owner_id, ${OWNER_LABEL} AS owner_label,
+           COUNT(*) AS n, SUM(${SIZE_GB}) AS gb, SUM(${DL_USED}) AS dl, MAX(t.created_at) AS last_at
+    FROM transfers t
+    WHERE t.parent_id IS NULL AND t.created_at >= ?
+    GROUP BY t.owner_id ORDER BY gb DESC, n DESC`),
+  daily: db.prepare(`
+    SELECT substr(t.created_at, 1, 10) AS day, COUNT(*) AS n, SUM(${SIZE_GB}) AS gb
+    FROM transfers t
+    WHERE t.parent_id IS NULL AND t.created_at >= ?
+    GROUP BY day`),
+  linkRows: db.prepare(`
+    SELECT t.revoked, t.expires_at, t.kind, t.state FROM transfers t WHERE t.parent_id IS NULL`),
+  unfinished: db.prepare(`
+    SELECT u.created_at, u.filename, u.declared_size, u.owner_id,
+           (SELECT label FROM access_codes a WHERE a.code_id = u.owner_id) AS owner_label
+    FROM uploads u
+    WHERE u.state = 'active' AND u.parent_id IS NULL
+    ORDER BY u.created_at LIMIT 25`),
+};
+
+export function adminExtras(slotWindowMs: number): AdminExtras {
+  const now = Date.now();
+  const dayMs = 86_400_000;
+  const start = new Date(now - 29 * dayMs);
+  start.setUTCHours(0, 0, 0, 0);
+  const byDay = new Map<string, { n: number; gb: number }>();
+  for (const r of xs.daily.all(start.toISOString()) as any[])
+    byDay.set(r.day, { n: Number(r.n), gb: Number(r.gb ?? 0) });
+  const daily: AdminExtras["daily"] = [];
+  for (let i = 0; i < 30; i += 1) {
+    const day = new Date(start.getTime() + i * dayMs).toISOString().slice(0, 10);
+    const v = byDay.get(day);
+    daily.push({ day, transfers: v?.n ?? 0, gb: v?.gb ?? 0 });
+  }
+  const links = { active: 0, expiringSoon: 0, expired: 0, revoked: 0 };
+  for (const r of xs.linkRows.all() as any[]) {
+    const s = linkStatus(r, now);
+    if (s === "revoked") links.revoked += 1;
+    else if (s === "expired") links.expired += 1;
+    else if (s === "expiring") { links.expiringSoon += 1; links.active += 1; }
+    else if (s === "active") links.active += 1;
+  }
+  return {
+    bySender: (xs.bySender.all(new Date(0).toISOString()) as any[]).map((r) => ({
+      owner: ownerLabel(r.owner_id, r.owner_label), transfers: Number(r.n),
+      gb: Number(r.gb ?? 0), downloads: Number(r.dl ?? 0), lastAt: r.last_at ?? null,
+    })),
+    daily,
+    links,
+    unfinished: (xs.unfinished.all() as any[]).map((r) => ({
+      createdAt: r.created_at, name: r.filename ?? "(unnamed)",
+      sizeBytes: r.declared_size == null ? null : Number(r.declared_size),
+      owner: ownerLabel(r.owner_id, r.owner_label),
+      holdsSlot: Date.parse(r.created_at) >= now - slotWindowMs,
+    })),
+  };
+}
+
+/** Sender breakdown for a window (separate from adminExtras so it honours ?window). */
+export function adminBySender(sinceIso: string): AdminExtras["bySender"] {
+  return (xs.bySender.all(sinceIso) as any[]).map((r) => ({
+    owner: ownerLabel(r.owner_id, r.owner_label), transfers: Number(r.n),
+    gb: Number(r.gb ?? 0), downloads: Number(r.dl ?? 0), lastAt: r.last_at ?? null,
+  }));
+}
+
+/** One page of top-level transfers, newest first, optionally filtered by link status.
+ *  Status is derived in SQL from the same rule as linkStatus() so paging is exact. */
+export function adminTransferPage(
+  sinceIso: string, filter: AdminLinkFilter, limit: number, offset: number,
+): { rows: AdminTransferRow[]; total: number } {
+  const nowIso = new Date().toISOString();
+  const soonIso = new Date(Date.now() + EXPIRING_SOON_MS).toISOString();
+  const where = (() => {
+    switch (filter) {
+      case "revoked": return { sql: `AND t.revoked = 1`, args: [] as string[] };
+      case "uploading": return { sql: `AND t.revoked = 0 AND t.kind = 'folder' AND t.state = 'uploading'`, args: [] };
+      case "expired": return { sql: `AND t.revoked = 0 AND t.expires_at IS NOT NULL AND t.expires_at <= ?`, args: [nowIso] };
+      case "expiring":
+        return { sql: `AND t.revoked = 0 AND t.expires_at IS NOT NULL AND t.expires_at > ? AND t.expires_at <= ?`, args: [nowIso, soonIso] };
+      case "active":
+        return { sql: `AND t.revoked = 0 AND NOT (t.kind = 'folder' AND t.state = 'uploading')
+                       AND (t.expires_at IS NULL OR t.expires_at > ?)`, args: [nowIso] };
+      default: return { sql: ``, args: [] };
+    }
+  })();
+  const base = `FROM transfers t WHERE t.parent_id IS NULL AND t.created_at >= ? ${where.sql}`;
+  const total = Number((db.prepare(`SELECT COUNT(*) AS n ${base}`).get(sinceIso, ...where.args) as { n: number }).n);
+  const rows = db.prepare(`
+    SELECT t.transfer_id, t.created_at, t.expires_at, t.revoked, t.kind, t.state, t.downloads_allowed, t.owner_id,
+           ${FILE_NAME} AS name, ${SIZE_GB} AS gb, ${DL_USED} AS used, ${OWNER_LABEL} AS owner_label
+    ${base} ORDER BY t.created_at DESC LIMIT ? OFFSET ?`).all(sinceIso, ...where.args, limit, offset) as any[];
+  const now = Date.now();
+  return {
+    total,
+    rows: rows.map((r) => ({
+      transferId: r.transfer_id, createdAt: r.created_at, expiresAt: r.expires_at ?? null,
+      name: r.name ?? "(unnamed)", kind: r.kind === "folder" ? "folder" : "file",
+      owner: ownerLabel(r.owner_id, r.owner_label), gb: Number(r.gb ?? 0),
+      downloadsUsed: Number(r.used ?? 0), downloadsAllowed: r.downloads_allowed ?? null,
+      status: linkStatus(r, now),
+    })),
+  };
+}

@@ -343,6 +343,21 @@
       .stat-recent th, .stat-recent td { text-align: left; padding: .32rem .4rem; border-bottom: 1px solid var(--line); }
       .stat-recent th { color: var(--mut); font-weight: 500; font-size: 11.5px; }
       .stat-recent td.num { text-align: right; }
+      .stat-recent { overflow-x: auto; }
+      .stat-recent td.name { overflow-wrap: anywhere; min-width: 8rem; }
+      .stat-chart { margin: .9rem 0 .2rem; }
+      .stat-chart h4 { margin: 0 0 .3rem; font-size: 13px; color: var(--ink); }
+      .stat-chart svg { width: 100%; height: 84px; display: block; }
+      .stat-chart .bar { fill: var(--blue); }
+      .stat-chart .bar.zero { fill: var(--line); }
+      .stat-chart .axis { color: var(--mut); font-size: 11.5px; display: flex; justify-content: space-between; margin-top: .2rem; }
+      .xfer-head { display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap; margin-top: .9rem; }
+      .xfer-head h4 { margin: 0; font-size: 13px; color: var(--ink); }
+      .xfer-head select { font: inherit; font-size: 12.5px; margin-left: .3rem; }
+      #xferMore { margin-top: .5rem; }
+      .pill { display: inline-block; padding: 0 .45rem; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--line); color: var(--mut); white-space: nowrap; }
+      .pill.warn { color: var(--amber-light); border-color: var(--blue); }
+      .pill.bad { color: #e08a8a; border-color: #e08a8a; }
       .btn-small { font: inherit; font-size: 13px; min-height: 36px; padding: .3rem .8rem; border: 1px solid var(--line);
                           border-radius: 6px; background: var(--surface2); color: var(--amber-light); cursor: pointer;
                           display: inline-flex; align-items: center; gap: .35rem; }
@@ -599,6 +614,23 @@
             </div>
           </div>
           <div id="statTiles" class="stat-tiles"></div>
+          <div id="statChart" class="stat-chart"></div>
+          <div id="statExtra" class="stat-recent"></div>
+          <div class="xfer-head">
+            <h4>Transfers</h4>
+            <label class="muted" for="xferFilter">Show
+              <select id="xferFilter">
+                <option value="all">All</option>
+                <option value="active">Active links</option>
+                <option value="expiring">Expiring within 3 days</option>
+                <option value="expired">Expired</option>
+                <option value="revoked">Revoked</option>
+                <option value="uploading">Folders still uploading</option>
+              </select>
+            </label>
+          </div>
+          <div id="xferList" class="stat-recent"></div>
+          <button type="button" class="btn-small" id="xferMore" hidden>Load more</button>
           <div id="statRecent" class="stat-recent"></div>
         </section>
         <p class="muted">Each client gets their own code to send with. Revoking a code cuts that

@@ -38,6 +38,10 @@ import {
   listAccessCodes,
   revokeAccessCode,
   adminStats,
+  adminExtras,
+  adminBySender,
+  adminTransferPage,
+  type AdminLinkFilter,
   touchAccessCode,
   completedSinceAll,
   capabilityRevoked,
@@ -252,7 +256,37 @@ api.get("/admin/stats", requireAdmin, limiter("admin", 30, 60_000), (c) => {
   const w = c.req.query("window");
   const window = w === "24h" || w === "7d" ? w : "all";
   const sinceMs = window === "24h" ? Date.now() - 86_400_000 : window === "7d" ? Date.now() - 7 * 86_400_000 : 0;
-  return c.json({ window, ...adminStats(new Date(sinceMs).toISOString()) });
+  const sinceIso = new Date(sinceMs).toISOString();
+  const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
+  return c.json({
+    window,
+    ...adminStats(sinceIso),
+    ...adminExtras(ACTIVE_UPLOAD_WINDOW_MS),
+    // Overrides the all-time list adminExtras returns, so the table honours ?window.
+    bySender: adminBySender(sinceIso),
+    // How close the deployment is to the job caps that refuse non-paid senders
+    // (jobQuotaRefusal). The per-session cap resets with each login session, so
+    // only the deployment-wide figure is reportable here.
+    quota: { jobsLast24h: completedSinceAll(dayAgo), dailyCap: MAX_DAILY_JOBS, perSessionCap: MAX_JOBS_PER_SESSION },
+  });
+});
+
+// Paged listing of top-level transfers (a folder is one row) with filename,
+// sender, size, downloads and link status. ?window=24h|7d|all, ?status=all|active|
+// expiring|expired|revoked|uploading, ?offset, ?limit (<= 100). Read-only.
+const LINK_FILTERS: readonly AdminLinkFilter[] = ["all", "active", "expiring", "expired", "revoked", "uploading"];
+api.get("/admin/transfers", requireAdmin, limiter("admin", 60, 60_000), (c) => {
+  const w = c.req.query("window");
+  const sinceMs = w === "24h" ? Date.now() - 86_400_000 : w === "7d" ? Date.now() - 7 * 86_400_000 : 0;
+  const s = c.req.query("status") as AdminLinkFilter | undefined;
+  const status: AdminLinkFilter = s && LINK_FILTERS.includes(s) ? s : "all";
+  const clamp = (v: string | undefined, def: number, min: number, max: number): number => {
+    const n = Math.trunc(Number(v));
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
+  };
+  const limit = clamp(c.req.query("limit"), 25, 1, 100);
+  const offset = clamp(c.req.query("offset"), 0, 0, 1_000_000);
+  return c.json({ status, limit, offset, ...adminTransferPage(new Date(sinceMs).toISOString(), status, limit, offset) });
 });
 
 // ───────── payments (pay-per-gig checkout) ─────────
